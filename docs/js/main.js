@@ -5,6 +5,7 @@ import { Recorder, analyzeStillness, analyzeRepeat, analyzeReversal, analyzeAccu
 import { fitConsistency, pairConsistency, outliers, verdict as domeVerdict, drawDome } from './dome.js';
 import { constellationAt, conName, altAzToJ2000 } from './locate.js';
 import { whereWords, recogniseWords, pickStars, checkAltitude, checkPair, chooseWaypoint } from './assist.js';
+import { drawEyepiece, newtonianMatrix } from './eyeview.js';
 import { STYLES, PENALTY, pickTargets, routeOrder, pathLength, tokenFor, buildTokenIndex, encodeChallenge, decodeChallenge, challengeId, encodeResult, decodeResult, points, rank, fmtTime, dwell } from './game.js';
 import { submitScore, fetchBoard, flushQueue } from './wixscores.js';
 import qrcode from '../vendor/qrcode.mjs';
@@ -36,10 +37,10 @@ function save() {
 const DEFAULT_PROFILES = {
   sw150c: { name: 'Skyward 150 Compact', aperture: 150, fl: 750,
     source: 'D150F750 primary — Skyward 150 Compact Sourcing Guide (Jan 2026)',
-    eyepieces: [{ name: '23 mm kit eyepiece', fl: 23, afov: 67, verified: true }], cal: null },
+    eyepieces: [{ name: '23 mm', fl: 23, afov: 62, verified: false }, { name: '10 mm', fl: 10, afov: 62, verified: false }, { name: '4 mm', fl: 4, afov: 62, verified: false }], cal: null },
   sw200v: { name: 'Skyward 200 Visual', aperture: 203, fl: 812,
     source: '8″ f/4 primary (AD048) — SW200 Visual packing list rev H. Focal length assumes 203 mm × 4; edit if your mirror is marked differently.',
-    eyepieces: [{ name: '23 mm kit eyepiece', fl: 23, afov: 67, verified: true }], cal: null },
+    eyepieces: [{ name: '23 mm', fl: 23, afov: 62, verified: false }, { name: '10 mm', fl: 10, afov: 62, verified: false }, { name: '4 mm', fl: 4, afov: 62, verified: false }], cal: null },
 };
 const DEFAULTS = {
   v: 1, profiles: DEFAULT_PROFILES, active: 'sw150c', mounting: 'top-sky', mode: 'gyro', compassCorr: 0,
@@ -98,6 +99,18 @@ function pointing() {
   const off = azOffset();
   return { raw, alt: raw.alt, az: off == null ? null : wrap360(raw.az + off), ready: off != null };
 }
+/**
+ * Before alignment: altitude from gravity (real) + azimuth from the phone's compass (rough). Null without a compass.
+ * Marked guess:true so every screen can label it "Not aligned — best guess".
+ */
+function guessPointing() {
+  if (!sensors || !sensors.fresh()) return null;
+  const co = sensors.compassOffset(); if (co == null) return null;
+  const R = avgR(state.smooth) || sensors.R; const raw = altAzFromVec(mulMV(R, model.axis()));
+  return { raw, alt: raw.alt, az: wrap360(raw.az + co + (state.compassCorr || 0)), ready: true, guess: true };
+}
+/** Measured compass uncertainty (arcmin) from the Phone check, or null if never measured. */
+function guessUncertainty() { const ph = state.phonePerf; return ph && ph.compassNoise != null ? Math.hypot(ph.compassNoise, ph.compassSwing || 0) : null; }
 
 // ---------------------------------------------------------------- tabs
 function showTab(t) {
@@ -126,11 +139,48 @@ function catNum(o) {
   const n = /(\d+)/.exec(o.id); return 1000 + (n ? +n[1] : 0);
 }
 function refreshSky(force) { if (force || Date.now() - lastSkyUpdate > 20000) { sky.updateAll(); lastSkyUpdate = Date.now(); } }
+// ---------------------------------------------------------------- QUICK START: tested → located → aligned → pointing
+function lastCheck() { return state.history.slice().reverse().find((h) => h.test === 'check' && h.result && h.result.graded); }
+function siteKnown() { return /^(GPS|entered)/.test(state.site.source || ''); }
+function alignedNow() { return !!align.fit && align.obs.length >= alignNeeded(); }
+function quickStartHTML() {
+  const chk = lastCheck(), V = { solid: 'Solid', usable: 'Usable', poor: 'Poor', unsuitable: 'Not suitable', incomplete: 'Incomplete' };
+  const steps = [
+    chk ? { done: true, html: `Phone tested: <b>${esc(chk.result.phone || chk.phone || 'this phone')}</b> — ${V[chk.result.verdict] || chk.result.verdict} <span class="muted">(${new Date(chk.when).toLocaleDateString()})</span>`, btn: ['qs-retest', 'Retest'] }
+      : state.skipCheck ? { done: true, html: 'Phone check skipped <span class="muted">— accuracy estimates unavailable</span>', btn: ['qs-check', 'Run it'] }
+      : { done: false, html: 'Test this phone <span class="muted">— 4 min, no stars, once per phone</span>', btn: ['qs-check', 'Run check'], btn2: ['qs-skip', 'Skip'] },
+    siteKnown() ? { done: true, html: `Location set <span class="muted">(${esc(state.site.source.split(',')[0])})</span>` }
+      : { done: false, html: 'Set your location', btn: ['qs-gps', 'Use GPS'] },
+    alignedNow() ? { done: true, html: `Aligned on ${align.obs.map((o) => esc(o.label)).join(' and ')} <span class="muted">· sync ${lastSyncAge()}</span>`, btn: ['qs-align', 'Realign'] }
+      : { done: false, html: `Align on ${alignNeeded()} bright star${alignNeeded() > 1 ? 's' : ''}${profile().cal ? ' <span class="muted">(mount tilt already saved)</span>' : ''}`, btn: ['qs-align', 'Align now'] },
+  ];
+  const next = steps.findIndex((x) => !x.done);
+  if (next === -1) {
+    sky.updateAll();
+    const best = pickTargets(sky.objects, { aperture: profile().aperture, sunAlt: sky.sunAlt(), n: 6 });
+    return `<div class="card qs"><div class="qs-row done">✓ Ready — ${esc(profile().name)} aligned <button id="qs-align" class="mini">Realign</button></div>
+      ${best.length ? `<div class="muted small" style="margin-top:6px">Tonight's best for your ${profile().aperture} mm — tap one to start pushing:</div>
+      <div class="chips wrap">${best.map((o) => `<button data-go="${esc(o.key)}">${esc(o.label)}</button>`).join('')}</div>` : ''}</div>`;
+  }
+  return `<div class="card qs"><b>Get observing</b>
+    ${steps.map((x, i) => `<div class="qs-row ${x.done ? 'done' : i === next ? 'now' : ''}"><span>${x.done ? '✓' : i + 1}.</span> <span class="qs-txt">${x.html}</span>
+      ${x.btn && (i === next || x.done) ? `<button id="${x.btn[0]}" class="${i === next ? 'primary' : 'mini'}">${x.btn[1]}</button>` : ''}${x.btn2 && i === next ? `<button id="${x.btn2[0]}" class="mini">${x.btn2[1]}</button>` : ''}</div>`).join('')}
+    <div class="qs-row ${''}"><span>4.</span> <span class="qs-txt muted">Pick a target below and push</span></div></div>`;
+}
+function bindQuickStart(el) {
+  const on = (id, f) => { const b = $('#' + id, el); if (b) b.onclick = f; };
+  on('qs-check', () => { showTab('test'); startTest('check'); });
+  on('qs-retest', () => { showTab('test'); startTest('check'); });
+  on('qs-skip', () => { state.skipCheck = true; save(); renderFind(); });
+  on('qs-gps', () => getGPS());
+  on('qs-align', () => showTab('align'));
+  el.querySelectorAll('[data-go]').forEach((b) => b.onclick = () => { state.target = b.dataset.go; save(); showTab('push'); });
+}
+
 function renderFind() {
   refreshSky(true);
   const el = $('#tab-find');
-  const noCheck = !state.history.some((h) => h.test === 'check');
-  el.innerHTML = `${noCheck ? `<div class="card"><b>New phone?</b> <span class="muted small">Run the 4-minute Phone check before your first night out — it tells you if this phone is good enough for push-to.</span><div class="btnrow"><button id="go-check" class="primary">Run Phone check</button></div></div>` : ''}
+  el.innerHTML = `${quickStartHTML()}
     <input id="q" type="search" placeholder="Search: M13, Ring, NGC 7009, Albireo…" value="${esc(findQ)}" autocomplete="off">
     <div class="chips">${CATS.map(([k, l]) => `<button data-cat="${k}" class="${state.catFilter === k ? 'on' : ''}">${l}</button>`).join('')}</div>
     <div class="chips">
@@ -139,7 +189,7 @@ function renderFind() {
     </div>
     <div id="sunwarn" class="muted small"></div>
     <ul class="list" id="flist"></ul>`;
-  if ($('#go-check')) $('#go-check').onclick = () => { showTab('test'); startTest('check'); };
+  bindQuickStart(el);
   $('#q').addEventListener('input', (e) => { findQ = e.target.value; findLimit = 150; fillFind(); });
   el.querySelectorAll('[data-cat]').forEach((b) => b.onclick = () => { state.catFilter = b.dataset.cat; save(); renderFind(); });
   $('[data-up]', el).onclick = () => { state.upOnly = !state.upOnly; save(); renderFind(); };
@@ -196,17 +246,43 @@ function renderPush() {
     <canvas id="reticle" width="800" height="800"></canvas>
     <div class="btnrow zoom"><button id="z-out">−</button><button id="z-in">+</button><button id="z-ep">Eyepiece</button><button id="z-wide">30°</button><button id="z-auto">Auto</button><button id="z-lock" class="${state.zoomLock ? 'on' : ''}">${state.zoomLock ? 'Locked' : 'Lock'}</button></div>
     <div class="btnrow"><button id="z-ctr">${chartCentre === 'scope' ? 'Centre: scope' : 'Centre: target'}</button></div>
+    <h3>In the eyepiece — what you should see</h3>
+    <div class="chips" id="ep-chips">${eps.map((e, i) => `<button data-ep="${i}" class="${i === state.ep ? 'on' : ''}">${esc(e.name)} · ${(profile().fl / e.fl).toFixed(0)}×</button>`).join('')}</div>
+    <canvas id="eyeview" width="640" height="640" style="width:100%;max-width:360px;display:block;margin:0 auto;background:#000;border-radius:50%"></canvas>
+    <p id="eyenote" class="muted small" style="text-align:center"></p>
+    <label class="row"><span>Show it as your Newtonian does</span><input type="checkbox" id="rot180" ${state.rot180 ? 'checked' : ''}></label>
+    <label class="row"><span>Focuser position <span class="muted small">(seen from behind the scope)</span></span><select id="focpos">${[[-90, 'Left side'], [-45, 'Upper left'], [0, 'Top'], [45, 'Upper right'], [90, 'Right side']].map(([v, l]) => `<option value="${v}" ${(profile().focuser ?? 90) === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+    <p class="muted small">Orientation assumes your head is upright at the eyepiece; tilting your head turns the view with it. <b>⬆Z</b> points toward the zenith, N and E are celestial north and east — match these to a star chart.</p>
     <p class="muted small">Pinch to zoom out until you recognise the star pattern, then compare with the sky. Drawn as seen standing behind the scope (up = toward zenith); the eyepiece image of a Newtonian is rotated. The red circle is your eyepiece's true field.</p>
     <label class="row"><span>Eyepiece</span><select id="ep">${eps.map((e, i) => `<option value="${i}" ${i === state.ep ? 'selected' : ''}>${esc(e.name)} — ${(profile().fl / e.fl).toFixed(0)}×, ${(tfov(e) * 60).toFixed(0)}′ field${e.verified ? '' : ' (unverified)'}${baseUncertainty() != null && tfov(e) * 30 < baseUncertainty() ? ' — narrower than phone accuracy' : ''}</option>`).join('')}</select></label>
     <div class="btnrow"><button id="b-prev">◀ Prev</button><button id="b-sync" class="primary">Centered — Sync</button><button id="b-next">Next ▶</button></div>
     <div class="kv" id="pinfo"></div>`;
-  $('#ep').onchange = (e) => { state.ep = +e.target.value; save(); };
+  $('#ep').onchange = (e) => { state.ep = +e.target.value; save(); renderPush(); };
+  el.querySelectorAll('[data-ep]').forEach((b) => b.onclick = () => { state.ep = +b.dataset.ep; save(); renderPush(); });
+  $('#rot180').onchange = (e) => { state.rot180 = e.target.checked; save(); eyeT = 0; };
+  $('#focpos').onchange = (e) => { profile().focuser = +e.target.value; save(); eyeT = 0; };
+  eyeT = 0;
   $('#b-sync').onclick = () => doSync(o);
   const step = (d) => { const L = filtered(); const i = L.findIndex((x) => x.key === state.target); const n = L[(i + d + L.length) % L.length]; if (n) { state.target = n.key; save(); renderPush(); } };
   $('#b-prev').onclick = () => step(-1); $('#b-next').onclick = () => step(1);
   bindChartControls();
 }
-let wpT = 0, wpDismissed = null;
+let wpT = 0, wpDismissed = null, eyeT = 0;
+function updateEyeview(o, tgt) {
+  const cv = $('#eyeview'); if (!cv || Date.now() - eyeT < 1000) return; eyeT = Date.now();
+  const ep = eyepiece(), p = profile();
+  // A named star that is also a catalogued double (Albireo, Mizar…) borrows the double's separation data.
+  let obj = o;
+  if (!o.pairs && o.key.startsWith('st:')) { const d = sky.objects.find((x) => x.key.startsWith('ds:') && x.pairs && Math.abs(x.ra - o.ra) < 0.1 && Math.abs(x.dec - o.dec) < 0.1); if (d) obj = { ...o, key: d.key, pairs: d.pairs, t: 'DS' }; }
+  const longest = p.eyepieces.reduce((a, e) => (e.fl > a.fl ? e : a), p.eyepieces[0]);
+  const fz = p.focuser ?? 90;
+  const matrix = state.rot180 ? newtonianMatrix(tgt, fz) : null;
+  const r = drawEyepiece(cv, sky, obj, tgt, ep, p, { matrix, bright: state.bright, refExit: p.aperture / (p.fl / longest.fl) });
+  const exit = p.aperture / r.mag;
+  const dim = r.rel < 0.999 ? `Nebulae, galaxies and the sky background are <b>${(1 / r.rel).toFixed(r.rel > 0.1 ? 1 : 0)}× dimmer</b> than in the ${esc(longest.name)} (${(-2.5 * Math.log10(r.rel)).toFixed(1)} mag); stars stay as bright, so faint stars can be easier to see. Dimming drawn on a compressed scale.`
+    : `Brightest view of extended objects with your eyepieces; higher powers dim nebulae and galaxies, not stars.`;
+  $('#eyenote').innerHTML = `${esc(ep.name)} · ${r.mag.toFixed(0)}× · ${r.tfov >= 1 ? r.tfov.toFixed(2) + '°' : (r.tfov * 60).toFixed(0) + '′'} field · ${exit.toFixed(1)} mm exit pupil${r.mag > 2 * p.aperture ? ' · <b>beyond useful magnification</b>' : ''}${r.note ? '<br>' + esc(r.note) : ''}<br>${dim}<br><span class="muted">Stars shown to mag 8 (your scope shows fainter). Real faint galaxies look dimmer than any screen.${ep.verified ? '' : ' Field size assumes ' + ep.afov + '° AFOV (unverified).'}</span>`;
+}
 function updateWaypoint(o, tgt) {
   const box = $('#waypt'); if (!box || Date.now() - wpT < 2000) return; wpT = Date.now();
   const last = align.syncs[align.syncs.length - 1];
@@ -227,13 +303,22 @@ function updateWaypoint(o, tgt) {
 function updatePush() {
   const o = targetObj(); if (!o || !$('#d-az')) return;
   const tgt = sky.altAz(o); const cur = pointing();
+  updateEyeview(o, tgt);
   const info = $('#pinfo');
   const azEl = $('#d-az'), altEl = $('#d-alt');
   if (!cur) { azEl.querySelector('.val').textContent = '—'; altEl.querySelector('.val').textContent = '—'; $('#infield').textContent = 'Waiting for sensors…'; drawReticle(null, tgt, o); return; }
   if (!cur.ready) {
-    $('#infield').textContent = state.mode === 'compass' ? 'No compass reading on this device' : 'Not aligned — use the Align tab';
+    const gp = guessPointing();
     altEl.querySelector('.val').textContent = fmtDelta(tgt.alt - cur.alt); altEl.querySelector('.dir').textContent = tgt.alt - cur.alt >= 0 ? '▲ up' : '▼ down';
-    azEl.querySelector('.val').textContent = '—'; azEl.querySelector('.dir').textContent = '';
+    if (gp) {
+      const gd = guidance(gp, tgt);
+      azEl.querySelector('.val').textContent = '≈' + fmtDelta(gd.dAz); azEl.querySelector('.dir').textContent = (gd.dAz > 0 ? 'right ▶' : '◀ left') + ' (guess)';
+      $('#infield').textContent = 'Not aligned — best guess from the compass. Align for real pointing.';
+    } else {
+      azEl.querySelector('.val').textContent = '—'; azEl.querySelector('.dir').textContent = '';
+      $('#infield').textContent = 'Not aligned, and no compass on this phone — use the Align tab';
+    }
+    azEl.classList.remove('ok'); altEl.classList.remove('ok');
     drawReticle(cur, tgt, o); return;
   }
   trackMotion(cur); updateWhere(cur);
@@ -343,12 +428,13 @@ function drawReticle(cur, tgt, o, opt = {}) {
   const cv = opt.canvas || $('#reticle'); if (!cv) return; const c = cv.getContext('2d'); const W = cv.width, H = cv.height, cx = W / 2, cy = H / 2, Rpx = W * 0.46;
   const k = state.bright; const col = (r, g = 0, b = 0, a = 1) => `rgba(${r * k | 0},${g * k | 0},${b * k | 0},${a})`;
   c.clearRect(0, 0, W, H);
-  if (cur && !cur.ready) cur = null; // no azimuth yet
+  let guess = false;
+  if (cur && !cur.ready) { const gp = guessPointing(); if (gp) { cur = gp; guess = true; } else cur = null; } // no azimuth yet: compass best guess
   const centre = opt.centre === 'target' || chartCentre === 'target' || !cur ? tgt : cur;
   if (!cur && chartCentre !== 'target' && opt.centre !== 'target') { c.fillStyle = col(150); c.font = '28px system-ui'; c.textAlign = 'center'; c.fillText('Not aligned — tap "Centre: target" to preview', cx, cy); return; }
   const half = tfov() / 2;
-  const U = cur ? pointingUncertainty(tgt) : null;                    // arcmin
-  minView = U ? Math.max(ZMIN, Math.min(ZMAX, 3 * U / 60)) : ZMIN;     // never zoom tighter than ~3× what the phone can know
+  const U = guess ? guessUncertainty() : cur ? pointingUncertainty(tgt) : null;   // arcmin
+  minView = guess ? Math.max(5, U ? 3 * U / 60 : 0) : U ? Math.max(ZMIN, Math.min(ZMAX, 3 * U / 60)) : ZMIN;   // a guess never zooms in past 5°     // never zoom tighter than ~3× what the phone can know
   let view = opt.view ?? zoom ?? autoRadius(cur, tgt); let limited = !opt.view && view < minView; if (limited) view = minView;
   if (!opt.view) {                                                   // zoom out while slewing (unless locked), ease back when settled
     if (motion.moving && !state.zoomLock) { view = Math.max(view, Math.min(50, Math.max(20, motion.v * 8))); limited = false; }
@@ -414,11 +500,20 @@ function drawReticle(cur, tgt, o, opt = {}) {
   c.strokeStyle = col(70); c.lineWidth = 2; c.beginPath(); c.arc(cx, cy, Rpx, 0, 7); c.stroke();
   c.fillStyle = col(130); c.font = '24px system-ui'; c.textAlign = 'left';
   c.fillText(`${view >= 2 ? view.toFixed(view < 10 ? 1 : 0) + '°' : (view * 60).toFixed(0) + '′'} radius · stars to mag ${magLim.toFixed(1)}${zoom == null ? ' · auto' : ''}`, 12, 30);
-  if (limited) { c.fillStyle = col(200, 40, 15); c.fillText(`Zoom limited by phone accuracy (±${fmt.am(U)})`, 12, H - 16); }
+  if (limited && !guess) { c.fillStyle = col(200, 40, 15); c.fillText(`Zoom limited by phone accuracy (±${fmt.am(U)})`, 12, H - 16); }
+  if (guess) {                                                       // unmistakable label: this view is not aligned
+    c.fillStyle = 'rgba(0,0,0,0.75)'; c.fillRect(0, 44, W, 74);
+    c.fillStyle = col(255, 70, 30); c.font = 'bold 34px system-ui'; c.textAlign = 'center'; c.fillText('NOT ALIGNED — BEST GUESS MODE', cx, 82);
+    c.font = '21px system-ui'; c.fillStyle = col(200, 40, 15);
+    c.fillText(U ? `Direction from the phone's compass (measured ±${fmt.am(U)})` : 'Direction from the phone\'s compass — accuracy unknown until a Phone check', cx, 108);
+    c.textAlign = 'left'; c.font = '24px system-ui';
+  }
   const scope = cur ? proj(cur) : null;
+  if (scope && guess) { c.setLineDash([4, 10]); }
   if (scope && U) { c.strokeStyle = col(200, 40, 15); c.lineWidth = 2; c.setLineDash([8, 8]); c.beginPath(); c.arc(scope.x, scope.y, U / 60 * s, 0, 7); c.stroke(); c.setLineDash([]); }
   if (scope) {
-    c.strokeStyle = col(230, 50, 25); c.lineWidth = 3; c.beginPath(); c.arc(scope.x, scope.y, Math.max(5, half * s), 0, 7); c.stroke();
+    c.strokeStyle = col(230, 50, 25); c.lineWidth = 3; if (guess) c.setLineDash([10, 8]); c.beginPath(); c.arc(scope.x, scope.y, Math.max(5, half * s), 0, 7); c.stroke(); c.setLineDash([]);
+    if (guess) { c.fillStyle = col(230, 50, 25); c.font = 'bold 22px system-ui'; c.textAlign = 'center'; c.fillText('scope? (guess)', scope.x, scope.y + Math.max(28, half * s + 26)); c.textAlign = 'left'; }
     const L = Math.max(14, half * s * 0.35); c.beginPath(); c.moveTo(scope.x - L, scope.y); c.lineTo(scope.x + L, scope.y); c.moveTo(scope.x, scope.y - L); c.lineTo(scope.x, scope.y + L); c.stroke();
   }
 
@@ -539,7 +634,9 @@ function renderAlign() {
         if (!cp.ok) { assist.pending = { ob, o, msg: `The scope moved ${cp.measured.toFixed(0)}° from ${p0.label}, but ${o.label} is ${cp.expected.toFixed(0)}° from it. One of the two may be the wrong star.` }; return renderAlign(); }
       }
     }
-    assist.pending = null; align.obs.push(ob); align.confirm.push({ ...ob, kind: 'align' }); refit(); toast(`Added ${o.label}`); renderAlign();
+    assist.pending = null; align.obs.push(ob); align.confirm.push({ ...ob, kind: 'align' }); refit();
+    if (align.obs.length === alignNeeded()) { toast(`Aligned on ${align.obs.map((x) => x.label).join(' and ')} — pick a target`, 3000); showTab('find'); return; }
+    toast(`Added ${o.label}`); renderAlign();
   };
   if ($('#a-ok')) $('#a-ok').onclick = () => addStar(s);
   if ($('#a-skip')) $('#a-skip').onclick = () => { assist.skip.add(s.key); renderAlign(); };
@@ -585,12 +682,14 @@ function updateAlign() {
   if (!cur) { live.textContent = 'Waiting for sensors…'; }
   else if (!cur.ready) {               // altitude is known before alignment
     const d = tgt.alt - cur.alt;
-    live.textContent = Math.abs(d) < 1.5 ? `Height is right (${cur.alt.toFixed(0)}°) — now swing to the ${compassName(tgt.az)}` : `Scope at ${cur.alt.toFixed(0)}° — ${d > 0 ? 'raise' : 'lower'} about ${Math.abs(d).toFixed(0)}°`;
+    const gp = guessPointing(), gd = gp ? guidance(gp, tgt) : null;
+    const azTxt = gd ? (Math.abs(gd.dAz) < 3 ? 'direction looks about right (compass guess)' : `swing ≈${Math.abs(gd.dAz).toFixed(0)}° ${gd.dAz > 0 ? 'right' : 'left'} (compass guess)`) : `swing to the ${compassName(tgt.az)}`;
+    live.textContent = Math.abs(d) < 1.5 ? `Height is right (${cur.alt.toFixed(0)}°) — ${azTxt}` : `${d > 0 ? 'Raise' : 'Lower'} about ${Math.abs(d).toFixed(0)}° · ${azTxt}`;
   } else {
     const g = guidance(cur, tgt);
     live.textContent = g.sep < 1 ? 'Should be in the finder — centre it' : `${fmtDelta(g.dAz)} ${g.dAz > 0 ? 'right' : 'left'}, ${fmtDelta(g.dAlt)} ${g.dAlt > 0 ? 'up' : 'down'}`;
   }
-  drawReticle(cur && cur.ready ? cur : null, tgt, s, { canvas: $('#a-chart'), view: 25, centre: 'target' });
+  drawReticle(cur, tgt, s, { canvas: $('#a-chart'), view: 25, centre: 'target' });
 }
 
 // ---------------------------------------------------------------- GAME
@@ -990,19 +1089,29 @@ function renderCheckStep(el, head, back) {
     $('#c-go').onclick = () => { test.phone = $('#c-phone').value.trim(); state.phone = test.phone; save(); nextCheckStep(); };
   } else if (test.step === 'level') {
     const n = test.readings.length;
+    const steps = [['A', 'Flat on the table, one end against a book or straight edge'], ['B', 'Turn it around 180° — the other end against the same edge'],
+      ['A', 'Back to the first way round, same spot (repeat)'], ['B', 'Turned around again (repeat)']];
     el.innerHTML = head + checkProgress() + `<h3>Tilt sensor</h3>
-      <p>Take the phone out of the mount. ${n % 2 === 0 ? '<b>Position A:</b> lay it flat on a firm table, one edge against a book or straight edge.' : '<b>Position B:</b> turn it 180° flat on the table, the other end against the same edge.'}</p>
-      <p class="muted small">Hands off while it records (2 s). ${4 - n} recording${4 - n === 1 ? '' : 's'} to go (A, B, A, B).</p>
+      <p>Take the phone out of the mount. You'll record <b>four times, alternating A, B, A, B</b>. The second A and B are deliberate repeats: they show whether the sensor gives the same answer twice.</p>
+      <ol class="steps">${steps.map(([pos, txt], i) => `<li class="${i < n ? 'done' : i === n ? 'now' : ''}"><b>${i < n ? '✓' : i + 1}. Position ${pos}</b> — ${txt}${i < n ? ` <span class="muted mono">(${test.readings[i].beta.toFixed(2)}°, ${test.readings[i].gamma.toFixed(2)}°)</span>` : ''}</li>`).join('')}</ol>
+      <p class="muted small">Hands off while it records — 2 seconds.</p>
+      <div class="bar"><div id="t-bar"></div></div>
       <p id="t-live" class="muted small mono"></p>
-      <div class="btnrow"><button id="t-rec" class="primary">Record ${n % 2 === 0 ? 'A' : 'B'}</button>${skip}</div>` + back;
+      <div class="btnrow"><button id="t-rec" class="primary big">Record ${n + 1} of 4 — position ${steps[n][0]}${n >= 2 ? ' (repeat)' : ''}</button></div>
+      <div class="btnrow">${skip}</div>` + back;
     $('#t-rec').onclick = () => {
-      const btn = $('#t-rec'); btn.disabled = true; btn.textContent = 'Hold still…';
+      const btn = $('#t-rec'); btn.disabled = true; test.recEnd = performance.now() + 2000;
       setTimeout(() => {
+        test.recEnd = 0;
         const now = (performance.now() - test.rec.t0) / 1000; const sm = test.rec.samples.filter((x) => now - x.t <= 2 && x.euler);
-        if (sm.length < 5) { toast('Not enough samples'); return renderTestRun(); }
-        test.readings.push({ beta: sm.reduce((a, x) => a + x.euler[1], 0) / sm.length, gamma: sm.reduce((a, x) => a + x.euler[2], 0) / sm.length });
-        if (test.readings.length >= 4) { test.reversal = analyzeReversal(test.readings); nextCheckStep(); } else renderTestRun();
-      }, 2100);
+        if (sm.length < 5) { toast('The phone sent no sensor readings — check motion access is allowed, then try again', 5000); return renderTestRun(); }
+        const b = sm.map((x) => x.euler[1]), g = sm.map((x) => x.euler[2]);
+        if (Math.max(...b) - Math.min(...b) > 0.5 || Math.max(...g) - Math.min(...g) > 0.5) { toast('The phone moved while recording — let go of it and record again', 4000); return renderTestRun(); }
+        test.readings.push({ beta: b.reduce((a, v) => a + v, 0) / b.length, gamma: g.reduce((a, v) => a + v, 0) / g.length });
+        if (navigator.vibrate) navigator.vibrate(60);
+        if (test.readings.length >= 4) { toast('Tilt sensor done ✓', 1500); test.reversal = analyzeReversal(test.readings); nextCheckStep(); }
+        else { toast(`Recording ${test.readings.length} of 4 saved ✓ — now position ${steps[test.readings.length][0]}`, 2500); renderTestRun(); }
+      }, 2050);
     };
   } else if (test.step === 'still') {
     el.innerHTML = head + checkProgress() + `<h3>Jitter & drift</h3>
@@ -1051,7 +1160,11 @@ function updateCheck() {
     const r = $('#c-rate'); if (r) r.textContent = sensors.rateHz ? sensors.rateHz.toFixed(0) + ' Hz' : '…';
     const c = $('#c-comp'); if (c) c.textContent = sensors.hasCompass ? (sensors.compassSource || 'present') : 'none detected';
   }
-  if (test.step === 'level' && live && test.rec.samples.length) { const e = test.rec.samples[test.rec.samples.length - 1].euler; if (e) live.textContent = `pitch ${e[1].toFixed(2)}°  roll ${e[2].toFixed(2)}°`; }
+  if (test.step === 'level' && live) {
+    const e = test.rec.samples.length ? test.rec.samples[test.rec.samples.length - 1].euler : null;
+    if (test.recEnd) { const left = Math.max(0, (test.recEnd - performance.now()) / 1000); const bar = $('#t-bar'); if (bar) bar.style.width = `${100 * (1 - left / 2)}%`; const btn = $('#t-rec'); if (btn) btn.textContent = `Recording… ${left.toFixed(1)} s — hands off`; }
+    live.textContent = e ? `live: pitch ${e[1].toFixed(2)}°  roll ${e[2].toFixed(2)}°` : 'waiting for sensor readings…';
+  }
   if (test.step === 'still' && test.running) {
     const left = (test.tEnd - performance.now()) / 1000; const bar = $('#t-bar'); if (bar) bar.style.width = `${100 * Math.min(1, 1 - left / 60)}%`;
     if (live) live.textContent = `${Math.max(0, left).toFixed(0)} s left · ${test.rec.samples.length} samples`;
@@ -1188,7 +1301,7 @@ async function getGPS() {
   toast('Getting GPS fix…', 8000);
   const done = (lat, lon, elev, acc) => {
     state.site = { lat: +lat.toFixed(5), lon: +lon.toFixed(5), elev: Math.round(elev || state.site.elev || 0), source: `GPS ±${Math.round(acc)} m, ${new Date().toLocaleString()}` };
-    sky.setSite(state.site.lat, state.site.lon, state.site.elev); save(); toast('Location set'); if (tab === 'setup') renderSetup();
+    sky.setSite(state.site.lat, state.site.lon, state.site.elev); save(); toast('Location set'); if (tab === 'setup') renderSetup(); if (tab === 'find') renderFind();
   };
   try {
     const G = cap('Geolocation');
@@ -1229,6 +1342,8 @@ async function startSensors(sim) {
       });
     }
     $('#gate').classList.add('hidden');
+    if (!sim && !siteKnown()) getGPS();
+    if (tab === 'find') renderFind();
     setTimeout(() => { if (!sensors.fresh()) { toast('No motion data from this device. On desktop, use the simulator.', 5000); $('#gate').classList.remove('hidden'); $('#gate-sim').classList.remove('hidden'); msg.textContent = 'No orientation events received.'; } }, 2500);
   } catch (e) { msg.textContent = e.message; $('#gate-sim').classList.remove('hidden'); }
 }
@@ -1236,6 +1351,11 @@ async function startSensors(sim) {
 async function init() {
   const saved = await loadState();
   state = Object.assign(structuredClone(DEFAULTS), saved || {});
+  if ((state.v || 1) < 2) {                       // v2: kit is 23/10/4 mm at 62° AFOV (user, Nov 12)
+    for (const k of ['sw150c', 'sw200v']) { const p = state.profiles[k]; if (p && p.eyepieces.length === 1 && /^23 mm/.test(p.eyepieces[0].name)) p.eyepieces = structuredClone(DEFAULT_PROFILES[k].eyepieces); }
+    state.v = 2; state.ep = 0;
+  }
+  if (state.rot180 == null) state.rot180 = true;
   for (const [k, v] of Object.entries(DEFAULT_PROFILES)) if (!state.profiles[k]) state.profiles[k] = structuredClone(v);
   if (state.calibrate == null) state.calibrate = true;
   sky.setSite(state.site.lat, state.site.lon, state.site.elev);
@@ -1244,7 +1364,7 @@ async function init() {
   $('#gate-start').onclick = () => startSensors(false);
   $('#gate-sim').onclick = () => startSensors(true);
   if (new URLSearchParams(location.search).has('sim')) $('#gate-sim').classList.remove('hidden');
-  showTab(state.target ? 'push' : 'find');
+  showTab('find');
   const flush = () => flushQueue(state).then((n) => { if (n) { save(); toast(`Sent ${n} queued score${n > 1 ? 's' : ''} to the leaderboard`); } }).catch(() => {});
   if (state.pendingScores && state.pendingScores.length) flush();
   window.addEventListener('online', flush);

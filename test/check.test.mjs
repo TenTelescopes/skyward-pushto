@@ -40,4 +40,8 @@ ok(Math.abs(s.worst - Math.hypot(6, 12 * Math.cos(30 * Math.PI / 180))) < 0.2, `
   ok(g2.verdict==='poor', 'reliable only to 55° -> poor');
   const g3 = gradeCheck({ ...base, sweep:{altMax:60,ceiling:60,geometric:10}, turns:[{altDynamic:2,baseTilt:0.5}] }, r);
   ok(g3.verdict==='incomplete', 'sweep that never got near zenith -> incomplete, not poor'); }
+// --- a sweep where the base turned near the horizon is invalid, not 'poor'
+{ const S=[]; for (let k=0;k<15;k++) S.push({alt:1, az:120}); for (let i=0;i<=300;i++){ const alt=1+i*0.3; S.push({alt, az: 120 + (alt<20 ? alt*0.4 : 8)}); }
+  const w = analyzeAltSweep(S, r, false); ok(w.invalid, 'base turning near the horizon marks the sweep invalid');
+  const g = gradeCheck({ ...base, sweep: w }, r); ok(g.verdict === 'incomplete', `invalid sweep -> incomplete, not poor (${g.verdict})`); }
 console.log(fails ? `${fails} FAILED` : 'all passed'); process.exit(fails ? 1 : 0);

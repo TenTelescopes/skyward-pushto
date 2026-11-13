@@ -49,7 +49,7 @@ def add_ongc(r, key=None):
     t = TYPES.get(r['Type'], r['Type'])
     mag = f(r['V-Mag']) if f(r['V-Mag']) is not None else f(r['B-Mag'])
     o = dict(id=pretty(r['Name']), ra=round(hms(r['RA']),4), dec=round(dms(r['Dec']),4), t=TCODE.get(t,'OT'), type=t,
-             con=r['Const'], mag=mag, sb=f(r['SurfBr']), maj=f(r['MajAx']), min=f(r['MinAx']),
+             con=r['Const'], mag=mag, sb=f(r['SurfBr']), maj=f(r['MajAx']), min=f(r['MinAx']), pa=f(r['PosAng']),
              name=(r['Common names'].split(',')[0] if r['Common names'] else ''), cats=[])
     objs[key] = o; return o
 

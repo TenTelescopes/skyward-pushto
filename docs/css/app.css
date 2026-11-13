@@ -105,3 +105,15 @@ textarea { width: 100%; min-height: 120px; background: var(--panel); color: var(
 
 .gtimer { font-size: 54px; font-weight: 800; text-align: center; color: var(--hi); margin-top: 4px; }
 nav#tabs button { font-size: 14px; }
+
+ol.steps { list-style: none; padding: 0; margin: 8px 0; }
+ol.steps li { padding: 8px 10px; border: 1px solid #170000; border-radius: 8px; margin: 4px 0; color: var(--dim); font-size: 15px; }
+ol.steps li.now { border-color: var(--fg); color: var(--hi); background: #120000; }
+ol.steps li.done { color: var(--fg); }
+
+.qs-row { display: flex; align-items: center; gap: 8px; padding: 7px 0; border-bottom: 1px solid #170000; color: var(--dim); }
+.qs-row .qs-txt { flex: 1; }
+.qs-row.now { color: var(--hi); }
+.qs-row.done { color: var(--fg); }
+button.mini { padding: 5px 10px; font-size: 13px; }
+.chips.wrap { flex-wrap: wrap; overflow: visible; }

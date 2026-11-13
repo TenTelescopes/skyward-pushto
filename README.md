@@ -35,6 +35,9 @@ No network is needed after installation. GPS is optional and also works with no 
   - **Remote**: scores post to the Ten Telescopes Wix site (CMS collection `SkywardScores`) through a public Wix headless client id with anonymous visitor tokens. Anyone can add and read; only the site owner can edit or delete. Without signal, scores are queued and sent later.
     Players at other sites can play the same challenge code; targets not above 20° there are left out without penalty.
   - **Honest limits**: results are sensor-confirmed but not cheat-proof. Anyone determined could post fake rows, and the site owner can delete them in the Wix CMS.
+- **Get observing** (Find tab): a checklist that ticks itself off. It covers whether the phone is tested (skipped once a Phone check exists), location (GPS fetched automatically the first time), and alignment (1 star when the mount tilt is saved). It ends with tonight's best six targets, one tap each to start pushing.
+- **In the eyepiece** (Push tab): the target centred in the 23, 10 or 4 mm eyepiece, drawn to scale.
+  Stars come from Hipparcos to magnitude 8. Deep-sky shapes use their OpenNGC size and position angle, and planet discs use their real size tonight. It's shown in the orientation your Newtonian gives, computed from the scope's altitude and the focuser position, assuming your head is upright. It has N, E and zenith markers, and reports magnification, true field and exit pupil. Brightness dims with exit pupil² for extended objects, but not for stars.
 - **Test**: four detailed sensor tests, saved and exportable as CSV or JSON:
   - *Precision & drift*: scope untouched. Reports noise (1σ, peak-to-peak) and drift rate for the gyro and the compass.
   - *Repeatability*: return to the same land or sky target several times and report the scatter. Sky motion is removed for sky targets.

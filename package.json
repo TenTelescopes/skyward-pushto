@@ -5,7 +5,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node test/model.test.mjs && node test/check.test.mjs && node test/assist.test.mjs && node test/dome.test.mjs && node test/locate.test.mjs && node test/game.test.mjs",
+    "test": "node test/model.test.mjs && node test/check.test.mjs && node test/assist.test.mjs && node test/dome.test.mjs && node test/locate.test.mjs && node test/game.test.mjs && node test/eyeview.test.mjs",
     "catalog": "python3 tools/build_catalog.py ../data docs/data/catalog.js",
     "serve": "python3 -m http.server 8080 --directory docs",
     "native:add": "npm run copy:core && npx cap add ios; npx cap add android; node scripts/patch-native.mjs",

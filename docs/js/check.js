@@ -53,9 +53,13 @@ export function analyzeAltSweep(samples, r, levelled = false) {
   }
   let ceiling = null;
   for (const b of bins) { if (b.p90 > r / 2) break; ceiling = b.hi; }
+  // Near the horizon phone sensors are at their best, so large wander there isn't sensor error: the base (or a
+  // hand-held phone) turned. That makes the sweep invalid rather than the phone poor.
+  const low = bins.filter((b) => b.lo < 30);
+  const invalid = low.length > 0 && low.some((b) => b.p90 > r / 2);
   return { altMin: Math.min(...alt), altMax: Math.max(...alt), ceiling: ceiling == null ? Math.min(...alt) : Math.min(ceiling, Math.max(...alt)),
            geometric: Math.abs(fit.c[1]), sensorP90: res.slice().sort((a, b) => a - b)[Math.floor(res.length * 0.9)], bins,
-           indexError: levelled ? startAlt * 60 : null };
+           indexError: levelled ? startAlt * 60 : null, invalid };
 }
 
 /**
@@ -103,7 +107,7 @@ export function gradeCheck({ sensors, reversal, still, swing, sweep, turns }, r)
   // 3. Tilt consistency (reversal repeatability). Bias itself is absorbed by alignment, so it is informational.
   if (reversal) {
     const rep = reversal.pairs.length > 1 ? Math.max(reversal.pitchBiasStd, reversal.rollBiasStd) : null;
-    add('tilt', 'Tilt sensor consistency', rep == null ? 'needs 2 pairs' : am(rep), by(rep, r / 20, r / 6), 'How much the accelerometer disagrees with itself between identical placements.');
+    add('tilt', 'Tilt sensor consistency', rep == null ? 'needs 2 pairs' : am(rep), by(rep, r / 20, r / 6), 'Tilt readings differed between identical placements. Put the phone against the same edge each time on a firm table, then rerun; if it stays high, the tilt sensor itself is inconsistent.');
     const b = Math.hypot(reversal.pitchBias, reversal.rollBias);
     add('bias', 'Tilt sensor offset', am(b), b <= 60 ? 'good' : b <= 180 ? 'ok' : 'poor', b > 60 ? 'Large but fixed — a 2-star alignment calibrates it out.' : 'Calibrated out by alignment either way.', false);
   } else add('tilt', 'Tilt sensor consistency', '—', 'na', '');
@@ -125,7 +129,9 @@ export function gradeCheck({ sensors, reversal, still, swing, sweep, turns }, r)
     if (swing.compassWorst != null) add('cswing', 'Compass return after slewing', am(swing.compassWorst), by(swing.compassWorst, r / 2, 2 * r), 'Only matters if you use Compass mode.', false);
   } else add('swing', 'Return after slewing', '—', 'na', '');
   // 7. Horizon → zenith sweep
-  if (sweep) {
+  if (sweep && sweep.invalid) {
+    add('ceiling', 'Reliable up to altitude', 'not valid — base turned', 'na', 'During the horizon-to-zenith step the direction changed even near the horizon, so the scope base (or the phone) turned. Hold the rocker box still and redo the Phone check on the telescope.');
+  } else if (sweep) {
     const reached = sweep.altMax >= 75;
     add('ceiling', 'Reliable up to altitude', reached ? `${sweep.ceiling.toFixed(0)}°` : `only reached ${sweep.altMax.toFixed(0)}°`,
       !reached ? 'na' : sweep.ceiling >= 80 ? 'good' : sweep.ceiling >= 65 ? 'ok' : 'poor',

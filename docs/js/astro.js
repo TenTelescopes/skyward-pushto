@@ -80,6 +80,14 @@ export class Sky {
   }
   /** Current position for every object (used for lists). */
   updateAll(date = new Date()) { for (const o of this.objects) { const p = this.altAz(o, date); o.alt = p.alt; o.az = p.az; } }
+  /** Apparent alt/az of an arbitrary J2000 RA/Dec (degrees). */
+  altAzRaDec(ra, dec, date = new Date()) { const s = A.HorizonFromVector(A.RotateVector(this._rot(date), j2000Vec(ra, dec)), 'normal'); return { alt: s.lat, az: s.lon }; }
+  /** Apparent angular diameter (arcmin) of a planet or the Moon, from its equatorial radius and current distance. */
+  diameter(body, date = new Date()) {
+    const R = { Moon: 1737.4, Mercury: 2439.7, Venus: 6051.8, Mars: 3396.2, Jupiter: 71492, Saturn: 60268, Uranus: 25559, Neptune: 24764 }[body]; if (!R) return null;
+    const t = A.MakeTime(date), obs = this.observer(); const eq = A.Equator(body, t, obs, true, true);
+    return 2 * Math.atan(R / (eq.dist * 149597870.7)) * 180 / Math.PI * 60;
+  }
   sunAlt(date = new Date()) { const t = A.MakeTime(date), obs = this.observer(); const eq = A.Equator('Sun', t, obs, true, true); return A.Horizon(t, obs, eq.ra, eq.dec, 'normal').altitude; }
 }
 
