@@ -165,7 +165,8 @@ function quickStartHTML() {
   return `<div class="card qs"><b>Get observing</b>
     ${steps.map((x, i) => `<div class="qs-row ${x.done ? 'done' : i === next ? 'now' : ''}"><span>${x.done ? '✓' : i + 1}.</span> <span class="qs-txt">${x.html}</span>
       ${x.btn && (i === next || x.done) ? `<button id="${x.btn[0]}" class="${i === next ? 'primary' : 'mini'}">${x.btn[1]}</button>` : ''}${x.btn2 && i === next ? `<button id="${x.btn2[0]}" class="mini">${x.btn2[1]}</button>` : ''}</div>`).join('')}
-    <div class="qs-row ${''}"><span>4.</span> <span class="qs-txt muted">Pick a target below and push</span></div></div>`;
+    <div class="qs-row ${''}"><span>4.</span> <span class="qs-txt muted">Pick a target below and push</span></div>
+    <div class="btnrow"><button id="qs-explore">Explore the sky now — best guess, no alignment</button></div></div>`;
 }
 function bindQuickStart(el) {
   const on = (id, f) => { const b = $('#' + id, el); if (b) b.onclick = f; };
@@ -174,6 +175,7 @@ function bindQuickStart(el) {
   on('qs-skip', () => { state.skipCheck = true; save(); renderFind(); });
   on('qs-gps', () => getGPS());
   on('qs-align', () => showTab('align'));
+  on('qs-explore', () => { state.target = null; save(); showTab('push'); });
   el.querySelectorAll('[data-go]').forEach((b) => b.onclick = () => { state.target = b.dataset.go; save(); showTab('push'); });
 }
 
@@ -229,7 +231,21 @@ function fillFind() {
 const targetObj = () => sky.objects.find((o) => o.key === state.target);
 function renderPush() {
   const el = $('#tab-push'); const o = targetObj();
-  if (!o) { el.innerHTML = `<p class="muted">Pick a target on the Find tab.</p>`; return; }
+  if (!o) {
+    el.innerHTML = `<div class="target-h"><span class="name">Sky view</span><span class="muted">no target</span></div>
+      <div class="muted small">The chart follows the scope (or the phone in your hand). Pick a target on Find to get push arrows.</div>
+      <div class="infield" id="infield"></div>
+      <div id="whereami" class="whereami"></div>
+      <canvas id="reticle" width="800" height="800"></canvas>
+      <div class="btnrow zoom"><button id="z-out">−</button><button id="z-in">+</button><button id="z-ep">Eyepiece</button><button id="z-wide">30°</button><button id="z-auto">Auto</button><button id="z-lock" class="${state.zoomLock ? 'on' : ''}">${state.zoomLock ? 'Locked' : 'Lock'}</button></div>
+      <div class="btnrow"><button id="sv-find">Pick a target</button>${align.fit ? '' : '<button id="sv-align">Align for real pointing</button>'}</div>`;
+    chartCentre = 'scope'; if (zoom == null) zoom = 30;
+    bindChartControls();
+    $('#z-ctr')?.remove();
+    $('#sv-find').onclick = () => showTab('find');
+    if ($('#sv-align')) $('#sv-align').onclick = () => showTab('align');
+    return;
+  }
   const eps = profile().eyepieces;
   el.innerHTML = `
     ${state.waypoint && state.waypoint.via === o.key ? `<div class="muted small">Check star on the way to <b>${esc((sky.objects.find((x) => x.key === state.waypoint.then) || {}).label || '')}</b> — centre it, then tap Sync.</div>` : ''}
@@ -255,6 +271,7 @@ function renderPush() {
     <p class="muted small">Pinch to zoom out until you recognise the star pattern, then compare with the sky. Drawn as seen standing behind the scope (up = toward zenith); the eyepiece image of a Newtonian is rotated. The red circle is your eyepiece's true field.</p>
     <label class="row"><span>Eyepiece</span><select id="ep">${eps.map((e, i) => `<option value="${i}" ${i === state.ep ? 'selected' : ''}>${esc(e.name)} — ${(profile().fl / e.fl).toFixed(0)}×, ${(tfov(e) * 60).toFixed(0)}′ field${e.verified ? '' : ' (unverified)'}${baseUncertainty() != null && tfov(e) * 30 < baseUncertainty() ? ' — narrower than phone accuracy' : ''}</option>`).join('')}</select></label>
     <div class="btnrow"><button id="b-prev">◀ Prev</button><button id="b-sync" class="primary">Centered — Sync</button><button id="b-next">Next ▶</button></div>
+    <div class="btnrow"><button id="b-free">Sky view (no target)</button></div>
     <div class="kv" id="pinfo"></div>`;
   $('#ep').onchange = (e) => { state.ep = +e.target.value; save(); renderPush(); };
   el.querySelectorAll('[data-ep]').forEach((b) => b.onclick = () => { state.ep = +b.dataset.ep; save(); renderPush(); });
@@ -263,6 +280,7 @@ function renderPush() {
   $('#b-sync').onclick = () => doSync(o);
   const step = (d) => { const L = filtered(); const i = L.findIndex((x) => x.key === state.target); const n = L[(i + d + L.length) % L.length]; if (n) { state.target = n.key; save(); renderPush(); } };
   $('#b-prev').onclick = () => step(-1); $('#b-next').onclick = () => step(1);
+  $('#b-free').onclick = () => { state.target = null; save(); renderPush(); };
   bindChartControls();
 }
 let wpT = 0, wpDismissed = null, eyeT = 0;
@@ -298,8 +316,19 @@ function updateWaypoint(o, tgt) {
   $('#wp-go').onclick = () => { state.waypoint = { via: w.key, then: o.key }; state.target = w.key; save(); renderPush(); };
   $('#wp-no').onclick = () => { wpDismissed = o.key; box.innerHTML = ''; };
 }
+function updateSkyView() {
+  const cur = pointing(), live = cur && cur.ready ? cur : guessPointing();
+  const msg = $('#infield');
+  if (!cur) { msg.textContent = 'Waiting for sensors…'; return; }
+  if (!live) { msg.textContent = 'Not aligned, and no compass reading on this phone — align to see the sky move'; drawReticle(null, { alt: cur.alt, az: 0 }, { label: '' }, { noTarget: true }); return; }
+  msg.textContent = live.guess ? '' : `Aligned · ${cur.alt.toFixed(1)}° up, az ${cur.az.toFixed(1)}°`;
+  trackMotion(live); updateWhere(live);
+  drawReticle(cur, { alt: live.alt, az: live.az }, { label: '' }, { noTarget: true });
+}
 function updatePush() {
-  const o = targetObj(); if (!o || !$('#d-az')) return;
+  const o = targetObj();
+  if (!o) { if ($('#reticle')) updateSkyView(); return; }
+  if (!$('#d-az')) return;
   const tgt = sky.altAz(o); const cur = pointing();
   updateEyeview(o, tgt);
   const info = $('#pinfo');
@@ -412,7 +441,7 @@ function bindChartControls() {
   $('#z-lock').onclick = () => { state.zoomLock = !state.zoomLock; save(); const b = $('#z-lock'); b.classList.toggle('on', state.zoomLock); b.textContent = state.zoomLock ? 'Locked' : 'Lock'; toast(state.zoomLock ? 'Zoom locked — it won\'t zoom out while you move' : 'Zoom unlocked — zooms out while you move'); };
   $('#z-ep').onclick = () => setZoom(tfov() * 0.9);
   $('#z-wide').onclick = () => setZoom(30);
-  $('#z-ctr').onclick = () => { chartCentre = chartCentre === 'scope' ? 'target' : 'scope'; $('#z-ctr').textContent = chartCentre === 'scope' ? 'Centre: scope' : 'Centre: target'; };
+  if ($('#z-ctr')) $('#z-ctr').onclick = () => { chartCentre = chartCentre === 'scope' ? 'target' : 'scope'; $('#z-ctr').textContent = chartCentre === 'scope' ? 'Centre: scope' : 'Centre: target'; };
   // pinch to zoom
   let d0 = 0, z0 = 0;
   const dist = (e) => Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
@@ -515,6 +544,7 @@ function drawReticle(cur, tgt, o, opt = {}) {
     const L = Math.max(14, half * s * 0.35); c.beginPath(); c.moveTo(scope.x - L, scope.y); c.lineTo(scope.x + L, scope.y); c.moveTo(scope.x, scope.y - L); c.lineTo(scope.x, scope.y + L); c.stroke();
   }
 
+  if (opt.noTarget) return;
   // target
   const tq = proj(tgt); let x, y, inside = !!tq && tq.r <= view;
   if (inside) { x = tq.x; y = tq.y; }

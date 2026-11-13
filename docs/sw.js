@@ -1,5 +1,5 @@
 // Offline cache for the browser/PWA build. The native (Capacitor) apps ship these files inside the app instead.
-const CACHE = 'skyward-pushto-v13';
+const CACHE = 'skyward-pushto-v14';
 const FILES = ['./', 'index.html', 'css/app.css', 'js/main.js', 'js/model.js', 'js/astro.js', 'js/sensors.js', 'js/tests.js', 'js/check.js', 'js/assist.js', 'js/eyeview.js', 'js/dome.js', 'js/locate.js', 'data/bounds.js', 'js/game.js', 'js/wixscores.js', 'vendor/qrcode.mjs', 'vendor/jsQR.js',
   'data/catalog.js', 'vendor/astronomy.mjs', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png'];
 self.addEventListener('install', (e) => e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES)).then(() => self.skipWaiting())));
