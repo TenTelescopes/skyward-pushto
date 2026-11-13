@@ -88,6 +88,26 @@ export class Sky {
     const t = A.MakeTime(date), obs = this.observer(); const eq = A.Equator(body, t, obs, true, true);
     return 2 * Math.atan(R / (eq.dist * 149597870.7)) * 180 / Math.PI * 60;
   }
+  /** Moon altitude (deg) and illuminated fraction (0–1). */
+  moonInfo(date = new Date()) {
+    const t = A.MakeTime(date), obs = this.observer(); const eq = A.Equator('Moon', t, obs, true, true);
+    const h = A.Horizon(t, obs, eq.ra, eq.dec, 'normal'); return { alt: h.altitude, az: h.azimuth, frac: A.Illumination('Moon', t).phase_fraction };
+  }
+  /**
+   * Evening/morning Sun events for the night that starts on the local calendar day of `day`:
+   * sunset, end of nautical (−12°) and astronomical (−18°) twilight, and the morning equivalents. Null where they don't happen.
+   */
+  night(day = new Date()) {
+    const noon = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 12), obs = this.observer(), t0 = A.MakeTime(noon);
+    const d = (x) => (x ? x.date : null);
+    const set = d(A.SearchRiseSet('Sun', obs, -1, t0, 1));
+    const naut = d(A.SearchAltitude('Sun', obs, -1, t0, 1, -12)), astro = d(A.SearchAltitude('Sun', obs, -1, t0, 1, -18));
+    const astroAm = d(A.SearchAltitude('Sun', obs, +1, t0, 1.5, -18)), nautAm = d(A.SearchAltitude('Sun', obs, +1, t0, 1.5, -12));
+    const rise = d(A.SearchRiseSet('Sun', obs, +1, t0, 1.5));
+    const mrise = d(A.SearchRiseSet('Moon', obs, +1, t0, 1)), mset = d(A.SearchRiseSet('Moon', obs, -1, t0, 1));
+    return { set, naut, astro, astroAm, nautAm, rise, moonRise: mrise, moonSet: mset, moonFrac: A.Illumination('Moon', A.MakeTime(astro || naut || set || noon)).phase_fraction };
+  }
+  sunAltAz(date = new Date()) { const t = A.MakeTime(date), obs = this.observer(); const eq = A.Equator('Sun', t, obs, true, true); const h = A.Horizon(t, obs, eq.ra, eq.dec, 'normal'); return { alt: h.altitude, az: h.azimuth }; }
   sunAlt(date = new Date()) { const t = A.MakeTime(date), obs = this.observer(); const eq = A.Equator('Sun', t, obs, true, true); return A.Horizon(t, obs, eq.ra, eq.dec, 'normal').altitude; }
 }
 

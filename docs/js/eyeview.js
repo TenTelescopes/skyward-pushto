@@ -2,6 +2,7 @@
 // Stars come from the Hipparcos field (to mag 8); deep-sky shapes use OpenNGC size and position angle;
 // planet discs use their real radius and current distance. Brightness is NOT to scale — the label says so.
 import { tangentOffset, D2R, vecFromAltAz, cross, norm, dot } from './model.js';
+import { tint } from './theme.js';
 
 /** Unit direction (in the alt-az tangent plane, x right / y up) of celestial north and east at a target. */
 function skyAxes(sky, o, date) {
@@ -21,7 +22,7 @@ function skyAxes(sky, o, date) {
  */
 export function drawEyepiece(cv, sky, o, tgt, ep, scope, opts = {}) {
   const c = cv.getContext('2d'), W = cv.width, H = cv.height, cx = W / 2, cy = H / 2, Rpx = W * 0.47, k = opts.bright ?? 1;
-  const col = (r, g = 0, b = 0, a = 1) => `rgba(${r * k | 0},${g * k | 0},${b * k | 0},${a})`;
+  const col = (r, g = 0, b = 0, a = 1) => tint(r, g, b, a, k);
   const date = new Date();
   const mag = scope.fl / ep.fl, tfov = ep.afov / mag, rad = tfov / 2, s = Rpx / rad;   // px per degree
   // Surface brightness of extended things (and of the sky background) scales with exit pupil², capped at the eye's

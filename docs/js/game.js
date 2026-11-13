@@ -28,6 +28,8 @@ function magLimitFor(t, aperture) {
   const k = aperture >= 190 ? 0.7 : 0;
   return { GX: 10.0, PN: 11.0, GC: 9.5, OC: 8.5, NB: 9.0, CN: 9.0, DS: 7.5, PL: 99 }[t] + k;
 }
+/** Seen in a small scope with the Sun up (user, Nov 13): the Moon, Venus, Jupiter, Saturn, and Mars when it's bright. */
+export const DAYLIGHT = ['Moon', 'Venus', 'Jupiter', 'Saturn', 'Mars'];
 export function isCandidate(o, { aperture = 150, sunAlt = -18, maxAlt = 80 }) {
   if (o.alt == null || o.alt < 25 || o.alt > maxAlt) return false;
   if (o.key.startsWith('st:') || o.key.startsWith('as:') || o.id === 'Moon') return false;
@@ -39,7 +41,8 @@ export function isCandidate(o, { aperture = 150, sunAlt = -18, maxAlt = 80 }) {
   if (o.mag == null) { if (!(o.cats || []).some((c) => /^M\d/.test(c))) return false; } else if (o.mag > (lim ?? 9)) return false;
   if (o.maj && o.maj > 180) return false;                                  // bigger than ~3°: not a pointing target
   if (o.maj && o.maj > 60 && !(o.cats || []).some((c) => /^M\d/.test(c))) return false; // big, faint non-Messier nebulae can't be 'centred'
-  if (sunAlt > -6 && !o.planet) return false;                                       // daylight / civil twilight: planets only
+  if (sunAlt > 0 && !DAYLIGHT.includes(o.id)) return false;                       // daylight: Moon, Venus, Jupiter, Saturn, Mars only
+  if (sunAlt > -6 && !o.planet) return false;                                       // civil twilight: planets only
   if (sunAlt > -12 && !(o.planet || ds || (o.mag != null && o.mag < 5))) return false; // nautical twilight: bright things only
   return true;
 }

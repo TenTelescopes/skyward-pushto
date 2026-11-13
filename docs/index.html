@@ -16,9 +16,13 @@
     <div id="st-scope" class="st"></div>
     <div id="st-point" class="st mono"></div>
     <div id="st-align" class="st"></div>
+    <button id="hb-day" class="hbtn" aria-label="Day or night mode">☀</button>
+    <button id="hb-fs" class="hbtn" aria-label="Full screen">⛶</button>
   </header>
+  <div id="flowbar" class="hidden"></div>
 
   <main>
+    <section id="tab-plan" class="tab"></section>
     <section id="tab-find" class="tab"></section>
     <section id="tab-push" class="tab"></section>
     <section id="tab-align" class="tab"></section>
@@ -28,6 +32,7 @@
   </main>
 
   <nav id="tabs">
+    <button data-tab="plan">Plan</button>
     <button data-tab="find">Find</button>
     <button data-tab="push">Push</button>
     <button data-tab="align">Align</button>
@@ -38,15 +43,19 @@
 
   <div id="gate" class="overlay">
     <div class="card">
-      <h1>Skyward Push-To</h1>
-      <p>Uses your phone's motion sensors to guide a Skyward telescope. Works fully offline.</p>
-      <button id="gate-start" class="primary big">Start sensors</button>
+      <div id="launch"><h1>Skyward Push-To</h1><p class="muted">Loading…</p></div>
       <p id="gate-msg" class="muted"></p>
       <button id="gate-skip" class="hidden" style="width:100%;margin-top:8px">Continue without sensors</button>
       <button id="gate-sim" class="hidden">Simulate sensors (desktop testing)</button>
-      <p class="muted small" style="text-align:center;margin:12px 0 0">Build 16 · Nov 12</p>
+      <p class="muted small" style="text-align:center;margin:12px 0 0">Build 22 · Nov 13</p>
     </div>
   </div>
+  <div id="skycheck" class="overlay hidden"><div class="card" id="skycheck-card"></div></div>
+  <div id="fs-help" class="overlay hidden"><div class="card">
+    <h3 style="margin-top:0">Full screen</h3>
+    <div class="fs-body"></div>
+    <button id="fs-close" class="primary" style="width:100%">OK</button>
+  </div></div>
   <div id="toast" class="hidden"></div>
   <div id="scanner" class="overlay hidden"><div class="card" style="text-align:center">
     <h3 style="margin-top:0">Scan a Skyward code</h3>

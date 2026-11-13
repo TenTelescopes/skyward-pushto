@@ -6,7 +6,10 @@ import { fitConsistency, pairConsistency, outliers, verdict as domeVerdict, draw
 import { constellationAt, conName, altAzToJ2000 } from './locate.js';
 import { whereWords, recogniseWords, pickStars, checkAltitude, checkPair, chooseWaypoint } from './assist.js';
 import { drawEyepiece, newtonianMatrix } from './eyeview.js';
-import { STYLES, PENALTY, pickTargets, routeOrder, pathLength, tokenFor, buildTokenIndex, encodeChallenge, decodeChallenge, challengeId, encodeResult, decodeResult, points, rank, fmtTime, dwell } from './game.js';
+import { theme, tint } from './theme.js';
+import { LEVELS, planTargets, routePlan, nextDarkNight } from './plan.js';
+import { rate, describe, DOTS, LEVEL_NAMES, DEFAULT_NELM } from './vis.js';
+import { DAYLIGHT, STYLES, PENALTY, pickTargets, routeOrder, pathLength, tokenFor, buildTokenIndex, encodeChallenge, decodeChallenge, challengeId, encodeResult, decodeResult, points, rank, fmtTime, dwell } from './game.js';
 import { submitScore, fetchBoard, flushQueue } from './wixscores.js';
 import qrcode from '../vendor/qrcode.mjs';
 import { analyzeSwing, analyzeAltSweep, analyzeHorizonTurn, gradeCheck, guessModel, GRADE } from './check.js';
@@ -47,6 +50,7 @@ const DEFAULTS = {
   site: { lat: 43.65, lon: -79.38, elev: 100, source: 'default (Toronto) — set your location' },
   smooth: 0.6, minAlt: 10, bright: 1, ep: 0, useRate: false, catFilter: 'M', upOnly: true, sort: 'cat',
   history: [], target: null,
+  launch: { check: true, sky: false, align: true },
 };
 let state;
 
@@ -68,7 +72,39 @@ function applyModelSettings() {
   model.setMounting(state.mounting);
   const c = profile().cal; model.p = c ? c.p : 0; model.q = c ? c.q : 0;
   model.useRate = state.useRate;
-  document.documentElement.style.setProperty('--k', state.bright);
+  applyTheme();
+}
+/** Screen brightness factor: the slider at night; always full in Day mode. */
+const vis = () => (state.day ? 1 : state.bright);
+function applyTheme() {
+  theme.day = !!state.day;
+  const r = document.documentElement;
+  r.dataset.theme = state.day ? 'day' : 'night';
+  r.style.setProperty('--k', vis());
+  document.querySelector('meta[name=theme-color]')?.setAttribute('content', state.day ? '#f4f5f7' : '#000000');
+  const b = $('#hb-day'); if (b) { b.textContent = state.day ? '☾' : '☀'; b.title = state.day ? 'Switch to Night (red) mode' : 'Switch to Day mode'; }
+  eyeT = 0;
+}
+function toggleDay() {
+  state.day = !state.day; save(); applyTheme();
+  if ($('#tab-setup').classList.contains('on')) renderSetup();
+  if (state.day) toast('Day mode — bright colours. Switch back to Night (☾) before observing.', 3500);
+}
+const IS_STANDALONE = () => (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true || !!window.Capacitor;
+function canFullscreen() { const el = document.documentElement; return !!(el.requestFullscreen || el.webkitRequestFullscreen); }
+function toggleFullscreen() {
+  const el = document.documentElement;
+  if (document.fullscreenElement || document.webkitFullscreenElement) { (document.exitFullscreen || document.webkitExitFullscreen).call(document); return; }
+  if (canFullscreen() && !IS_IOS) { (el.requestFullscreen || el.webkitRequestFullscreen).call(el, { navigationUI: 'hide' })?.catch?.(() => fullscreenHelp()); return; }
+  fullscreenHelp();
+}
+function fullscreenHelp() {
+  const box = $('#fs-help'); box.classList.remove('hidden');
+  box.querySelector('.fs-body').innerHTML = IS_IOS
+    ? `<p>iPhone Safari can't hide its own bars for a web page. Install the app on your Home Screen instead — it then opens <b>full screen</b>, works offline and keeps your settings:</p>
+       <ol><li>Open this page in <b>Safari</b>.</li><li>Tap <b>Share</b> (the square with the arrow up) — on newer iOS it's under the <b>···</b> button.</li><li>Choose <b>Add to Home Screen</b> and make sure <b>Open as Web App</b> is on, then tap <b>Add</b>.</li><li>Open <b>Skyward</b> from the Home Screen and tap Start sensors → <b>Allow</b>.</li></ol>
+       <p class="muted small">The Home Screen app asks for motion access separately from Safari, once.</p>`
+    : `<p>This browser won't go full screen from here. In Chrome, open the <b>⋮</b> menu → <b>Add to Home screen</b> (or <b>Install app</b>), then open Skyward from the home screen — it runs full screen.</p>`;
 }
 
 function onSensor(s) {
@@ -117,7 +153,137 @@ function showTab(t) {
   tab = t;
   document.querySelectorAll('nav#tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === t));
   document.querySelectorAll('.tab').forEach((s) => s.classList.toggle('on', s.id === 'tab-' + t));
-  ({ find: renderFind, push: renderPush, align: renderAlign, game: renderGame, test: renderTest, setup: renderSetup })[t]();
+  ({ plan: renderPlan, find: renderFind, push: renderPush, align: renderAlign, game: renderGame, test: renderTest, setup: renderSetup })[t]();
+}
+
+// ---------------------------------------------------------------- PLAN
+// state.plan = { start: ISO, hours, items: [{ key, sync? }], done: { key: true } }
+let planRows = null, planLevel = 'all', planSort = 'time', planLimit = 60;
+const hm = (d) => (d ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—');
+const pad = (n) => String(n).padStart(2, '0');
+const dateVal = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const timeVal = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+const objByKey = (k) => sky.objects.find((o) => o.key === k);
+function planState() {
+  if (!state.plan) state.plan = { start: null, hours: 2, items: [], done: {} };
+  if (!state.plan.start) state.plan.start = defaultStart().toISOString();
+  return state.plan;
+}
+function defaultStart() {
+  const now = new Date(), n = sky.night(now), dark = n.astro || n.naut || n.set;
+  if (dark && now < dark) return dark;
+  const r = new Date(Math.ceil(now.getTime() / 900000) * 900000);
+  return r;
+}
+const planList = () => (state.plan ? state.plan.items : []);
+function markDone(key, v) { if (!state.plan) return; state.plan.done = state.plan.done || {}; if (v) state.plan.done[key] = true; else delete state.plan.done[key]; save(); }
+function planBar(o) {
+  const P = planList(), i = P.findIndex((x) => x.key === o.key); if (i < 0) return '';
+  const it = P[i], nxt = P[i + 1] && objByKey(P[i + 1].key);
+  return `<div class="planbar">${it.sync ? `<b>Sync star</b> — centre ${esc(o.label)}, tap <b>Centered — Sync</b>, then Next. ` : ''}Plan ${i + 1} of ${P.length}${nxt ? ` · next: <b>${esc(nxt.label)}</b> (Next ▶)` : ' · last one'}</div>`;
+}
+function renderPlan() {
+  const el = $('#tab-plan'), P = planState(), start = new Date(P.start), n = sky.night(start);
+  const startEvening = n.set && start < n.set ? n.set : null;
+  const moonTxt = `${Math.round(n.moonFrac * 100)}% lit${n.moonRise ? ', rises ' + hm(n.moonRise) : ''}${n.moonSet ? ', sets ' + hm(n.moonSet) : ''}`;
+  el.innerHTML = `<h2 style="margin-top:4px">Plan a session</h2>
+    <div class="card">
+      <label class="row"><span>Date</span><input id="pl-date" type="date" value="${dateVal(start)}"></label>
+      <label class="row"><span>Going out at</span><input id="pl-time" type="time" step="900" value="${timeVal(start)}"></label>
+      <label class="row"><span>Staying out</span><select id="pl-hours">${[1, 1.5, 2, 3, 4, 6, 8].map((h) => `<option value="${h}" ${+P.hours === h ? 'selected' : ''}>${h} hour${h > 1 ? 's' : ''}</option>`).join('')}</select></label>
+      <div class="btnrow"><button id="pl-dark" class="mini">At full dark (${hm(n.astro || n.naut)})</button><button id="pl-now" class="mini">Now</button></div>
+      <label class="row"><span>Your sky <span class="muted small">${state.skyq && state.skyq.src !== 'pick' ? `(sky check ${new Date(state.skyq.when).toLocaleDateString()})` : state.skyq ? '' : '(guess — check it for better picks)'}</span></span><select id="pl-skysel">${SKY_PICKS.map(([m, l]) => `<option value="${m}" ${Math.abs(skyNelm() - m) < 0.26 ? 'selected' : ''}>${l}</option>`).join('')}${SKY_PICKS.some(([m]) => Math.abs(skyNelm() - m) < 0.26) ? '' : `<option selected>${esc(state.skyq.label)}</option>`}</select></label>
+      <div class="btnrow"><button id="pl-skyq" class="mini">Little Dipper check</button></div>
+      <div class="muted small">Sunset ${hm(n.set)} · dark ${hm(n.astro)} → ${hm(n.astroAm)} · Moon ${moonTxt}${startEvening ? ' · <b>you start before sunset</b>' : ''}</div>
+    </div>
+    <h3>Your plan ${P.items.length ? `<span class="muted small">(${P.items.filter((x) => !x.sync).length} targets${P.items.some((x) => x.sync) ? `, ${P.items.filter((x) => x.sync).length} sync stars` : ''})</span>` : ''}</h3>
+    ${P.items.length ? `<ul class="list" id="pl-list">${P.items.map((it, i) => planItemHTML(it, i)).join('')}</ul>
+      <div class="btnrow"><button id="pl-route" class="primary">Suggest hop order + sync stars</button></div>
+      <div class="btnrow"><button id="pl-bytime" class="mini">Order by best time</button><button id="pl-nosync" class="mini">Remove sync stars</button><button id="pl-clear" class="mini">Clear plan</button></div>
+      <p class="muted small">Hop order keeps pushes short and puts a bright star next to each group of targets — centre it and Sync before the group, so pointing is freshly corrected right where you're looking. Tap a name to start pushing; Next on the Push screen follows this list.</p>`
+    : '<p class="muted small">Add targets from the suggestions below with <b>+</b>.</p>'}
+    <h3>Suggested for ${hm(start)}–${hm(new Date(start.getTime() + P.hours * 3600000))}</h3>
+    <div class="chips" id="pl-lv">${[['all', 'All'], ['0', '●●● Obvious'], ['1', '●●○ Visible'], ['2', '●○○ Challenging']].map(([k, l]) => `<button data-lv="${k}" class="${planLevel === k ? 'on' : ''}">${l}</button>`).join('')}</div>
+    <div class="chips" id="pl-sort">${[['time', 'Best time'], ['level', 'Best view first'], ['alt', 'Highest'], ['name', 'Catalog']].map(([k, l]) => `<button data-s="${k}" class="${planSort === k ? 'on' : ''}">${l}</button>`).join('')}</div>
+    <ul class="list" id="pl-sugg"><li class="muted">Working it out…</li></ul>`;
+  const setStart = (d) => { P.start = d.toISOString(); planRows = null; save(); renderPlan(); };
+  const fromInputs = () => { const [y, m, d] = $('#pl-date').value.split('-').map(Number), [hh, mm] = $('#pl-time').value.split(':').map(Number); if (y && hh != null) setStart(new Date(y, m - 1, d, hh, mm || 0)); };
+  $('#pl-skyq').onclick = () => openSkyCheck();
+  $('#pl-skysel').onchange = (e) => { const m = +e.target.value; if (!m) return; const [label] = skyLabel(m); state.skyq = { nelm: m, label, when: Date.now(), src: 'pick' }; planRows = null; save(); renderPlan(); };
+  $('#pl-date').onchange = fromInputs; $('#pl-time').onchange = fromInputs;
+  $('#pl-hours').onchange = (e) => { P.hours = +e.target.value; planRows = null; save(); renderPlan(); };
+  $('#pl-dark').onclick = () => setStart(n.astro || n.naut || start);
+  $('#pl-now').onclick = () => setStart(new Date(Math.ceil(Date.now() / 900000) * 900000));
+  el.querySelectorAll('#pl-lv [data-lv]').forEach((b) => b.onclick = () => { planLevel = b.dataset.lv; planLimit = 60; renderPlan(); });
+  el.querySelectorAll('#pl-sort [data-s]').forEach((b) => b.onclick = () => { planSort = b.dataset.s; renderPlan(); });
+  bindPlanList();
+  if ($('#pl-route')) {
+    $('#pl-route').onclick = () => {
+      const rows = P.items.filter((x) => !x.sync).map((x) => rowFor(x.key)).filter(Boolean);
+      const { steps, notUp } = routePlan(sky, rows, { start, hours: P.hours });
+      P.items = steps.map((s) => (s.kind === 'sync' ? { key: s.o.key, sync: true } : { key: s.o.key })).concat(notUp.map((r) => ({ key: r.key })));
+      save(); renderPlan();
+      toast(`${steps.filter((s) => s.kind === 'sync').length} sync star${steps.filter((s) => s.kind === 'sync').length === 1 ? '' : 's'} added${notUp.length ? ` · ${notUp.length} not up during your session (left at the end)` : ''}`, 3500);
+    };
+    $('#pl-bytime').onclick = () => { P.items = P.items.filter((x) => !x.sync).sort((a, b) => ((rowFor(a.key) || {}).best || 0) - ((rowFor(b.key) || {}).best || 0)); save(); renderPlan(); };
+    $('#pl-nosync').onclick = () => { P.items = P.items.filter((x) => !x.sync); save(); renderPlan(); };
+    $('#pl-clear').onclick = () => { if (P.items.length && !confirmClear()) return; P.items = []; P.done = {}; save(); renderPlan(); };
+  }
+  setTimeout(fillPlanSuggestions, 30);   // let the screen paint first
+}
+let clearArmed = 0;
+function confirmClear() { if (Date.now() - clearArmed < 3000) return true; clearArmed = Date.now(); toast('Tap Clear plan again to empty it'); return false; }
+function computePlanRows() {
+  const P = planState();
+  const sig = [P.start, P.hours, profile().name, profile().aperture, profile().eyepieces.map((e) => e.fl).join(), skyNelm()].join('|');
+  if (sig !== planSig) { planRows = null; planSig = sig; }
+  if (!planRows) { planDarkNight = (() => { try { return nextDarkNight(sky, new Date(P.start)); } catch (e) { return null; } })(); }
+  if (!planRows) planRows = planTargets(sky, { start: new Date(P.start), hours: +P.hours, scope: profile(), nelm: skyNelm(), minAlt: 20 });
+  return planRows;
+}
+function skyNelm() { return state.skyq ? state.skyq.nelm : DEFAULT_NELM; }
+let planDarkNight = null, planSig = '';
+const rowFor = (key) => computePlanRows().find((r) => r.key === key) || null;
+function planItemHTML(it, i) {
+  const o = objByKey(it.key); if (!o) return '';
+  const r = it.sync ? null : rowFor(it.key), done = state.plan.done && state.plan.done[it.key];
+  const info = it.sync ? `<div class="t2">Sync star — centre it, tap Sync, then carry on</div>`
+    : r ? `<div class="t2"><span class="lv lv${r.level}">${DOTS[r.level]} ${LEVELS[r.level]}</span> best ${hm(r.best)}, ${r.alt.toFixed(0)}° ${compassName(r.az)}${r.ep ? ' · ' + esc(r.ep.name) : ''}</div><div class="t2">${esc(r.desc)}</div>`
+    : `<div class="t2">Not above 25° during this session</div>`;
+  return `<li class="${done ? 'done' : ''}"><span class="muted small" style="width:18px">${i + 1}</span>
+    <div class="main" data-goplan="${esc(it.key)}"><div class="t1">${it.sync ? '★ ' : ''}${esc(o.label)}${done ? ' ✓' : ''}</div>${info}</div>
+    <button class="mini" data-up="${i}" ${i === 0 ? 'disabled' : ''}>↑</button><button class="mini" data-dn="${i}" ${i === state.plan.items.length - 1 ? 'disabled' : ''}>↓</button><button class="mini" data-rm="${i}">✕</button></li>`;
+}
+function bindPlanList() {
+  const P = state.plan, ul = $('#pl-list'); if (!ul) return;
+  const mv = (i, j) => { const a = P.items; [a[i], a[j]] = [a[j], a[i]]; save(); renderPlan(); };
+  ul.querySelectorAll('[data-up]').forEach((b) => b.onclick = () => mv(+b.dataset.up, +b.dataset.up - 1));
+  ul.querySelectorAll('[data-dn]').forEach((b) => b.onclick = () => mv(+b.dataset.dn, +b.dataset.dn + 1));
+  ul.querySelectorAll('[data-rm]').forEach((b) => b.onclick = () => { P.items.splice(+b.dataset.rm, 1); save(); renderPlan(); });
+  ul.querySelectorAll('[data-goplan]').forEach((d) => d.onclick = () => { state.target = d.dataset.goplan; save(); showTab('push'); });
+}
+function fillPlanSuggestions() {
+  const ul = $('#pl-sugg'); if (!ul) return;
+  const P = state.plan, inPlan = new Set(P.items.map((x) => x.key));
+  let L = computePlanRows();
+  if (planLevel !== 'all') L = L.filter((r) => r.level === +planLevel);
+  const by = { time: (a, b) => a.best - b.best, level: (a, b) => b.margin - a.margin, alt: (a, b) => b.alt - a.alt, name: (a, b) => catNum(a.o) - catNum(b.o) }[planSort];
+  L = L.slice().sort(by);
+  const counts = [0, 1, 2].map((l) => computePlanRows().filter((r) => r.level === l).length);
+  $('#pl-lv').querySelectorAll('[data-lv]').forEach((b) => { if (b.dataset.lv !== 'all') b.textContent = `${DOTS[+b.dataset.lv]} ${LEVELS[+b.dataset.lv]} (${counts[+b.dataset.lv]})`; });
+  ul.innerHTML = L.slice(0, planLimit).map((r) => `<li><div class="main" data-info="${esc(r.key)}"><div class="t1">${esc(r.o.label)} <span class="lv lv${r.level}">${DOTS[r.level]} ${LEVELS[r.level]}</span></div>
+      <div class="t2">${esc(typeLabel(r.o.t))}${r.o.mag != null ? ' · mag ' + (+r.o.mag).toFixed(1) : ''}${r.ep ? ' · best with the ' + esc(r.ep.name) : ''}</div>
+      <div class="t2">${esc(r.desc)}${r.cause === 'moon' && planDarkNight ? ` — better from ${planDarkNight.toLocaleDateString([], { month: 'short', day: 'numeric' })}` : ''}</div>
+      <div class="t2">Best ${hm(r.best)} at ${r.alt.toFixed(0)}° ${compassName(r.az)} · up ${hm(r.from)}–${hm(r.to)}</div></div>
+      <button class="${inPlan.has(r.key) ? 'mini' : 'mini primary'}" data-add="${esc(r.key)}">${inPlan.has(r.key) ? '✓' : '+'}</button></li>`).join('')
+    + (L.length > planLimit ? `<li><button id="pl-more" style="width:100%">Show more (${L.length - planLimit})</button></li>` : '')
+    + (!L.length ? '<li class="muted">Nothing at this level during your session.</li>' : '');
+  ul.querySelectorAll('[data-add]').forEach((b) => b.onclick = () => {
+    const k = b.dataset.add, i = P.items.findIndex((x) => x.key === k);
+    if (i >= 0) P.items.splice(i, 1); else P.items.push({ key: k });
+    save(); const y = window.scrollY, m = $('main').scrollTop; renderPlan(); $('main').scrollTop = m; window.scrollTo(0, y);
+  });
+  const more = $('#pl-more'); if (more) more.onclick = () => { planLimit += 60; fillPlanSuggestions(); };
 }
 
 // ---------------------------------------------------------------- FIND
@@ -157,9 +323,9 @@ function quickStartHTML() {
   const next = steps.findIndex((x) => !x.done);
   if (next === -1) {
     sky.updateAll();
-    const best = pickTargets(sky.objects, { aperture: profile().aperture, sunAlt: sky.sunAlt(), n: 6 });
+    const best = pickTargets(sky.objects, { aperture: profile().aperture, sunAlt: sky.sunAlt(), n: 6 }).filter((o) => sky.sunAlt() < -2 || sunSep(o) >= SUN_KEEP);
     return `<div class="card qs"><div class="qs-row done">✓ Ready — ${esc(profile().name)} aligned <button id="qs-align" class="mini">Realign</button></div>
-      ${best.length ? `<div class="muted small" style="margin-top:6px">Tonight's best for your ${profile().aperture} mm — tap one to start pushing:</div>
+      ${best.length ? `<div class="muted small" style="margin-top:6px">${sky.sunAlt() > 0 ? 'Visible in daylight with' : "Tonight's best for"} your ${profile().aperture} mm — tap one to start pushing:</div>
       <div class="chips wrap">${best.map((o) => `<button data-go="${esc(o.key)}">${esc(o.label)}</button>`).join('')}</div>` : ''}</div>`;
   }
   return `<div class="card qs"><b>Get observing</b>
@@ -211,13 +377,29 @@ function filtered() {
     return n.some((x) => x === q || x.replace(/\s/g, '') === q.replace(/\s/g, '')) ? 0 : n.some((x) => x.startsWith(q)) ? 1 : 2; };
   return L.sort((a, b) => rank(a) - rank(b) || k(a) - k(b));
 }
+/** Tonight's rating for an object at its current position (cached conditions, refreshed every 30 s). */
+let nowCond = { t: 0 };
+function rateNow(o) {
+  if (Date.now() - nowCond.t > 30000) { const m = sky.moonInfo(); nowCond = { t: Date.now(), sun: sky.sunAlt(), m }; }
+  const c = nowCond, sepM = c.m.alt > 0 ? sepDeg(o.alt, o.az, c.m.alt, c.m.az) : 180;
+  return rate(o, { alt: o.alt, sunAlt: c.sun, moonAlt: c.m.alt, moonFrac: c.m.frac, moonSep: sepM, nelm: skyNelm() }, profile());
+}
+const rateTag = (r) => (r ? `<span class="lv lv${r.level}">${DOTS[r.level]}</span>` : '');
 function fillFind() {
   const L = filtered(); const ul = $('#flist'); if (!ul) return;
-  const sun = sky.sunAlt(); $('#sunwarn').textContent = sun > -12 ? `Sun altitude ${sun.toFixed(0)}° — ${sun > 0 ? 'daytime' : 'twilight'}; faint objects won't be visible yet.` : '';
+  const sun = sky.sunAlt(), sw = $('#sunwarn');
+  if (sun > 0) {
+    const up = DAYLIGHT.map((n) => sky.objects.find((o) => o.key === 'pl:' + n)).filter((o) => o && o.alt > state.minAlt);
+    sw.innerHTML = `<b>Daylight</b> (Sun ${sun.toFixed(0)}° up): only the Moon, Venus, Jupiter, Saturn and perhaps Mars show in the scope — nothing else on this list. <b>Never point near the Sun.</b>`
+      + (up.length ? `<div class="chips wrap" style="margin-top:4px">Up now: ${up.map((o) => `<button data-go="${esc(o.key)}">${esc(o.label)}${sunSep(o) < SUN_KEEP ? ' ⚠' : ''}</button>`).join('')}</div>` : '<div>None of them are above the horizon right now.</div>');
+    sw.querySelectorAll('[data-go]').forEach((b) => b.onclick = () => { state.target = b.dataset.go; save(); showTab('push'); });
+  } else sw.textContent = sun > -6 ? `Twilight (Sun ${(-sun).toFixed(0)}° down): the Moon and bright planets now, then the brightest stars. Deep-sky objects need full dark.`
+    : sun > -12 ? `Twilight (Sun ${(-sun).toFixed(0)}° down): planets and bright stars and doubles. Faint galaxies and nebulae need the Sun 18° down.`
+    : sun > -18 ? `Almost dark (Sun ${(-sun).toFixed(0)}° down): faint galaxies and nebulae improve until the Sun is 18° down.` : '';
   ul.innerHTML = L.slice(0, findLimit).map((o) => {
     const size = o.maj ? (o.maj >= 60 ? `${(o.maj / 60).toFixed(1)}°` : `${o.maj.toFixed(o.maj < 3 ? 1 : 0)}′`) : (o.sep ? `${o.sep}″` : '');
     return `<li data-k="${esc(o.key)}" class="${state.target === o.key ? 'sel' : ''} ${o.alt < state.minAlt ? 'below' : ''}">
-      <div class="main"><div class="t1">${esc(o.label)} <span class="muted small">${esc(typeLabel(o.t))}</span></div>
+      <div class="main"><div class="t1">${esc(o.label)} ${o.alt > 0 ? rateTag(rateNow(o)) : ''} <span class="muted small">${esc(typeLabel(o.t))}</span></div>
       <div class="t2">${esc(o.sub || '')}${o.con ? ' · ' + esc(o.con) : ''}</div></div>
       <div class="r num">${o.mag != null ? 'mag ' + (+o.mag).toFixed(1) : ''}${size ? '<br>' + size : ''}</div>
       <div class="r num" style="min-width:58px">${o.alt.toFixed(0)}°<br>${compassName(o.az)}</div></li>`;
@@ -228,6 +410,8 @@ function fillFind() {
 }
 
 // ---------------------------------------------------------------- PUSH
+const SUN_KEEP = 20;   // degrees: warn when a target is this close to the Sun
+function sunSep(o) { const S = sky.sunAltAz(); return sepDeg(o.alt, o.az, S.alt, S.az); }
 const targetObj = () => sky.objects.find((o) => o.key === state.target);
 function renderPush() {
   const el = $('#tab-push'); const o = targetObj();
@@ -237,7 +421,7 @@ function renderPush() {
       <div class="infield" id="infield"></div>
       <div id="whereami" class="whereami"></div>
       <canvas id="reticle" width="800" height="800"></canvas>
-      <div class="btnrow zoom"><button id="z-out">−</button><button id="z-in">+</button><button id="z-ep">Eyepiece</button><button id="z-wide">30°</button><button id="z-auto">Auto</button><button id="z-lock" class="${state.zoomLock ? 'on' : ''}">${state.zoomLock ? 'Locked' : 'Lock'}</button></div>
+      <div class="btnrow zoom"><button id="z-out">−</button><button id="z-in">+</button><button id="z-ep" title="Tap to cycle eyepieces">${esc(eyepiece().name)}</button><button id="z-wide">30°</button><button id="z-auto">Auto</button><button id="z-lock" class="${state.zoomLock ? 'on' : ''}">${state.zoomLock ? 'Locked' : 'Lock'}</button></div>
       <div class="btnrow"><button id="sv-find">Pick a target</button>${align.fit ? '' : '<button id="sv-align">Align for real pointing</button>'}</div>`;
     chartCentre = 'scope'; if (zoom == null) zoom = 30;
     bindChartControls();
@@ -249,9 +433,12 @@ function renderPush() {
   const eps = profile().eyepieces;
   el.innerHTML = `
     ${state.waypoint && state.waypoint.via === o.key ? `<div class="muted small">Check star on the way to <b>${esc((sky.objects.find((x) => x.key === state.waypoint.then) || {}).label || '')}</b> — centre it, then tap Sync.</div>` : ''}
+${planBar(o)}
     <div class="target-h"><span class="name">${esc(o.label)}</span><span class="muted">${esc(typeLabel(o.t))}${o.mag != null ? ' · mag ' + (+o.mag).toFixed(1) : ''}</span></div>
+    ${(() => { const r = o.alt > 0 ? rateNow(o) : null; return r ? `<div class="small" style="margin:2px 0 6px">${rateTag(r)} <b>${LEVEL_NAMES[r.level]}</b> — ${esc(describe(o, r))}${r.ep && r.level < 3 ? ` · best with the ${esc(r.ep.name)}` : ''}</div>` : ''; })()}
     <div class="muted small">${esc(o.sub || '')}${o.con ? ' · ' + esc(o.con) : ''}${o.mnote ? ' · ' + esc(o.mnote) : ''}</div>
     ${o.pairs ? `<div class="muted small">${o.pairs.map((p) => `${p.c}: ${p.sep}″ PA ${p.pa}° (${p.mags})`).join(' · ')}</div>` : ''}
+    ${sky.sunAlt() > -2 && sunSep(o) < SUN_KEEP ? `<div class="card bad" style="border-color:var(--hi)">⚠ ${esc(o.label)} is only ${sunSep(o).toFixed(0)}° from the Sun. Don't sweep toward the Sun — a moment of sunlight through the scope or finder can blind you. Keep the cap on the finder and approach from the side away from the Sun.</div>` : ''}
     <div class="deltas">
       <div class="delta" id="d-az"><div class="lab">Azimuth</div><div class="val">—</div><div class="dir"></div></div>
       <div class="delta" id="d-alt"><div class="lab">Altitude</div><div class="val">—</div><div class="dir"></div></div>
@@ -260,7 +447,7 @@ function renderPush() {
     <div id="whereami" class="whereami"></div>
     <div id="waypt"></div>
     <canvas id="reticle" width="800" height="800"></canvas>
-    <div class="btnrow zoom"><button id="z-out">−</button><button id="z-in">+</button><button id="z-ep">Eyepiece</button><button id="z-wide">30°</button><button id="z-auto">Auto</button><button id="z-lock" class="${state.zoomLock ? 'on' : ''}">${state.zoomLock ? 'Locked' : 'Lock'}</button></div>
+    <div class="btnrow zoom"><button id="z-out">−</button><button id="z-in">+</button><button id="z-ep" title="Tap to cycle eyepieces">${esc(eyepiece().name)}</button><button id="z-wide">30°</button><button id="z-auto">Auto</button><button id="z-lock" class="${state.zoomLock ? 'on' : ''}">${state.zoomLock ? 'Locked' : 'Lock'}</button></div>
     <div class="btnrow"><button id="z-ctr">${chartCentre === 'scope' ? 'Centre: scope' : 'Centre: target'}</button></div>
     <h3>In the eyepiece — what you should see</h3>
     <div class="chips" id="ep-chips">${eps.map((e, i) => `<button data-ep="${i}" class="${i === state.ep ? 'on' : ''}">${esc(e.name)} · ${(profile().fl / e.fl).toFixed(0)}×</button>`).join('')}</div>
@@ -278,7 +465,11 @@ function renderPush() {
   $('#rot180').onchange = (e) => { state.rot180 = e.target.checked; save(); eyeT = 0; };
   eyeT = 0;
   $('#b-sync').onclick = () => doSync(o);
-  const step = (d) => { const L = filtered(); const i = L.findIndex((x) => x.key === state.target); const n = L[(i + d + L.length) % L.length]; if (n) { state.target = n.key; save(); renderPush(); } };
+  const step = (d) => {
+    const P = planList(), i = P.findIndex((x) => x.key === state.target);
+    if (i >= 0) { if (d > 0) markDone(state.target, true); const n = P[i + d]; if (n) { state.target = n.key; save(); renderPush(); } else toast(d > 0 ? 'That was the last target in your plan' : 'Start of your plan'); return; }
+    const L = filtered(); const j = L.findIndex((x) => x.key === state.target); const m = L[(j + d + L.length) % L.length]; if (m) { state.target = m.key; save(); renderPush(); }
+  };
   $('#b-prev').onclick = () => step(-1); $('#b-next').onclick = () => step(1);
   $('#b-free').onclick = () => { state.target = null; save(); renderPush(); };
   bindChartControls();
@@ -293,7 +484,7 @@ function updateEyeview(o, tgt) {
   const longest = p.eyepieces.reduce((a, e) => (e.fl > a.fl ? e : a), p.eyepieces[0]);
   const fz = p.focuser ?? 90;
   const matrix = state.rot180 ? newtonianMatrix(tgt, fz) : null;
-  const r = drawEyepiece(cv, sky, obj, tgt, ep, p, { matrix, bright: state.bright, refExit: p.aperture / (p.fl / longest.fl) });
+  const r = drawEyepiece(cv, sky, obj, tgt, ep, p, { matrix, bright: vis(), refExit: p.aperture / (p.fl / longest.fl) });
   const exit = p.aperture / r.mag;
   const dim = r.rel < 0.999 ? `Nebulae, galaxies and the sky background are <b>${(1 / r.rel).toFixed(r.rel > 0.1 ? 1 : 0)}× dimmer</b> than in the ${esc(longest.name)} (${(-2.5 * Math.log10(r.rel)).toFixed(1)} mag); stars stay as bright, so faint stars can be easier to see. Dimming drawn on a compressed scale.`
     : `Brightest view of extended objects with your eyepieces; higher powers dim nebulae and galaxies, not stars.`;
@@ -372,7 +563,7 @@ function lastSyncAge() { const s = align.syncs[align.syncs.length - 1]; if (!s) 
 // Zoom state for the chart: null = automatic, otherwise radius in degrees. Centre on the scope or on the target.
 let zoom = null, chartCentre = 'scope';
 const ZMIN = 0.25, ZMAX = 60;
-let minView = ZMIN, dispView = 0;
+let minView = ZMIN, dispView = 0, minViewGuess = false;
 // Slew detection from the pointing itself: smoothed angular speed, "moving" above 1.5°/s, "settled" after 0.8 s below 0.4°/s.
 const motion = { prev: null, t: 0, v: 0, moving: false, stillSince: 0 };
 function trackMotion(cur) {
@@ -433,13 +624,29 @@ function autoRadius(cur, tgt) {
   if (!cur || chartCentre === 'target') return Math.max(half * 4, 5);
   return Math.min(45, Math.max(half * 3, sepDeg(cur.alt, cur.az, tgt.alt, tgt.az) * 1.3));
 }
+/** Eyepiece button: each tap moves to the next eyepiece in the cycle (Setup > Eyepieces, "Cycle" ticks) and zooms the chart to its field. */
+function cycleEyepiece() {
+  const eps = profile().eyepieces;
+  const inCycle = eps.map((e, i) => i).filter((i) => eps[i].cycle !== false);
+  const ring = inCycle.length ? inCycle : eps.map((e, i) => i);
+  const cur = Math.min(state.ep, eps.length - 1);
+  const pos = ring.indexOf(cur);
+  state.ep = ring[(pos + 1) % ring.length]; save();
+  const ep = eyepiece(), want = tfov() * 0.9;
+  setZoom(want);
+  const b = $('#z-ep'); if (b) b.textContent = ep.name;
+  document.querySelectorAll('#ep-chips [data-ep]').forEach((c) => c.classList.toggle('on', +c.dataset.ep === state.ep));
+  const sel = $('#ep'); if (sel) sel.value = String(state.ep);
+  eyeT = 0;
+  toast(`${ep.name} · ${(profile().fl / ep.fl).toFixed(0)}× · ${(tfov(ep) * 60).toFixed(0)}′ field${zoom > want + 1e-6 ? (minViewGuess ? ' — chart stays wide until you align' : ' — chart limited by phone accuracy') : ''}`);
+}
 function bindChartControls() {
   const cv = $('#reticle'); if (!cv) return;
   $('#z-in').onclick = () => setZoom((zoom ?? cv._lastView) / 1.6);
   $('#z-out').onclick = () => setZoom((zoom ?? cv._lastView) * 1.6);
   $('#z-auto').onclick = () => setZoom(null);
   $('#z-lock').onclick = () => { state.zoomLock = !state.zoomLock; save(); const b = $('#z-lock'); b.classList.toggle('on', state.zoomLock); b.textContent = state.zoomLock ? 'Locked' : 'Lock'; toast(state.zoomLock ? 'Zoom locked — it won\'t zoom out while you move' : 'Zoom unlocked — zooms out while you move'); };
-  $('#z-ep').onclick = () => setZoom(tfov() * 0.9);
+  $('#z-ep').onclick = cycleEyepiece;
   $('#z-wide').onclick = () => setZoom(30);
   if ($('#z-ctr')) $('#z-ctr').onclick = () => { chartCentre = chartCentre === 'scope' ? 'target' : 'scope'; $('#z-ctr').textContent = chartCentre === 'scope' ? 'Centre: scope' : 'Centre: target'; };
   // pinch to zoom
@@ -453,7 +660,7 @@ function bindChartControls() {
 
 function drawReticle(cur, tgt, o, opt = {}) {
   const cv = opt.canvas || $('#reticle'); if (!cv) return; const c = cv.getContext('2d'); const W = cv.width, H = cv.height, cx = W / 2, cy = H / 2, Rpx = W * 0.46;
-  const k = state.bright; const col = (r, g = 0, b = 0, a = 1) => `rgba(${r * k | 0},${g * k | 0},${b * k | 0},${a})`;
+  const k = vis(); const col = (r, g = 0, b = 0, a = 1) => tint(r, g, b, a, k);
   c.clearRect(0, 0, W, H);
   let guess = false;
   if (cur && !cur.ready) { const gp = guessPointing(); if (gp) { cur = gp; guess = true; } else cur = null; } // no azimuth yet: compass best guess
@@ -461,6 +668,7 @@ function drawReticle(cur, tgt, o, opt = {}) {
   if (!cur && chartCentre !== 'target' && opt.centre !== 'target') { c.fillStyle = col(150); c.font = '28px system-ui'; c.textAlign = 'center'; c.fillText('Not aligned — tap "Centre: target" to preview', cx, cy); return; }
   const half = tfov() / 2;
   const U = guess ? guessUncertainty() : cur ? pointingUncertainty(tgt) : null;   // arcmin
+  minViewGuess = !!guess;
   minView = guess ? Math.max(5, U ? 3 * U / 60 : 0) : U ? Math.max(ZMIN, Math.min(ZMAX, 3 * U / 60)) : ZMIN;   // a guess never zooms in past 5°     // never zoom tighter than ~3× what the phone can know
   let view = opt.view ?? zoom ?? autoRadius(cur, tgt); let limited = !opt.view && view < minView; if (limited) view = minView;
   if (!opt.view) {                                                   // zoom out while slewing (unless locked), ease back when settled
@@ -624,7 +832,7 @@ function renderAlign() {
       <div class="target-h" style="margin:4px 0"><span class="name">${esc(s.label)}</span><span class="muted">mag ${(+s.mag).toFixed(1)}</span></div>
       <p style="margin:2px 0">${esc(starHelp(s))}.</p>
       <p style="margin:2px 0">Look ${esc(whereWords(s.alt, s.az))}.</p>
-      <canvas id="a-chart" width="600" height="600" style="width:100%;max-width:340px;display:block;margin:8px auto;background:#050000;border:1px solid var(--line);border-radius:10px"></canvas>
+      <canvas id="a-chart" width="600" height="600" style="width:100%;max-width:340px;display:block;margin:8px auto;background:var(--chart);border:1px solid var(--line);border-radius:10px"></canvas>
       <p class="infield" id="a-live"></p>
       <p class="muted small">Get it in the red-dot finder first, then centre it in the eyepiece.</p>
       <div class="btnrow"><button id="a-ok" class="primary">It's centred</button><button id="a-skip">Different star</button></div></div>`;
@@ -638,7 +846,7 @@ function renderAlign() {
     ${assistHTML}
     ${done ? `<table class="res"><tr><th>Star</th><th>Alt</th><th>Residual</th><th></th></tr>${align.obs.map((o, i) => `<tr><td>${esc(o.label)}</td><td>${o.alt.toFixed(0)}°</td><td>${f ? fmt.am(f.resid[i] * 60) : ''}</td><td><button data-del="${i}">✕</button></td></tr>`).join('')}</table>` : ''}
     ${align.confirm.length ? `<div class="card"><h3 style="margin-top:0">Sky consistency</h3>
-      <canvas id="dome" width="700" height="720" style="width:100%;max-width:360px;display:block;margin:0 auto;background:#050000;border-radius:10px"></canvas>
+      <canvas id="dome" width="700" height="720" style="width:100%;max-width:360px;display:block;margin:0 auto;background:var(--chart);border-radius:10px"></canvas>
       <div class="chips" style="justify-content:center">${[1, 10, 30].map((m) => `<button data-mag="${m}" class="${domeMag === m ? 'on' : ''}">errors ×${m}</button>`).join('')}<button id="dome-red" class="${state.domeRed ? 'on' : ''}">Red only</button></div>
       <div id="dome-info"></div></div>` : ''}
     <div class="btnrow"><button id="clr">Start over</button><button id="savecal" ${f && f.solvedAxis ? '' : 'disabled'}>Save tilt to ${esc(profile().name)}</button></div>
@@ -688,7 +896,7 @@ function renderDome() {
   const fit = fitConsistency(P, model.d0, c ? { p: c.p, q: c.q } : { p: model.p, q: model.q }, { calibrate: state.calibrate });
   const pc = fit ? pairConsistency(P, model.d0, fit.p, fit.q) : { pairs: [], worst: null };
   const out = outliers(fit, r); const v = domeVerdict(fit, pc, r);
-  drawDome(cv, P, fit, { mag: domeMag, bright: state.bright, outliers: out, r, redOnly: !!state.domeRed });
+  drawDome(cv, P, fit, { mag: domeMag, bright: vis(), outliers: out, r, redOnly: !!state.domeRed });
   const box = $('#dome-info');
   box.innerHTML = `<p class="${v.level === 'bad' ? 'bad' : ''}" style="margin:6px 0">${esc(v.text)}</p>
     <div class="kv small"><span>Confirmed objects</span><span>${P.length}</span>
@@ -871,7 +1079,7 @@ function renderPlay(el) {
       <div class="delta" id="gd-az"><div class="lab">Azimuth</div><div class="val">—</div><div class="dir"></div></div>
       <div class="delta" id="gd-alt"><div class="lab">Altitude</div><div class="val">—</div><div class="dir"></div></div></div>
     <div class="infield" id="g-status"></div>
-    <canvas id="g-chart" width="800" height="800" style="width:100%;display:block;background:#050000;border:1px solid var(--line);border-radius:12px"></canvas>
+    <canvas id="g-chart" width="800" height="800" style="width:100%;display:block;background:var(--chart);border:1px solid var(--line);border-radius:12px"></canvas>
     <div class="btnrow">${g.style === 'hybrid' ? `<button id="g-hint">Hint (+${PENALTY.hint} s)</button>` : ''}<button id="g-found">Found it</button><button id="g-skip">Skip (+${PENALTY.skip} s)</button></div>
     <div class="btnrow"><button id="g-quit">Quit game</button></div>`;
   if ($('#g-hint')) $('#g-hint').onclick = () => { g.penalty += PENALTY.hint; g.hints++; g.hintUntil = Date.now() + 10000; };
@@ -1268,11 +1476,11 @@ function renderSetup() {
     <label class="row"><span>Focuser position <span class="muted small">(behind the scope, tube level)</span></span><select id="s-foc">${[[-90, 'Left side'], [-45, 'Upper left'], [0, 'Top'], [45, 'Upper right'], [90, 'Right side']].map(([v, l]) => `<option value="${v}" ${(p.focuser ?? 90) === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
     <p class="muted small">${esc(p.source || '')}</p>
     <h3>Eyepieces</h3>
-    <table class="res"><tr><th>Name</th><th>mm</th><th>AFOV°</th><th>Field</th><th></th></tr>
-      ${p.eyepieces.map((e, i) => `<tr><td><input data-epn="${i}" value="${esc(e.name)}"></td><td><input data-epf="${i}" type="number" value="${e.fl}" style="width:60px"></td><td><input data-epa="${i}" type="number" value="${e.afov}" style="width:60px"></td><td>${(tfov(e) * 60).toFixed(0)}′</td><td><button data-epd="${i}">✕</button></td></tr>`).join('')}
+    <table class="res"><tr><th>Name</th><th>mm</th><th>AFOV°</th><th>Field</th><th>Cycle</th><th></th></tr>
+      ${p.eyepieces.map((e, i) => `<tr><td><input data-epn="${i}" value="${esc(e.name)}"></td><td><input data-epf="${i}" type="number" value="${e.fl}" style="width:60px"></td><td><input data-epa="${i}" type="number" value="${e.afov}" style="width:60px"></td><td>${(tfov(e) * 60).toFixed(0)}′</td><td style="text-align:center"><input type="checkbox" data-epc="${i}" ${e.cycle !== false ? 'checked' : ''}></td><td><button data-epd="${i}">✕</button></td></tr>`).join('')}
     </table>
     <div class="btnrow"><button id="ep-add">Add eyepiece</button></div>
-    <p class="muted small">Kit eyepiece: 23 mm, 67° apparent field. To check any eyepiece's true field, time a star near the celestial equator drifting across it (scope still).</p>
+    <p class="muted small">The Eyepiece button on Push cycles through the ticked eyepieces in this order. Add your own, untick ones you don't carry, or delete them. To check any eyepiece's true field, time a star near the celestial equator drifting across it (scope still).</p>
     <label class="row"><span>Drift time (s)</span><input id="drift-s" type="number" inputmode="decimal" placeholder="e.g. 140"></label>
     <label class="row"><span>Star declination (°)</span><input id="drift-d" type="number" inputmode="decimal" placeholder="e.g. 0"></label>
     <div class="btnrow"><button id="drift-go">Set AFOV for selected eyepiece from drift</button></div>
@@ -1293,6 +1501,7 @@ function renderSetup() {
     <div class="btnrow"><button id="s-gps">Use GPS</button></div>
 
     <h2>Display</h2>
+    <label class="row"><span>Day mode <span class="muted small">(bright colours for daylight; also the ☀ button at top right)</span></span><input id="s-day" type="checkbox" ${state.day ? 'checked' : ''}></label>
     <label class="row"><span>Screen brightness</span><input id="s-br" type="range" min="0.25" max="1" step="0.05" value="${state.bright}"></label>
     <label class="row"><span>Lowest altitude to list (°)</span><input id="s-min" type="number" value="${state.minAlt}"></label>
 
@@ -1309,6 +1518,7 @@ function renderSetup() {
   el.querySelectorAll('[data-epf]').forEach((i) => i.onchange = () => { p.eyepieces[+i.dataset.epf].fl = parseFloat(i.value) || 10; save(); renderSetup(); });
   el.querySelectorAll('[data-epa]').forEach((i) => i.onchange = () => { const e = p.eyepieces[+i.dataset.epa]; e.afov = parseFloat(i.value) || 50; e.verified = true; save(); renderSetup(); });
   el.querySelectorAll('[data-epd]').forEach((b) => b.onclick = () => { if (p.eyepieces.length > 1) { p.eyepieces.splice(+b.dataset.epd, 1); state.ep = 0; save(); renderSetup(); } });
+  el.querySelectorAll('[data-epc]').forEach((i) => i.onchange = () => { p.eyepieces[+i.dataset.epc].cycle = i.checked; save(); });
   $('#ep-add').onclick = () => { p.eyepieces.push({ name: 'New eyepiece', fl: 10, afov: 52, verified: false }); save(); renderSetup(); };
   $('#drift-go').onclick = () => {
     const t = num('#drift-s'), d = num('#drift-d') || 0; if (!(t > 0)) return toast('Enter the drift time in seconds');
@@ -1324,6 +1534,7 @@ function renderSetup() {
   const site = () => { state.site = { lat: num('#s-lat'), lon: num('#s-lon'), elev: num('#s-el') || 0, source: 'entered manually' }; sky.setSite(state.site.lat, state.site.lon, state.site.elev); save(); };
   ['#s-lat', '#s-lon', '#s-el'].forEach((id) => $(id).onchange = site);
   $('#s-gps').onclick = getGPS;
+  $('#s-day').onchange = (e) => { state.day = e.target.checked; save(); applyTheme(); };
   $('#s-br').oninput = (e) => { state.bright = parseFloat(e.target.value); applyModelSettings(); save(); };
   $('#s-min').onchange = () => { state.minAlt = num('#s-min') || 0; save(); };
 }
@@ -1358,6 +1569,119 @@ function loop(ts) {
   requestAnimationFrame(loop);
 }
 
+// ---------------------------------------------------------------- LAUNCH: pick an activity, tick the warm-up steps
+const ACTIVITIES = [
+  ['observe', 'Observe', 'Push to targets — the full set-up'],
+  ['explore', 'Explore the sky', 'Roam around, no alignment needed'],
+  ['plan', 'Plan a session', "Choose tonight's targets — no telescope needed"],
+  ['game', 'Play a game', 'Ten targets against the clock'],
+];
+const STEP_INFO = {
+  check: ['Phone check', '4 min · once per phone · tells you how accurate this phone can be'],
+  sky: ['Sky darkness check', '30 s · count the Little Dipper stars · tunes target suggestions'],
+  align: ['Star alignment', '2 min · needed for accurate pointing (Observe and Game)'],
+};
+let flow = null;   // { steps: [..], i, dest, started, quiet }
+const stepsFor = (dest) => ['check', 'sky', 'align'].filter((k) => state.launch[k] && !(k === 'align' && (dest === 'explore' || dest === 'plan' || alignedNow())) && !(k === 'check' && dest === 'plan'));
+function renderLaunch() {
+  const L = state.launch, chk = lastCheck(), sq = state.skyq;
+  const status = {
+    check: chk ? `Done: ${esc(chk.result.verdict)} (${new Date(chk.when).toLocaleDateString()})` : 'Not done yet',
+    sky: sq ? `Last: ${esc(sq.label)} (${new Date(sq.when).toLocaleDateString()})` : 'Not done yet',
+    align: alignedNow() ? 'Already aligned' : profile().cal ? 'Mount tilt saved — 1–2 stars' : '2 stars',
+  };
+  const chain = (dest) => ['Start', ...stepsFor(dest).map((k) => STEP_INFO[k][0]), ACTIVITIES.find((a) => a[0] === dest)[1]].join(' → ');
+  $('#launch').innerHTML = `<h1>Skyward Push-To</h1>
+    <p class="muted small" style="margin-top:0">Guides a Skyward telescope with your phone's motion sensors. Works offline.</p>
+    <div class="launch-steps"><div class="muted small">Before you start — tick what you want:</div>
+      ${['check', 'sky', 'align'].map((k) => `<label class="row"><span>${STEP_INFO[k][0]}<br><span class="muted small">${STEP_INFO[k][1]}<br>${status[k]}</span></span><input type="checkbox" data-step="${k}" ${L[k] ? 'checked' : ''}></label>`).join('')}
+    </div>
+    <div class="muted small" style="margin:10px 0 4px">Then what would you like to do?</div>
+    ${ACTIVITIES.map(([k, t, sub]) => `<button class="act" data-act="${k}"><b>${t}</b><span class="muted small">${sub}</span><span class="chain">${esc(chain(k))}</span></button>`).join('')}`;
+  $('#launch').querySelectorAll('[data-step]').forEach((c) => c.onchange = () => { state.launch[c.dataset.step] = c.checked; save(); renderLaunch(); });
+  $('#launch').querySelectorAll('[data-act]').forEach((b) => b.onclick = () => launch(b.dataset.act));
+}
+function launch(dest) {
+  flow = { steps: stepsFor(dest), i: -1, dest, started: false, quiet: dest === 'plan' };
+  $('#gate-msg').innerHTML = '';
+  if (sensors && sensors.fresh()) { $('#gate').classList.add('hidden'); flowNext(); return; }
+  startSensors(false);   // the tap is the user gesture iOS needs for motion permission
+}
+function flowGo() { if (flow) { flow.started = false; flowNext(); } }
+function flowNext() {
+  if (!flow) return;
+  flow.started = true; flow.i++;
+  $('#skycheck').classList.add('hidden');
+  if (flow.i >= flow.steps.length) { const d = flow.dest; flow = null; renderFlowBar(); goActivity(d); return; }
+  const k = flow.steps[flow.i];
+  renderFlowBar();
+  if (k === 'check') { showTab('test'); startTest('check'); }
+  else if (k === 'sky') openSkyCheck();
+  else if (k === 'align') showTab('align');
+}
+function goActivity(d) {
+  if (d === 'explore') { state.target = null; save(); showTab('push'); }
+  else if (d === 'plan') showTab('plan');
+  else if (d === 'game') showTab('game');
+  else showTab('find');
+}
+function renderFlowBar() {
+  const bar = $('#flowbar');
+  if (!flow || flow.i < 0 || flow.i >= flow.steps.length) { bar.classList.add('hidden'); return; }
+  const k = flow.steps[flow.i], nextName = flow.i + 1 < flow.steps.length ? STEP_INFO[flow.steps[flow.i + 1]][0] : ACTIVITIES.find((a) => a[0] === flow.dest)[1];
+  bar.innerHTML = `<span>Step ${flow.i + 1} of ${flow.steps.length}: <b>${STEP_INFO[k][0]}</b></span><button id="fb-next" class="mini primary">Done → ${esc(nextName)}</button><button id="fb-stop" class="mini">✕</button>`;
+  bar.classList.remove('hidden');
+  $('#fb-next').onclick = () => { if (k === 'check') { state.launch.check = false; save(); } flowNext(); };
+  $('#fb-stop').onclick = () => { flow = null; renderFlowBar(); };
+}
+
+// Little Dipper sky check: the faintest Little Dipper stars you can see ≈ naked-eye limiting magnitude.
+const UMI = [['Polaris', 37.95, 89.26, 1.98], ['Yildun', 263.05, 86.59, 4.35], ['ε', 251.49, 82.04, 4.21], ['ζ', 236.01, 77.79, 4.32],
+  ['η', 244.38, 75.76, 4.95], ['Pherkad', 230.18, 71.83, 3.00], ['Kochab', 222.68, 74.16, 2.08]];
+const SKY_PICKS = [[3.5, 'City'], [4.5, 'Bright suburbs'], [5.0, 'Suburbs'], [5.6, 'Edge of town'], [6.2, 'Rural'], [6.7, 'Dark site']];
+const SKY_ANSWERS = [
+  [2.8, 'Only Polaris and Kochab (2)'], [3.5, 'Those plus Pherkad (3)'], [4.3, '4 to 6 of them'],
+  [5.0, 'All 7'], [5.7, 'All 7, plus faint stars inside the bowl'],
+];
+function skyLabel(m) {
+  return m < 3.5 ? ['Bright city sky', 'Moon, planets, bright clusters and double stars. Galaxies will be very hard.']
+    : m < 4.5 ? ['Bright suburban sky', 'Planets, clusters, globulars, small planetary nebulae and the brightest galaxies.']
+    : m < 5.3 ? ['Suburban sky', 'Most clusters and nebulae, and the brighter galaxies.']
+    : m < 6 ? ['Rural sky', 'Most of the Messier list, including faint galaxies.']
+    : ['Dark sky', 'Faint galaxies and large nebulae — a great night.'];
+}
+function openSkyCheck() {
+  const box = $('#skycheck'), card = $('#skycheck-card'); box.classList.remove('hidden');
+  if (state.site.lat < 5) {
+    card.innerHTML = `<h3 style="margin-top:0">Sky darkness check</h3><p>The Little Dipper isn't visible from the southern hemisphere, so this check isn't available here yet.</p><button id="sq-skip" class="primary" style="width:100%">Continue</button>`;
+    $('#sq-skip').onclick = () => (flow ? flowNext() : box.classList.add('hidden')); return;
+  }
+  const P = UMI.map(([n, ra, dec, m]) => ({ n, m, ...sky.altAzRaDec(ra, dec) }));
+  const a0 = P.reduce((s, p) => s + p.alt, 0) / P.length, z0 = P[0].az;
+  const xy = P.map((p) => ({ ...p, x: (((p.az - z0 + 540) % 360) - 180) * Math.cos(a0 * Math.PI / 180), y: -(p.alt - a0) }));
+  const xs = xy.map((p) => p.x), ys = xy.map((p) => p.y), cx = (Math.max(...xs) + Math.min(...xs)) / 2, cy = (Math.max(...ys) + Math.min(...ys)) / 2;
+  const span = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) || 1, sc = 220 / span;
+  const pt = (p) => [150 + (p.x - cx) * sc, 150 + (p.y - cy) * sc];
+  const lines = [[0, 1], [1, 2], [2, 3], [3, 4], [4, 5], [5, 6], [6, 3]];
+  const sun = sky.sunAlt();
+  card.innerHTML = `<h3 style="margin-top:0">Sky darkness check</h3>
+    <p class="small">Face north. The Little Dipper hangs from <b>Polaris</b>, ${P[0].alt.toFixed(0)}° up — about where your latitude puts it. Give your eyes 10 minutes away from screens and lights first.${sun > -12 ? ' <b>It isn\'t fully dark yet</b>, so this will read brighter than your real sky.' : ''}</p>
+    <svg viewBox="0 0 300 300" class="umi">${lines.map(([i, j]) => { const [x1, y1] = pt(xy[i]), [x2, y2] = pt(xy[j]); return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"/>`; }).join('')}
+      ${xy.map((p) => { const [x, y] = pt(p); return `<circle cx="${x}" cy="${y}" r="${(7 - p.m) * 1.3}"/><text x="${x + 9}" y="${y + 4}">${p.n}</text>`; }).join('')}
+      <text x="150" y="294" text-anchor="middle" class="muted">as it looks now · up is overhead</text></svg>
+    <p class="small"><b>How many of these 7 stars can you see?</b></p>
+    ${SKY_ANSWERS.map(([m, t]) => `<button class="sq-a" data-m="${m}" style="width:100%;margin:3px 0;text-align:left">${t}</button>`).join('')}
+    <button id="sq-skip" style="width:100%;margin-top:6px">Can't see it (cloud, trees, not dark) — skip</button>`;
+  card.querySelectorAll('[data-m]').forEach((b) => b.onclick = () => {
+    const m = +b.dataset.m, [label, means] = skyLabel(m);
+    state.skyq = { nelm: m, label, when: Date.now(), lat: state.site.lat, lon: state.site.lon, twilight: sun > -12 }; planRows = null; save(); if (tab === 'plan') renderPlan();
+    card.innerHTML = `<h3 style="margin-top:0">${label}</h3><p>Faintest stars you can see: about magnitude ${m.toFixed(1)}.</p><p class="small">${means}</p>
+      <button id="sq-done" class="primary" style="width:100%">${flow ? 'Continue' : 'Done'}</button>`;
+    $('#sq-done').onclick = () => (flow ? flowNext() : box.classList.add('hidden'));
+  });
+  $('#sq-skip').onclick = () => (flow ? flowNext() : box.classList.add('hidden'));
+}
+
 async function startSensors(sim) {
   const msg = $('#gate-msg');
   try {
@@ -1374,8 +1698,13 @@ async function startSensors(sim) {
     $('#gate').classList.add('hidden');
     if (!sim && !siteKnown()) getGPS();
     if (tab === 'find') renderFind();
-    setTimeout(() => { if (!sensors.fresh()) gateProblem('nodata'); }, 3000);
-  } catch (e) { gateProblem(/denied/i.test(e.message) ? 'denied' : 'error', e.message); }
+    if (flow && !flow.started) { flow.started = true; const t0 = Date.now(); const w = () => (sensors.fresh() || Date.now() - t0 > 2500 ? flowGo() : setTimeout(w, 100)); w(); }
+    const quiet = !!(flow && flow.quiet); setTimeout(() => { if (!sensors.fresh() && !quiet) gateProblem('nodata'); }, 3000);
+    return true;
+  } catch (e) {
+    if (flow && flow.quiet) { $('#gate').classList.add('hidden'); flowNext(); toast('Motion sensors not started — fine for planning. Tap the status bar later to start them.', 4500); return false; }
+    gateProblem(/denied/i.test(e.message) ? 'denied' : 'error', e.message); return false;
+  }
 }
 const IS_IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 /** Show a clear, specific reason and fix on the start screen — never leave the user stuck there. */
@@ -1410,10 +1739,15 @@ async function init() {
   sky.setSite(state.site.lat, state.site.lon, state.site.elev);
   applyModelSettings();
   document.querySelectorAll('nav#tabs button').forEach((b) => b.onclick = () => showTab(b.dataset.tab));
-  $('#gate-start').onclick = () => startSensors(false);
+  $('#hb-day').onclick = (e) => { e.stopPropagation(); toggleDay(); };
+  $('#hb-fs').onclick = (e) => { e.stopPropagation(); toggleFullscreen(); };
+  if (IS_STANDALONE()) $('#hb-fs').classList.add('hidden');
+  $('#fs-close').onclick = () => $('#fs-help').classList.add('hidden');
+  applyTheme();
+  renderLaunch();
   $('#gate-sim').onclick = () => startSensors(true);
-  $('#gate-skip').onclick = () => { $('#gate').classList.add('hidden'); toast('Browsing without sensors — the sky view and pointing need them. Tap the status bar to try again.', 5000); };
-  $('#status').onclick = () => { if (!sensors || !sensors.fresh()) { $('#gate').classList.remove('hidden'); } };
+  $('#gate-skip').onclick = () => { $('#gate').classList.add('hidden'); if (flow && !flow.started) flowNext(); toast('Browsing without sensors — the sky view and pointing need them. Tap the status bar to try again.', 5000); };
+  $('#status').onclick = () => { if (!sensors || !sensors.fresh()) { renderLaunch(); $('#gate').classList.remove('hidden'); } };
   if (new URLSearchParams(location.search).has('sim')) $('#gate-sim').classList.remove('hidden');
   showTab('find');
   const flush = () => flushQueue(state).then((n) => { if (n) { save(); toast(`Sent ${n} queued score${n > 1 ? 's' : ''} to the leaderboard`); } }).catch(() => {});
