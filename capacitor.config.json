@@ -1,0 +1,13 @@
+{
+  "appId": "com.tentelescopes.skywardpushto",
+  "appName": "Skyward Push-To",
+  "webDir": "docs",
+  "backgroundColor": "#000000",
+  "ios": {
+    "contentInset": "never",
+    "backgroundColor": "#000000"
+  },
+  "android": {
+    "backgroundColor": "#000000"
+  }
+}

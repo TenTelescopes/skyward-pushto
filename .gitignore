@@ -1,0 +1,7 @@
+node_modules/
+docs/vendor/capacitor.js
+ios/App/Pods/
+android/.gradle/
+android/build/
+android/app/build/
+.DS_Store

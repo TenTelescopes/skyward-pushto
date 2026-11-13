@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#000000">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <title>Skyward Push-To</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <header id="status">
+    <div id="st-scope" class="st"></div>
+    <div id="st-point" class="st mono"></div>
+    <div id="st-align" class="st"></div>
+  </header>
+
+  <main>
+    <section id="tab-find" class="tab"></section>
+    <section id="tab-push" class="tab"></section>
+    <section id="tab-align" class="tab"></section>
+    <section id="tab-game" class="tab"></section>
+    <section id="tab-test" class="tab"></section>
+    <section id="tab-setup" class="tab"></section>
+  </main>
+
+  <nav id="tabs">
+    <button data-tab="find">Find</button>
+    <button data-tab="push">Push</button>
+    <button data-tab="align">Align</button>
+    <button data-tab="game">Game</button>
+    <button data-tab="test">Test</button>
+    <button data-tab="setup">Setup</button>
+  </nav>
+
+  <div id="gate" class="overlay">
+    <div class="card">
+      <h1>Skyward Push-To</h1>
+      <p>Uses your phone's motion sensors to guide a Skyward telescope. Works fully offline.</p>
+      <button id="gate-start" class="primary big">Start sensors</button>
+      <p id="gate-msg" class="muted"></p>
+      <button id="gate-sim" class="hidden">Simulate sensors (desktop testing)</button>
+    </div>
+  </div>
+  <div id="toast" class="hidden"></div>
+  <div id="scanner" class="overlay hidden"><div class="card" style="text-align:center">
+    <h3 style="margin-top:0">Scan a Skyward code</h3>
+    <video id="scan-video" playsinline muted style="width:100%;border-radius:10px;background:#000"></video>
+    <p id="scan-msg" class="muted small">Point the camera at the other phone's code.</p>
+    <div class="btnrow"><button id="scan-paste">Paste instead</button><button id="scan-cancel">Cancel</button></div>
+  </div></div>
+  <!-- Capacitor runtime (copied in by `npm run copy:core`; absent in the plain web build, which is fine) -->
+  <script src="vendor/capacitor.js" onerror="void 0"></script>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

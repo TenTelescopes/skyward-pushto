@@ -1,0 +1,29 @@
+{
+  "name": "skyward-pushto",
+  "version": "0.1.0",
+  "description": "Offline push-to guidance and sensor testing for Ten Telescopes' Skyward 150 Compact and Skyward 200 Visual",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node test/model.test.mjs && node test/check.test.mjs && node test/assist.test.mjs && node test/dome.test.mjs && node test/locate.test.mjs && node test/game.test.mjs",
+    "catalog": "python3 tools/build_catalog.py ../data docs/data/catalog.js",
+    "serve": "python3 -m http.server 8080 --directory docs",
+    "native:add": "npm run copy:core && npx cap add ios; npx cap add android; node scripts/patch-native.mjs",
+    "native:icons": "npx @capacitor/assets generate --iconBackgroundColor '#000000' --iconBackgroundColorDark '#000000' --splashBackgroundColor '#000000' --splashBackgroundColorDark '#000000'",
+    "sync": "npm run copy:core && npx cap sync && node scripts/patch-native.mjs",
+    "ios": "npm run sync && npx cap open ios",
+    "android": "npm run sync && npx cap open android",
+    "copy:core": "node -e \"require('fs').copyFileSync('node_modules/@capacitor/core/dist/capacitor.js','docs/vendor/capacitor.js')\""
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.6.0",
+    "@capacitor/core": "^8.6.0",
+    "@capacitor/geolocation": "^8.2.4",
+    "@capacitor/ios": "^8.6.0",
+    "@capacitor/preferences": "^8.0.1"
+  },
+  "devDependencies": {
+    "@capacitor/assets": "^3.0.5",
+    "@capacitor/cli": "^8.6.0"
+  }
+}
