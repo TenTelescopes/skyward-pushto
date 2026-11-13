@@ -36,10 +36,10 @@ function save() {
 // ---------------------------------------------------------------- defaults (from the Skyward repos)
 const DEFAULT_PROFILES = {
   sw150c: { name: 'Skyward 150 Compact', aperture: 150, fl: 750,
-    source: 'D150F750 primary — Skyward 150 Compact Sourcing Guide (Jan 2026)',
+    source: 'D150F750 primary — Skyward 150 Compact Sourcing Guide (Jan 2026)', focuser: 90,
     eyepieces: [{ name: '23 mm', fl: 23, afov: 62, verified: false }, { name: '10 mm', fl: 10, afov: 62, verified: false }, { name: '4 mm', fl: 4, afov: 62, verified: false }], cal: null },
   sw200v: { name: 'Skyward 200 Visual', aperture: 203, fl: 812,
-    source: '8″ f/4 primary (AD048) — SW200 Visual packing list rev H. Focal length assumes 203 mm × 4; edit if your mirror is marked differently.',
+    source: '8″ f/4 primary (AD048) — SW200 Visual packing list rev H. Focal length assumes 203 mm × 4; edit if your mirror is marked differently.', focuser: 90,
     eyepieces: [{ name: '23 mm', fl: 23, afov: 62, verified: false }, { name: '10 mm', fl: 10, afov: 62, verified: false }, { name: '4 mm', fl: 4, afov: 62, verified: false }], cal: null },
 };
 const DEFAULTS = {
@@ -251,8 +251,7 @@ function renderPush() {
     <canvas id="eyeview" width="640" height="640" style="width:100%;max-width:360px;display:block;margin:0 auto;background:#000;border-radius:50%"></canvas>
     <p id="eyenote" class="muted small" style="text-align:center"></p>
     <label class="row"><span>Show it as your Newtonian does</span><input type="checkbox" id="rot180" ${state.rot180 ? 'checked' : ''}></label>
-    <label class="row"><span>Focuser position <span class="muted small">(seen from behind the scope)</span></span><select id="focpos">${[[-90, 'Left side'], [-45, 'Upper left'], [0, 'Top'], [45, 'Upper right'], [90, 'Right side']].map(([v, l]) => `<option value="${v}" ${(profile().focuser ?? 90) === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
-    <p class="muted small">Orientation assumes your head is upright at the eyepiece; tilting your head turns the view with it. <b>⬆Z</b> points toward the zenith, N and E are celestial north and east — match these to a star chart.</p>
+    <p class="muted small">Computed for a focuser on the ${({ '-90': 'left side', '-45': 'upper left', 0: 'top', 45: 'upper right', 90: 'right side' })[profile().focuser ?? 90]} (standing behind the scope, tube level). Orientation assumes your head is upright at the eyepiece; tilting your head turns the view with it. <b>⬆Z</b> points toward the zenith, N and E are celestial north and east — match these to a star chart.</p>
     <p class="muted small">Pinch to zoom out until you recognise the star pattern, then compare with the sky. Drawn as seen standing behind the scope (up = toward zenith); the eyepiece image of a Newtonian is rotated. The red circle is your eyepiece's true field.</p>
     <label class="row"><span>Eyepiece</span><select id="ep">${eps.map((e, i) => `<option value="${i}" ${i === state.ep ? 'selected' : ''}>${esc(e.name)} — ${(profile().fl / e.fl).toFixed(0)}×, ${(tfov(e) * 60).toFixed(0)}′ field${e.verified ? '' : ' (unverified)'}${baseUncertainty() != null && tfov(e) * 30 < baseUncertainty() ? ' — narrower than phone accuracy' : ''}</option>`).join('')}</select></label>
     <div class="btnrow"><button id="b-prev">◀ Prev</button><button id="b-sync" class="primary">Centered — Sync</button><button id="b-next">Next ▶</button></div>
@@ -260,7 +259,6 @@ function renderPush() {
   $('#ep').onchange = (e) => { state.ep = +e.target.value; save(); renderPush(); };
   el.querySelectorAll('[data-ep]').forEach((b) => b.onclick = () => { state.ep = +b.dataset.ep; save(); renderPush(); });
   $('#rot180').onchange = (e) => { state.rot180 = e.target.checked; save(); eyeT = 0; };
-  $('#focpos').onchange = (e) => { profile().focuser = +e.target.value; save(); eyeT = 0; };
   eyeT = 0;
   $('#b-sync').onclick = () => doSync(o);
   const step = (d) => { const L = filtered(); const i = L.findIndex((x) => x.key === state.target); const n = L[(i + d + L.length) % L.length]; if (n) { state.target = n.key; save(); renderPush(); } };
@@ -1237,6 +1235,7 @@ function renderSetup() {
     <label class="row"><span>Scope</span><select id="s-prof">${Object.entries(state.profiles).map(([k, v]) => `<option value="${k}" ${k === state.active ? 'selected' : ''}>${esc(v.name)}</option>`).join('')}</select></label>
     <label class="row"><span>Focal length (mm)</span><input id="s-fl" type="number" inputmode="decimal" value="${p.fl}"></label>
     <label class="row"><span>Aperture (mm)</span><input id="s-ap" type="number" inputmode="decimal" value="${p.aperture}"></label>
+    <label class="row"><span>Focuser position <span class="muted small">(behind the scope, tube level)</span></span><select id="s-foc">${[[-90, 'Left side'], [-45, 'Upper left'], [0, 'Top'], [45, 'Upper right'], [90, 'Right side']].map(([v, l]) => `<option value="${v}" ${(p.focuser ?? 90) === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
     <p class="muted small">${esc(p.source || '')}</p>
     <h3>Eyepieces</h3>
     <table class="res"><tr><th>Name</th><th>mm</th><th>AFOV°</th><th>Field</th><th></th></tr>
@@ -1275,6 +1274,7 @@ function renderSetup() {
   $('#s-prof').onchange = (e) => { state.active = e.target.value; state.ep = 0; align = { obs: [], fit: null, syncs: [], confirm: [] }; applyModelSettings(); save(); renderSetup(); };
   $('#s-fl').onchange = () => { p.fl = num('#s-fl') || p.fl; save(); renderSetup(); };
   $('#s-ap').onchange = () => { p.aperture = num('#s-ap') || p.aperture; save(); };
+  $('#s-foc').onchange = (e) => { p.focuser = +e.target.value; save(); };
   el.querySelectorAll('[data-epn]').forEach((i) => i.onchange = () => { p.eyepieces[+i.dataset.epn].name = i.value; save(); });
   el.querySelectorAll('[data-epf]').forEach((i) => i.onchange = () => { p.eyepieces[+i.dataset.epf].fl = parseFloat(i.value) || 10; save(); renderSetup(); });
   el.querySelectorAll('[data-epa]').forEach((i) => i.onchange = () => { const e = p.eyepieces[+i.dataset.epa]; e.afov = parseFloat(i.value) || 50; e.verified = true; save(); renderSetup(); });
@@ -1356,6 +1356,7 @@ async function init() {
     state.v = 2; state.ep = 0;
   }
   if (state.rot180 == null) state.rot180 = true;
+  for (const k of ['sw150c', 'sw200v']) if (state.profiles[k] && state.profiles[k].focuser == null) state.profiles[k].focuser = 90;   // Skyward: focuser always on the right
   for (const [k, v] of Object.entries(DEFAULT_PROFILES)) if (!state.profiles[k]) state.profiles[k] = structuredClone(v);
   if (state.calibrate == null) state.calibrate = true;
   sky.setSite(state.site.lat, state.site.lon, state.site.elev);
