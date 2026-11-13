@@ -117,3 +117,7 @@ ol.steps li.done { color: var(--fg); }
 .qs-row.done { color: var(--fg); }
 button.mini { padding: 5px 10px; font-size: 13px; }
 .chips.wrap { flex-wrap: wrap; overflow: visible; }
+
+.gate-err { color: var(--hi); font-size: 16px; text-align: left; margin-top: 10px; }
+.gate-err ol { padding-left: 20px; margin: 6px 0; }
+.gate-err li { margin: 4px 0; }

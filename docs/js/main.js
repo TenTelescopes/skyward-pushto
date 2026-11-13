@@ -1374,8 +1374,26 @@ async function startSensors(sim) {
     $('#gate').classList.add('hidden');
     if (!sim && !siteKnown()) getGPS();
     if (tab === 'find') renderFind();
-    setTimeout(() => { if (!sensors.fresh()) { toast('No motion data from this device. On desktop, use the simulator.', 5000); $('#gate').classList.remove('hidden'); $('#gate-sim').classList.remove('hidden'); msg.textContent = 'No orientation events received.'; } }, 2500);
-  } catch (e) { msg.textContent = e.message; $('#gate-sim').classList.remove('hidden'); }
+    setTimeout(() => { if (!sensors.fresh()) gateProblem('nodata'); }, 3000);
+  } catch (e) { gateProblem(/denied/i.test(e.message) ? 'denied' : 'error', e.message); }
+}
+const IS_IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+/** Show a clear, specific reason and fix on the start screen — never leave the user stuck there. */
+function gateProblem(kind, detail = '') {
+  $('#gate').classList.remove('hidden');
+  const standalone = window.matchMedia && window.matchMedia('(display-mode: standalone)').matches;
+  const fix = {
+    denied: IS_IOS
+      ? `<b>Your iPhone has blocked motion access for this app.</b> iOS won't ask again by itself. To reset it:<ol>
+         ${standalone ? '<li>Press and hold the Skyward icon on your home screen → <b>Remove App</b> → Delete from Home Screen.</li><li>Open <b>Safari</b> → Settings app → <b>Apps → Safari → Advanced → Website Data</b> → swipe <b>github.io</b> → Delete.</li><li>In Safari open tentelescopes.github.io/skyward-pushto, <b>Share → Add to Home Screen</b>, open it and tap Start sensors → <b>Allow</b>.</li>'
+                      : '<li>Settings app → <b>Apps → Safari → Advanced → Website Data</b> → swipe <b>github.io</b> → Delete.</li><li>Reload this page and tap Start sensors → <b>Allow</b>.</li>'}</ol>`
+      : '<b>Motion access was blocked.</b> Allow motion/orientation sensors for this site in the browser\'s site settings, then reload.',
+    nodata: `<b>The phone isn't sending motion data.</b> ${IS_IOS ? 'Close the app completely (swipe it away) and open it again, then tap Start sensors and choose Allow.' : 'This device may not have motion sensors (a desktop computer doesn\'t).'}`,
+    error: `<b>Couldn't start the sensors.</b> ${detail}`,
+  }[kind];
+  $('#gate-msg').innerHTML = `<div class="gate-err">${fix}</div>`;
+  $('#gate-skip').classList.remove('hidden');
+  if (!IS_IOS) $('#gate-sim').classList.remove('hidden');
 }
 
 async function init() {
@@ -1394,6 +1412,8 @@ async function init() {
   document.querySelectorAll('nav#tabs button').forEach((b) => b.onclick = () => showTab(b.dataset.tab));
   $('#gate-start').onclick = () => startSensors(false);
   $('#gate-sim').onclick = () => startSensors(true);
+  $('#gate-skip').onclick = () => { $('#gate').classList.add('hidden'); toast('Browsing without sensors — the sky view and pointing need them. Tap the status bar to try again.', 5000); };
+  $('#status').onclick = () => { if (!sensors || !sensors.fresh()) { $('#gate').classList.remove('hidden'); } };
   if (new URLSearchParams(location.search).has('sim')) $('#gate-sim').classList.remove('hidden');
   showTab('find');
   const flush = () => flushQueue(state).then((n) => { if (n) { save(); toast(`Sent ${n} queued score${n > 1 ? 's' : ''} to the leaderboard`); } }).catch(() => {});
