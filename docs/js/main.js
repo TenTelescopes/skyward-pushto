@@ -1593,15 +1593,16 @@ function renderLaunch() {
   const chain = (dest) => ['Start', ...stepsFor(dest).map((k) => STEP_INFO[k][0]), ACTIVITIES.find((a) => a[0] === dest)[1]].join(' → ');
   $('#launch').innerHTML = `<h1>Skyward Push-To</h1>
     <p class="muted small" style="margin-top:0">Guides a Skyward telescope with your phone's motion sensors. Works offline.</p>
-    <div class="launch-steps"><div class="muted small">Before you start — tick what you want:</div>
+    <div class="launch-steps"><h3 style="margin:10px 0 2px">Tune-up <span class="muted small">(optional)</span></h3>
       ${['check', 'sky', 'align'].map((k) => `<label class="row"><span>${STEP_INFO[k][0]}<br><span class="muted small">${STEP_INFO[k][1]}<br>${status[k]}</span></span><input type="checkbox" data-step="${k}" ${L[k] ? 'checked' : ''}></label>`).join('')}
     </div>
-    <div class="muted small" style="margin:10px 0 4px">Then what would you like to do?</div>
+    <h3 style="margin:14px 0 4px">What would you like to do?</h3>
     ${ACTIVITIES.map(([k, t, sub]) => `<button class="act" data-act="${k}"><b>${t}</b><span class="muted small">${sub}</span><span class="chain">${esc(chain(k))}</span></button>`).join('')}`;
   $('#launch').querySelectorAll('[data-step]').forEach((c) => c.onchange = () => { state.launch[c.dataset.step] = c.checked; save(); renderLaunch(); });
   $('#launch').querySelectorAll('[data-act]').forEach((b) => b.onclick = () => launch(b.dataset.act));
 }
 function launch(dest) {
+  if (!state.launch.check && !lastCheck()) { state.skipCheck = true; save(); }   // chose not to test: don't nag about it later
   flow = { steps: stepsFor(dest), i: -1, dest, started: false, quiet: dest === 'plan' };
   $('#gate-msg').innerHTML = '';
   if (sensors && sensors.fresh()) { $('#gate').classList.add('hidden'); flowNext(); return; }
