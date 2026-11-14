@@ -46,7 +46,8 @@ input, select { width: 100%; }
 input[type=checkbox] { width: auto; accent-color: var(--fg); }
 label.row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--row); }
 label.row > span:first-child { flex: 1; }
-label.row input:not([type=checkbox]), label.row select { max-width: 55%; }
+label.row input:not([type=checkbox]):not([type=radio]), label.row select { max-width: 55%; }
+input[type=radio] { width: auto; flex: none; }
 .btnrow { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
 .btnrow > button { flex: 1; }
 .chips { display: flex; gap: 6px; overflow-x: auto; padding: 4px 0 8px; scrollbar-width: none; }
@@ -160,3 +161,8 @@ svg.umi line { stroke: var(--line); stroke-width: 1.5; }
 svg.umi circle { fill: var(--hi); }
 svg.umi text { fill: var(--fg); font-size: 12px; }
 svg.umi text.muted { fill: var(--dim); font-size: 10px; }
+
+/* Stacked form field: label above a full-width input */
+label.field { display: block; margin: 10px 0; }
+label.field > span { display: block; margin-bottom: 4px; }
+button.act.pick.on { border-color: var(--fg); background: var(--sel); }

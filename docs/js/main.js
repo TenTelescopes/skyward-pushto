@@ -1036,10 +1036,10 @@ function renderLobby(el) {
   const sel = state.gameStyle || 'push';
   el.innerHTML = `<h2>Game</h2>
     <p class="muted small">The app picks the 10 best targets for your sky and scope right now, plots a short route, and times you. Each find is confirmed by the phone's sensors.</p>
-    <label class="row"><span>Your name on the leaderboard</span><input id="g-name" value="${esc(state.player || '')}" placeholder="e.g. Bryan" maxlength="24"></label>
-    <label class="row"><span>Observing site (optional)</span><input id="g-site" value="${esc(state.siteName || '')}" placeholder="e.g. Torrance Barrens" maxlength="40"></label>
+    <label class="field"><span>Your name on the leaderboard</span><input id="g-name" value="${esc(state.player || '')}" placeholder="e.g. Bryan" maxlength="24"></label>
+    <label class="field"><span>Observing site <span class="muted small">(optional)</span></span><input id="g-site" value="${esc(state.siteName || '')}" placeholder="e.g. Torrance Barrens" maxlength="40"></label>
     <h3>Style</h3>
-    ${Object.entries(STYLES).map(([k, v]) => `<label class="row"><span><b>${v.name}</b><br><span class="muted small">${v.desc}</span></span><input type="radio" name="g-style" value="${k}" ${k === sel ? 'checked' : ''}></label>`).join('')}
+    ${Object.entries(STYLES).map(([k, v]) => `<button class="act pick ${k === sel ? 'on' : ''}" data-style="${k}"><b>${k === sel ? '● ' : '○ '}${v.name}</b><span class="muted small">${v.desc}</span></button>`).join('')}
     ${aligned ? '' : `<div class="card"><b>Align first.</b> <span class="small">Alignment isn't timed — do it before you start.</span><div class="btnrow"><button id="g-align">Go to Align</button></div></div>`}
     <div class="btnrow"><button id="g-new" class="primary big" ${aligned ? '' : 'disabled'}>New game — best 10 for here, now</button></div>
     <div class="btnrow"><button id="g-scan">Join: scan code</button><button id="g-paste">Join: paste code</button></div>
@@ -1047,7 +1047,7 @@ function renderLobby(el) {
     <div id="g-boardbox"></div>`;
   $('#g-name').onchange = (e) => { state.player = e.target.value.trim(); save(); };
   $('#g-site').onchange = (e) => { state.siteName = e.target.value.trim(); save(); };
-  el.querySelectorAll('input[name=g-style]').forEach((r) => r.onchange = () => { state.gameStyle = r.value; save(); });
+  el.querySelectorAll('[data-style]').forEach((b) => b.onclick = () => { state.gameStyle = b.dataset.style; save(); renderLobby(el); });
   if ($('#g-align')) $('#g-align').onclick = () => showTab('align');
   $('#g-new').onclick = () => newGame(state.gameStyle || 'push');
   $('#g-scan').onclick = async () => { const c = await scanCode(); if (c) (c.startsWith('SKYR') ? addFriendResult(c) : loadChallenge(c)); };
