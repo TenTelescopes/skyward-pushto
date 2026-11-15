@@ -183,8 +183,36 @@ function guessPointing() {
   if (!sensors || !sensors.fresh()) return null;
   const co = sensors.compassOffset(); if (co == null) return null;
   const R = avgR(state.smooth) || sensors.R; const raw = altAzFromVec(mulMV(R, model.axis()));
-  return { raw, alt: raw.alt, az: wrap360(raw.az + co + (state.compassCorr || 0)), ready: true, guess: true };
+  return { raw, alt: raw.alt, az: wrap360(raw.az + co + (state.compassCorr || 0)), ready: true, guess: true, src: 'compass' };
 }
+/**
+ * When the app can't know which way the scope points, the Push chart is steered by hand, so there is always a sky to look at:
+ *  - no sensor data at all: drag the chart to look around (hand.alt / hand.az);
+ *  - sensors but no compass and no alignment: the sky still turns with the phone, and hand.off supplies the direction —
+ *    south is assumed until the user drags the chart sideways or taps a compass point (hand.set).
+ */
+const hand = { alt: 40, az: 180, off: null, set: false };
+const DIRS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+let sensorT0 = 0;                                   // when the sensors were last started (a short grace before calling them "off")
+/** Best guess for the Push chart: the compass if there is one, otherwise the hand-set direction. Null only without sensor data. */
+function roughPointing() {
+  const g = guessPointing(); if (g) return g;
+  if (!sensors || !sensors.fresh()) return null;
+  const R = avgR(state.smooth) || sensors.R; const raw = altAzFromVec(mulMV(R, model.axis()));
+  if (hand.off == null) hand.off = wrap180(180 - raw.az);
+  return { raw, alt: raw.alt, az: wrap360(raw.az + hand.off), ready: true, guess: true, src: hand.set ? 'hand' : 'assumed' };
+}
+/** What a drag on the Push chart does right now: 'pan' (no sensor data), 'turn' (sensors, but no compass and no alignment) or null. */
+function steerMode() {
+  if (state.mode === 'compass') return null;
+  const cur = pointing();
+  if (!cur) return targetObj() ? null : 'pan';
+  if (cur.ready || sensors.compassOffset() != null) return null;
+  return !targetObj() || hand.set ? 'turn' : null;
+}
+const sensorsWaiting = () => !!sensors && performance.now() - sensorT0 < 3000;
+const SENS_BTN = '<button class="mini primary" id="ps-sens">Turn on</button>';
+const bindSensBtn = (el) => { const b = $('#ps-sens', el); if (b) b.onclick = () => { renderLaunch(); $('#gate').classList.remove('hidden'); }; };
 /** Measured compass uncertainty (arcmin) from the Phone check, or null if never measured. */
 function guessUncertainty() { const ph = state.phonePerf; return ph && ph.compassNoise != null ? Math.hypot(ph.compassNoise, ph.compassSwing || 0) : null; }
 
@@ -516,7 +544,7 @@ function renderPush() {
       <canvas id="reticle" class="chart big" width="800" height="800"></canvas>
       <div id="whereami" class="whereami"></div>
       ${ZOOM_ROW()}
-      <p class="muted small">The chart follows the scope — or the phone in your hand. When it says you're near something, tap the name to read about it.</p>
+      <p class="muted small">The chart follows the scope.${state.mounting === 'top-sky' ? ' In your hand, point the top edge of the phone at the sky, like a TV remote.' : ''} When it says you're near something, tap the name to read about it.</p>
       <div class="actionbar"><button id="sv-find" class="primary">Pick a target</button>${align.fit || state.mode === 'compass' ? '' : '<button id="sv-align">Align</button>'}</div>`;
     chartCentre = 'scope'; if (zoom == null) zoom = 30;
     bindChartControls();
@@ -649,11 +677,23 @@ function updateWaypoint(o, tgt, cur) {
   $('#wp-no').onclick = () => { wpDismissed = o.key; clear(); };
 }
 function updateSkyView() {
-  const cur = pointing(), live = cur && cur.ready ? cur : guessPointing();
-  if (!cur) { setPstat('wait', 'Waiting for sensors…'); return; }
-  if (!live) { setPstat('noaz', '<b>Not aligned</b>, and this phone gives no compass reading — align to see the sky move. <button class="mini primary" id="ps-align">Align</button>', bindAlignBtn); drawReticle(null, { alt: cur.alt, az: 0 }, { label: '' }, { noTarget: true }); return; }
-  if (live.guess) setPstat('sv-guess', '');
-  else { setPstat('sv', '<span id="ps-far"></span>'); const f = $('#ps-far'); if (f) f.textContent = `${cur.alt.toFixed(0)}° up, facing ${compassName(cur.az)}`; }
+  const cur = pointing();
+  if (!cur) {                                        // no sensor data: still a sky to look at, steered by dragging
+    if (sensorsWaiting()) setPstat('wait', 'Waiting for sensors…');
+    else setPstat('sv-off', `<b>Sensors are off</b> — drag the chart to look around. ${SENS_BTN}`, bindSensBtn);
+    const at = { alt: hand.alt, az: hand.az, ready: true };
+    trackMotion(null); updateWhere(at);
+    drawReticle(null, at, { label: '' }, { noTarget: true, banner: ['SENSORS OFF', 'Drag the chart to look around'] });
+    return;
+  }
+  const live = cur.ready ? cur : roughPointing();
+  if (!live.guess) { setPstat('sv', '<span id="ps-far"></span>'); const f = $('#ps-far'); if (f) f.textContent = `${cur.alt.toFixed(0)}° up, facing ${compassName(cur.az)}`; }
+  else if (live.src === 'compass') setPstat('sv-guess', '');
+  else setPstat('sv-nocomp', `<b>No compass.</b> Tap the way the scope points, or drag the chart.<div class="dirs">${DIRS.map((d, i) => `<button data-dir="${i * 45}">${d}</button>`).join('')}</div>`,
+    (el) => el.querySelectorAll('[data-dir]').forEach((bt) => bt.onclick = () => {
+      const g = roughPointing(); if (!g) return;
+      hand.off = wrap180(+bt.dataset.dir - g.raw.az); hand.set = true; toast(`Direction set — scope pointing ${bt.textContent}`);
+    }));
   trackMotion(live); updateWhere(live);
   drawReticle(cur, { alt: live.alt, az: live.az }, { label: '' }, { noTarget: true });
 }
@@ -664,12 +704,22 @@ function updatePush() {
   const tgt = sky.altAz(o), cur = pointing(), now = performance.now();
   updateEyeview(o, tgt);
   if (now - rateT > 5000) { rateT = now; const rl = $('#p-rate'); if (rl) rl.innerHTML = rateLineHTML(o, tgt); }
-  if (!cur) { setDelta(azEl, null); setDelta(altEl, null); setPstat('wait', 'Waiting for sensors…'); drawReticle(null, tgt, o); return; }
-  if (!cur.ready) {                                 // no alignment yet: altitude is real, azimuth is the compass's best guess
-    const gp = guessPointing();
+  if (!cur) {                                        // no sensor data: show where the target sits in the sky
+    setDelta(azEl, null); setDelta(altEl, null);
+    if (sensorsWaiting()) setPstat('wait', 'Waiting for sensors…');
+    else setPstat('off', `<b>Sensors are off</b> — the chart shows the sky around ${esc(o.label)}. ${SENS_BTN}`, bindSensBtn);
+    drawReticle(null, tgt, o, { banner: ['SENSORS OFF', `The sky around ${o.label}`] }); return;
+  }
+  if (!cur.ready) {                                 // no alignment yet: altitude is real, azimuth is a best guess
+    const gp = roughPointing(), ALIGN = '<button class="mini primary" id="ps-align">Align</button>';
     setDelta(altEl, tgt.alt - cur.alt, 'alt', false);
-    if (gp) { setDelta(azEl, guidance(gp, tgt).dAz, 'az', false, true); setPstat('guess', '<b>Not aligned</b> — the turn arrow is a rough compass guess. <button class="mini primary" id="ps-align">Align</button>', bindAlignBtn); }
-    else { setDelta(azEl, null); setPstat('noaz', '<b>Not aligned</b>, and this phone gives no compass reading. <button class="mini primary" id="ps-align">Align</button>', bindAlignBtn); }
+    if (gp.src === 'assumed') {                      // no compass and no direction given: don't invent a turn arrow
+      setDelta(azEl, null); setPstat('noaz', `<b>Not aligned</b>, and no compass reading — the tilt arrow is real; align to get the turn. ${ALIGN}`, bindAlignBtn);
+      drawReticle(null, tgt, o, { banner: ['NOT ALIGNED', `No compass reading — the sky around ${o.label}`] }); return;
+    }
+    setDelta(azEl, guidance(gp, tgt).dAz, 'az', false, true);
+    if (gp.src === 'hand') setPstat('guess-hand', `<b>Not aligned</b> — the turn arrow uses the direction you set by hand. ${ALIGN}`, bindAlignBtn);
+    else setPstat('guess', `<b>Not aligned</b> — the turn arrow is a rough compass guess. ${ALIGN}`, bindAlignBtn);
     drawReticle(cur, tgt, o); return;
   }
   trackMotion(cur); updateWhere(cur);
@@ -795,9 +845,27 @@ function bindChartControls() {
   // pinch to zoom
   let d0 = 0, z0 = 0;
   const dist = (e) => Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
-  cv.addEventListener('touchstart', (e) => { if (e.touches.length === 2) { d0 = dist(e); z0 = zoom ?? cv._lastView; e.preventDefault(); } }, { passive: false });
-  cv.addEventListener('touchmove', (e) => { if (e.touches.length === 2 && d0) { setZoom(z0 * d0 / dist(e)); e.preventDefault(); } }, { passive: false });
-  cv.addEventListener('touchend', () => { d0 = 0; });
+  // one finger (or the mouse) steers the chart by hand when the app can't know the direction — see steerMode()
+  let last = null;
+  const steer = (x, y) => {
+    const m = last && steerMode(); if (!m) { last = null; return false; }
+    const k = (cv._lastView || 30) / (0.46 * cv.getBoundingClientRect().width);        // degrees per screen pixel
+    const dx = (x - last.x) * k, dy = (y - last.y) * k; last = { x, y };
+    if (m === 'pan') { hand.alt = Math.max(0, Math.min(89, hand.alt + dy)); hand.az = wrap360(hand.az - dx / Math.max(0.25, Math.cos(hand.alt * D2R))); }
+    else { const g = roughPointing(); hand.off = wrap180((hand.off || 0) - dx / Math.max(0.25, Math.cos((g ? g.alt : 0) * D2R))); hand.set = true; }
+    return true;
+  };
+  cv.addEventListener('touchstart', (e) => {
+    if (e.touches.length === 2) { d0 = dist(e); z0 = zoom ?? cv._lastView; last = null; e.preventDefault(); }
+    else if (e.touches.length === 1 && steerMode()) last = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+  }, { passive: false });
+  cv.addEventListener('touchmove', (e) => {
+    if (e.touches.length === 2 && d0) { setZoom(z0 * d0 / dist(e)); e.preventDefault(); }
+    else if (e.touches.length === 1 && steer(e.touches[0].clientX, e.touches[0].clientY)) e.preventDefault();
+  }, { passive: false });
+  cv.addEventListener('touchend', () => { d0 = 0; last = null; });
+  cv.addEventListener('mousedown', (e) => { if (steerMode()) last = { x: e.clientX, y: e.clientY }; });
+  cv.addEventListener('mousemove', (e) => { if (e.buttons & 1) steer(e.clientX, e.clientY); else last = null; });
   cv.addEventListener('wheel', (e) => { setZoom((zoom ?? cv._lastView) * Math.exp(e.deltaY * 0.002)); e.preventDefault(); }, { passive: false });
 }
 
@@ -805,15 +873,15 @@ function drawReticle(cur, tgt, o, opt = {}) {
   const cv = opt.canvas || $('#reticle'); if (!cv) return; const c = cv.getContext('2d'); const W = cv.width, H = cv.height, cx = W / 2, cy = H / 2, Rpx = W * 0.46;
   const k = vis(); const col = (r, g = 0, b = 0, a = 1) => tint(r, g, b, a, k);
   c.clearRect(0, 0, W, H);
-  let guess = false;
-  if (cur && !cur.ready) { const gp = guessPointing(); if (gp) { cur = gp; guess = true; } else cur = null; } // no azimuth yet: compass best guess
-  const centre = opt.centre === 'target' || chartCentre === 'target' || !cur ? tgt : cur;
-  if (!cur && chartCentre !== 'target' && opt.centre !== 'target') { c.fillStyle = col(150); c.font = '28px system-ui'; c.textAlign = 'center'; c.fillText('Not aligned — tap "Centre: target" to preview', cx, cy); return; }
+  let guess = false, src = null;
+  // No azimuth yet: a best guess. The Push chart falls back on a hand-set direction; the other charts only trust a compass.
+  if (cur && !cur.ready) { const gp = opt.canvas ? guessPointing() : roughPointing(); if (gp) { cur = gp; guess = true; src = gp.src; } else cur = null; }
+  const centre = opt.centre === 'target' || chartCentre === 'target' || !cur ? tgt : cur;     // nothing known about the scope: the sky around the target
   const half = tfov() / 2;
-  const U = guess ? guessUncertainty() : cur ? pointingUncertainty(tgt) : null;   // arcmin
+  const U = guess ? (src === 'compass' ? guessUncertainty() : null) : cur ? pointingUncertainty(tgt) : null;   // arcmin
   minViewGuess = !!guess;
   minView = guess ? Math.max(5, U ? 3 * U / 60 : 0) : U ? Math.max(ZMIN, Math.min(ZMAX, 3 * U / 60)) : ZMIN;   // a guess never zooms in past 5°     // never zoom tighter than ~3× what the phone can know
-  let view = opt.view ?? zoom ?? autoRadius(cur, tgt); let limited = !opt.view && view < minView; if (limited) view = minView;
+  let view = opt.view ?? zoom ?? (!cur && !opt.canvas ? 25 : autoRadius(cur, tgt)); let limited = !opt.view && view < minView; if (limited) view = minView;
   if (!opt.view) {                                                   // zoom out while slewing (unless locked), ease back when settled
     if (motion.moving && !state.zoomLock) { view = Math.max(view, Math.min(50, Math.max(20, motion.v * 8))); limited = false; }
     dispView = dispView ? Math.exp(Math.log(dispView) + (Math.log(view) - Math.log(dispView)) * 0.18) : view;
@@ -879,11 +947,15 @@ function drawReticle(cur, tgt, o, opt = {}) {
   c.fillStyle = col(130); c.font = '24px system-ui'; c.textAlign = 'left';
   c.fillText(`${view >= 2 ? view.toFixed(view < 10 ? 1 : 0) + '°' : (view * 60).toFixed(0) + '′'} radius · stars to mag ${magLim.toFixed(1)}${zoom == null ? ' · auto' : ''}`, 12, 30);
   if (limited && !guess) { c.fillStyle = col(200, 40, 15); c.fillText(`Zoom limited by phone accuracy (±${fmt.am(U)})`, 12, H - 16); }
-  if (guess && !opt.noBanner) {                                       // unmistakable label: this view is not aligned
+  // Unmistakable label whenever the chart is not showing a known pointing: a best guess, or no pointing at all.
+  const banner = opt.noBanner ? null : guess ? ['NOT ALIGNED — BEST GUESS MODE',
+    src === 'hand' ? 'Direction set by hand — no compass reading' : src === 'assumed' ? 'No compass reading — assuming you started out facing south'
+      : U ? `Direction from the phone's compass (measured ±${fmt.am(U)})` : 'Direction is a rough compass guess'] : opt.banner || null;
+  if (banner) {
     const fit = (txt, px, weight = '') => { c.font = `${weight} ${px}px system-ui`; const w = c.measureText(txt).width; if (w > W - 40) c.font = `${weight} ${Math.floor(px * (W - 40) / w)}px system-ui`; };
     c.fillStyle = 'rgba(0,0,0,0.75)'; c.fillRect(0, 44, W, 74);
-    c.fillStyle = col(255, 70, 30); c.textAlign = 'center'; fit('NOT ALIGNED — BEST GUESS MODE', 34, 'bold'); c.fillText('NOT ALIGNED — BEST GUESS MODE', cx, 82);
-    const sub = U ? `Direction from the phone's compass (measured ±${fmt.am(U)})` : 'Direction is a rough compass guess';
+    c.fillStyle = col(255, 70, 30); c.textAlign = 'center'; fit(banner[0], 34, 'bold'); c.fillText(banner[0], cx, 82);
+    const sub = banner[1];
     c.fillStyle = col(200, 40, 15); fit(sub, 21); c.fillText(sub, cx, 108);
     c.textAlign = 'left'; c.font = '24px system-ui';
   }
@@ -2058,7 +2130,7 @@ async function startSensors(sim) {
     // Reuse sensors that are already listening: starting a second set would feed every reading in twice.
     if (sim || !(sensors && sensors.constructor === Sensors && sensors.started)) {
       sensors = sim ? new SimSensors() : new Sensors();
-      await sensors.start(); sensors.on(onSensor);
+      await sensors.start(); sensors.on(onSensor); sensorT0 = performance.now();
     }
     if (sim) {
       window.sim = sensors; // arrow keys move the simulated scope: ←/→ azimuth, ↑/↓ altitude (Shift = fine)
@@ -2130,7 +2202,7 @@ async function init() {
   applyTheme();
   renderLaunch();
   $('#gate-sim').onclick = () => startSensors(true);
-  $('#gate-skip').onclick = () => { $('#gate').classList.add('hidden'); if (flow && !flow.started) flowNext(); toast('Browsing without sensors — the sky view and pointing need them. Tap the status at the top to try again.', 5000); };
+  $('#gate-skip').onclick = () => { $('#gate').classList.add('hidden'); if (flow && !flow.started) flowNext(); toast('Browsing without sensors — drag the sky view to look around. Pointing needs them: tap the status at the top to turn them on.', 5500); };
   if (new URLSearchParams(location.search).has('sim')) $('#gate-sim').classList.remove('hidden');
   showTab('find');
   const flush = () => flushQueue(state).then((n) => { if (n) { save(); toast(`Sent ${n} queued score${n > 1 ? 's' : ''} to the leaderboard`); } }).catch(() => {});

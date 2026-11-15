@@ -131,6 +131,8 @@ details.more[open] > summary::before { content: '– '; }
 .delta.ok { border-color: var(--good); background: var(--glow); }
 .delta.ok .val { color: var(--good); }
 .pstat { text-align: center; font-size: 17px; color: var(--fg); min-height: 26px; margin: 6px 0; }
+.dirs { display: flex; gap: 4px; margin-top: 6px; }
+.dirs button { flex: 1; min-width: 0; min-height: 38px; padding: 0; font-size: 14px; }
 .infield { text-align: center; font-size: 17px; color: var(--good); min-height: 24px; }
 .ontarget { border: 2px solid var(--good); background: var(--glow); border-radius: 12px; padding: 10px 12px; text-align: center; animation: pulse 1.6s ease-out 2; }
 .ontarget b { color: var(--good); font-size: 19px; }
