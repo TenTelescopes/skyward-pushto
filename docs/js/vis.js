@@ -81,6 +81,12 @@ function starMargins(m, Bsky, scope) {
   });
 }
 
+/** Eyepiece to suggest for a solar-system object: the whole Moon in view; for planets, as much power as the aperture supports. */
+function planetEp(o, scope) {
+  const list = mags(scope).sort((a, b) => a.M - b.M);                            // low power first
+  if (o.id === 'Moon') return (list.filter((x) => x.ep.afov / x.M >= 0.6).pop() || list[0]).ep;
+  return (list.filter((x) => x.M <= 1.3 * scope.aperture).pop() || list[0]).ep;
+}
 export const LEVEL_NAMES = ['Obvious', 'Visible', 'Challenging', 'Not now'];
 export const DOTS = ['●●●', '●●○', '●○○', '○○○'];
 const levelOf = (m) => (m >= 1.5 ? 0 : m >= 0.6 ? 1 : m >= -0.2 ? 2 : 3);
@@ -108,8 +114,9 @@ function objectGeometry(o) {
 export function rate(o, cond, scope) {
   const { alt, sunAlt = -30, moonAlt = -90, moonFrac = 0, moonSep = 180, nelm = DEFAULT_NELM } = cond;
   if (alt <= 0) return { level: 3, margin: -9, ep: null, cause: 'below' };
-  if ((o.key || '').startsWith('st:')) return null;
-  if (o.planet && DAY_PLANETS.includes(o.id)) return { level: 0, margin: 5, ep: null, cause: null };
+  const key = o.key || '', isStar = key.startsWith('st:'), isDouble = key.startsWith('ds:') || (isStar && !!o.pairs);
+  if (isStar && !o.show) return null;                                // alignment stars aren't targets
+  if (o.planet && DAY_PLANETS.includes(o.id)) return { level: 0, margin: 5, ep: planetEp(o, scope), cause: null };
   if (sunAlt > 0) return { level: 3, margin: -9, ep: null, cause: 'daylight' };   // with the Sun up: Moon, Venus, Jupiter, Saturn, Mars only
   if (o.planet) {
     if (o.id === 'Mercury') return { level: sunAlt < -3 ? 1 : 2, margin: 1, ep: null, cause: 'twilight' };
@@ -119,11 +126,11 @@ export function rate(o, cond, scope) {
   const Bsky = Bbase + Bmoon + Btw, ext = K_EXT * (airmass(alt) - 1);
   const best = (list) => list.reduce((a, b) => (b.margin > a.margin ? b : a));
   let one;
-  if (o.planet || (o.key || '').startsWith('ds:')) {
+  if (o.planet || isDouble || isStar) {
     const mm = o.planet ? (o.mag ?? 6) : (() => { const p = (o.pairs && o.pairs[0]) || {}; const ms = String(p.mags || '').split('/').map(Number).filter((x) => !Number.isNaN(x)); return ms.length ? Math.max(...ms) : (o.mag ?? 7); })();
     const calc = (B) => best(starMargins(mm + ext, B, scope));
     one = calc(Bsky);
-    if ((o.key || '').startsWith('ds:')) {                                     // also needs splitting
+    if (isDouble) {                                                            // also needs splitting
       const p = (o.pairs && o.pairs[0]) || {}, sep = p.sep ?? o.sep;
       if (!sep) return null;
       const limit = Math.max(116 / scope.aperture, 1.5), maxM = Math.max(...mags(scope).map((x) => x.M));
@@ -151,15 +158,18 @@ export function rate(o, cond, scope) {
     const top = Object.entries(gains).sort((a, b) => b[1] - a[1])[0];
     return { level: lv, margin: one.margin, ep: one.ep, cause: top[1] >= 0.4 ? top[0] : 'faint' };
   }
-  const lv = levelOf(one.margin);
-  return { level: lv, margin: one.margin, ep: one.ep, cause: lv ? cause(o, cond, scope, lv) : null };
+  let lv = levelOf(one.margin);
+  if (o.planet && lv < 1) lv = 1;                                               // Uranus and Neptune: there, but tiny and star-like — not a showpiece
+  const ep = o.planet ? planetEp(o, scope) : mags(scope).sort((a, b) => a.M - b.M)[0].ep;   // a single star looks best, and is easiest to find, at low power
+  return { level: lv, margin: one.margin, ep, cause: lv ? cause(o, cond, scope, lv) : null };
 }
 function cause(o, cond, scope, lv) { return cond.alt < 25 ? 'low' : 'faint'; }
 
 /** One plain-language line on what they'll see and why. */
 export function describe(o, r) {
   if (!r) return '';
-  const t = o.planet ? 'PL' : (o.key || '').startsWith('ds:') ? 'DS' : (o.key || '').startsWith('as:') ? 'AS' : o.t;
+  const k = o.key || '';
+  const t = o.planet ? 'PL' : k.startsWith('ds:') || (k.startsWith('st:') && o.pairs) ? 'DS' : k.startsWith('st:') ? 'ST' : k.startsWith('as:') ? 'AS' : o.t;
   const see = {
     GX: ['Bright oval glow with a brighter centre', 'Faint grey smudge — look slightly to one side of it', 'Barely there — you may only catch it from the corner of your eye'],
     NB: ['Clear glowing cloud', 'Soft faint glow — averted vision helps', 'Very faint — a nebula filter helps a lot'],
@@ -170,7 +180,9 @@ export function describe(o, r) {
     AS: ['Easy star pattern', 'Faint star pattern', 'Hard to make out'],
     DS: ['Splits cleanly — look for colour', 'Splits with the higher power', 'A tough split — needs steady air'],
     PL: ['Bright and easy', 'Visible', 'Hard to spot'],
+    ST: ['Bright star — look at its colour', 'Easy star', 'Faint star'],
   }[t] || ['Easy', 'Visible', 'Hard'];
+  if (o.planet && (o.id === 'Uranus' || o.id === 'Neptune') && r.level < 3) return r.level === 1 ? 'A tiny disc, almost star-like — high power shows it is not a star' : 'Tiny and faint — hard to tell from a star';
   const why = { moon: 'Moon washes it out', twilight: 'Sky not dark yet', low: 'Low in the haze', sky: 'Light pollution', close: 'Close pair', faint: 'Faint', below: 'Below the horizon', daylight: 'Daylight' }[r.cause] || '';
   if (r.level === 3) return why ? `Not now — ${why === 'Moon washes it out' ? 'the Moon washes it out' : why.toLowerCase()}` : 'Not now';
   return `${see[Math.min(2, r.level)]}${r.level > 0 && why && r.cause !== 'faint' ? ` · ${why}` : ''}`;

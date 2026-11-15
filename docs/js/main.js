@@ -2,12 +2,15 @@ import { PointingModel, MOUNTINGS, fitAlignment, guidance, tangentOffset, mulMV,
 import { Sky, typeLabel, compassName, LINES } from './astro.js';
 import { Sensors, SimSensors } from './sensors.js';
 import { Recorder, analyzeStillness, analyzeRepeat, analyzeReversal, analyzeAccuracy, fmt, toCSV } from './tests.js';
-import { fitConsistency, pairConsistency, outliers, verdict as domeVerdict, drawDome } from './dome.js';
+import { fitConsistency, pairConsistency, outliers, verdict as domeVerdict, drawDome, correctionTable, splitJumps } from './dome.js';
 import { constellationAt, conName, altAzToJ2000 } from './locate.js';
 import { whereWords, recogniseWords, pickStars, checkAltitude, checkPair, chooseWaypoint } from './assist.js';
 import { drawEyepiece, newtonianMatrix } from './eyeview.js';
 import { theme, tint } from './theme.js';
-import { LEVELS, planTargets, routePlan, nextDarkNight } from './plan.js';
+import { LEVELS, planTargets, routePlan, nextDarkNight, interest, pickScore, varied, autoPlan, kindOf } from './plan.js';
+import { seenKeys, lastEntry, logStats, MILESTONES, newlyAchieved, logCSV } from './log.js';
+import { sound, initSound, cue, tickInterval } from './sound.js';
+import { blurbFor } from '../data/blurbs.js';
 import { rate, describe, DOTS, LEVEL_NAMES, DEFAULT_NELM } from './vis.js';
 import { DAYLIGHT, STYLES, PENALTY, pickTargets, routeOrder, pathLength, tokenFor, buildTokenIndex, encodeChallenge, decodeChallenge, challengeId, encodeResult, decodeResult, points, rank, fmtTime, dwell } from './game.js';
 import { submitScore, fetchBoard, flushQueue } from './wixscores.js';
@@ -48,8 +51,8 @@ const DEFAULT_PROFILES = {
 const DEFAULTS = {
   v: 1, profiles: DEFAULT_PROFILES, active: 'sw150c', mounting: 'top-sky', mode: 'gyro', compassCorr: 0,
   site: { lat: 43.65, lon: -79.38, elev: 100, source: 'default (Toronto) — set your location' },
-  smooth: 0.6, minAlt: 10, bright: 1, ep: 0, useRate: false, catFilter: 'M', upOnly: true, sort: 'cat',
-  history: [], target: null,
+  smooth: 0.6, minAlt: 10, bright: 1, ep: 0, useRate: false, catFilter: 'M', upOnly: true, sort: 'best',
+  history: [], target: null, log: [], sound: 'chime', skyCorr: true,
   launch: { check: true, sky: false, align: true },
 };
 let state;
@@ -67,6 +70,21 @@ const profile = () => state.profiles[state.active];
 const eyepiece = () => profile().eyepieces[Math.min(state.ep, profile().eyepieces.length - 1)];
 const tfov = (ep = eyepiece(), p = profile()) => ep.afov * ep.fl / p.fl; // degrees
 function toast(msg, ms = 2600) { const t = $('#toast'); t.textContent = msg; t.classList.remove('hidden'); clearTimeout(toast.h); toast.h = setTimeout(() => t.classList.add('hidden'), ms); }
+// Icons are drawn, not typed: several arrow and sun characters turn into colour emoji on iPhones, which ruins a red screen.
+const svg = (d) => `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">${d}</svg>`;
+const ICON = {
+  sun: svg('<circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9 7 7M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/>'),
+  moon: svg('<path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/>'),
+  full: svg('<path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/>'),
+  prev: svg('<path d="m15 5-7 7 7 7"/>'), next: svg('<path d="m9 5 7 7-7 7"/>'),
+};
+const L_ARR = '◀︎', R_ARR = '▶︎', WARN = '⚠︎';   // forced to text style
+const isMessier = (o) => !!(o.cats && o.cats.some((c) => /^M\d/.test(c)));
+/** "Galaxy", "Double star", "Moon" — the kind of thing, in plain words. */
+const kindLabel = (o) => (o.id === 'Moon' ? 'Moon' : o.key.startsWith('st:') ? (o.pairs ? 'Double star' : 'Star') : typeLabel(o.t));
+const sizeText = (o) => (o.maj ? (o.maj >= 60 ? `${(o.maj / 60).toFixed(1)}°` : `${o.maj.toFixed(o.maj < 3 ? 1 : 0)}′`) : (o.sep ? `${o.sep}″ apart` : ''));
+/** Label with the common name: "M31 Andromeda Galaxy". */
+const nameHTML = (o) => `${esc(o.label)}${o.name ? ` <span class="cname">${esc(o.name)}</span>` : ''}`;
 
 function applyModelSettings() {
   model.setMounting(state.mounting);
@@ -82,13 +100,13 @@ function applyTheme() {
   r.dataset.theme = state.day ? 'day' : 'night';
   r.style.setProperty('--k', vis());
   document.querySelector('meta[name=theme-color]')?.setAttribute('content', state.day ? '#f4f5f7' : '#000000');
-  const b = $('#hb-day'); if (b) { b.textContent = state.day ? '☾' : '☀'; b.title = state.day ? 'Switch to Night (red) mode' : 'Switch to Day mode'; }
+  const b = $('#hb-day'); if (b) { b.innerHTML = state.day ? ICON.moon : ICON.sun; b.title = state.day ? 'Switch to Night (red) mode' : 'Switch to Day mode'; }
   eyeT = 0;
 }
 function toggleDay() {
   state.day = !state.day; save(); applyTheme();
-  if ($('#tab-setup').classList.contains('on')) renderSetup();
-  if (state.day) toast('Day mode — bright colours. Switch back to Night (☾) before observing.', 3500);
+  if (tab === 'setup') renderSetup(); if (tab === 'more') renderMore();
+  if (state.day) toast('Day mode — bright colours. Switch back to Night before observing.', 3500);
 }
 const IS_STANDALONE = () => (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true || !!window.Capacitor;
 function canFullscreen() { const el = document.documentElement; return !!(el.requestFullscreen || el.webkitRequestFullscreen); }
@@ -133,8 +151,30 @@ function pointing() {
   if (!sensors || !sensors.fresh()) return null;
   const R = avgR(state.smooth) || sensors.R; const raw = altAzFromVec(mulMV(R, model.axis()));
   const off = azOffset();
-  return { raw, alt: raw.alt, az: off == null ? null : wrap360(raw.az + off), ready: off != null };
+  const out = { raw, alt: raw.alt, az: off == null ? null : wrap360(raw.az + off), ready: off != null };
+  // Sky correction: what every confirmed object has taught us about this phone on this telescope tonight
+  // (see correctionTable in dome.js). The last Sync or alignment star still sets the heading and stays exact.
+  const T = out.ready ? skyTable() : null;
+  if (T) {
+    const now = Date.now(), s = lastSet();
+    const c = T.point(R, now, { tSet: s ? s.t : model.t0, drift: model.thetaAt(now) - model.theta, anchor: T.anchorFor(s, now) });
+    out.corr = sepDeg(out.alt, out.az, c.alt, c.az); out.alt = c.alt; out.az = c.az;
+  }
+  return out;
 }
+/** The confirmed object that last set the heading (a Sync or an alignment star; test stars don't). */
+function lastSet() { const P = align.confirm; for (let i = P.length - 1; i >= 0; i--) if (P[i].kind !== 'test') return P[i]; return null; }
+/** The correction built from the confirmed objects; rebuilt only when they, the phone tilt or the eyepiece change. */
+let corrCache = { sig: '', T: null };
+function skyTableAll() {
+  if (state.mode !== 'gyro' || !align.fit) return null;
+  const P = align.confirm, last = P[P.length - 1];
+  const sig = `${P.length}|${last ? last.t : 0}|${model.p}|${model.q}|${Math.round(tfov() * 600)}|${state.calibrate}`;
+  if (corrCache.sig !== sig) corrCache = { sig, T: correctionTable(P, model.d0, { p: model.p, q: model.q }, { r: tfov() * 60 / 2, calibrate: state.calibrate !== false }) };
+  return corrCache.T;
+}
+/** ...and only handed to the arrows when it is switched on and has shown, on the objects so far, that it helps. */
+function skyTable() { if (state.skyCorr === false) return null; const T = skyTableAll(); return T && T.check.helps ? T : null; }
 /**
  * Before alignment: altitude from gravity (real) + azimuth from the phone's compass (rough). Null without a compass.
  * Marked guess:true so every screen can label it "Not aligned — best guess".
@@ -149,17 +189,27 @@ function guessPointing() {
 function guessUncertainty() { const ph = state.phonePerf; return ph && ph.compassNoise != null ? Math.hypot(ph.compassNoise, ph.compassSwing || 0) : null; }
 
 // ---------------------------------------------------------------- tabs
+// Five tabs; Align, Log, Tests and Setup live under More.
+const PARENT = { align: 'more', log: 'more', test: 'more', setup: 'more' };
+const scrollPos = {}; let pendingScroll = null;
 function showTab(t) {
-  tab = t;
-  document.querySelectorAll('nav#tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === t));
+  const m = $('main'); if (tab && m) scrollPos[tab] = m.scrollTop;
+  tab = t; const top = PARENT[t] || t;
+  document.querySelectorAll('nav#tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === top));
   document.querySelectorAll('.tab').forEach((s) => s.classList.toggle('on', s.id === 'tab-' + t));
-  ({ plan: renderPlan, find: renderFind, push: renderPush, align: renderAlign, game: renderGame, test: renderTest, setup: renderSetup })[t]();
+  ({ plan: renderPlan, find: renderFind, push: renderPush, align: renderAlign, game: renderGame, test: renderTest, setup: renderSetup, more: renderMore, log: renderLog })[t]();
+  // Lists reopen where you left them; every other screen starts at the top.
+  pendingScroll = (t === 'find' || t === 'plan') && scrollPos[t] ? { t, y: scrollPos[t] } : null;
+  m.scrollTop = pendingScroll ? pendingScroll.y : 0;
 }
+function restoreScroll() { if (pendingScroll && pendingScroll.t === tab) { $('main').scrollTop = pendingScroll.y; pendingScroll = null; } }
+const BACK = '<button class="back" data-back>‹ More</button>';
+function bindBack(el) { const b = $('[data-back]', el); if (b) b.onclick = () => showTab('more'); }
 
 // ---------------------------------------------------------------- PLAN
 // state.plan = { start: ISO, hours, items: [{ key, sync? }], done: { key: true } }
-let planRows = null, planLevel = 'all', planSort = 'time', planLimit = 60;
-const hm = (d) => (d ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—');
+let planRows = null, planLevel = 'all', planSort = 'top', planLimit = 40, planEdit = false, planReorder = false;
+const hm = (d) => (d ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '—');
 const pad = (n) => String(n).padStart(2, '0');
 const dateVal = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const timeVal = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
@@ -180,59 +230,89 @@ function markDone(key, v) { if (!state.plan) return; state.plan.done = state.pla
 function planBar(o) {
   const P = planList(), i = P.findIndex((x) => x.key === o.key); if (i < 0) return '';
   const it = P[i], nxt = P[i + 1] && objByKey(P[i + 1].key);
-  return `<div class="planbar">${it.sync ? `<b>Sync star</b> — centre ${esc(o.label)}, tap <b>Centered — Sync</b>, then Next. ` : ''}Plan ${i + 1} of ${P.length}${nxt ? ` · next: <b>${esc(nxt.label)}</b> (Next ▶)` : ' · last one'}</div>`;
+  return `<div class="planbar">${it.sync ? `<b>Sync star.</b> Centre ${esc(o.label)}, tap <b>Centred — Sync</b>, then the arrow. ` : ''}Plan ${i + 1} of ${P.length}${nxt ? ` · next: <b>${esc(nxt.label)}</b>` : ' · last one'}</div>`;
+}
+function dayLabel(d) {
+  const now = new Date(), a = new Date(now.getFullYear(), now.getMonth(), now.getDate()), b = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const diff = Math.round((b - a) / 864e5);
+  return diff === 0 ? (d.getHours() < 16 ? 'Today' : 'Tonight') : diff === 1 && d.getHours() < 6 ? 'Tonight' : diff === 1 ? 'Tomorrow' : d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
 }
 function renderPlan() {
-  const el = $('#tab-plan'), P = planState(), start = new Date(P.start), n = sky.night(start);
-  const startEvening = n.set && start < n.set ? n.set : null;
+  const el = $('#tab-plan'), P = planState();
+  if (new Date(P.start).getTime() + P.hours * 3600000 < Date.now() - 2 * 3600000) { P.start = defaultStart().toISOString(); planRows = null; save(); }   // last session is over: plan for the next one
+  const start = new Date(P.start), end = new Date(start.getTime() + P.hours * 3600000), n = sky.night(start);
   const moonTxt = `${Math.round(n.moonFrac * 100)}% lit${n.moonRise ? ', rises ' + hm(n.moonRise) : ''}${n.moonSet ? ', sets ' + hm(n.moonSet) : ''}`;
-  el.innerHTML = `<h2 style="margin-top:4px">Plan a session</h2>
+  const T = P.items.filter((x) => !x.sync), nSync = P.items.length - T.length, nDone = T.filter((x) => P.done && P.done[x.key]).length;
+  const skyName = state.skyq ? state.skyq.label : 'Suburban sky (a guess)';
+  el.innerHTML = `<h2>Plan a session</h2>
     <div class="card">
-      <label class="row"><span>Date</span><input id="pl-date" type="date" value="${dateVal(start)}"></label>
-      <label class="row"><span>Going out at</span><input id="pl-time" type="time" step="900" value="${timeVal(start)}"></label>
-      <label class="row"><span>Staying out</span><select id="pl-hours">${[1, 1.5, 2, 3, 4, 6, 8].map((h) => `<option value="${h}" ${+P.hours === h ? 'selected' : ''}>${h} hour${h > 1 ? 's' : ''}</option>`).join('')}</select></label>
-      <div class="btnrow"><button id="pl-dark" class="mini">At full dark (${hm(n.astro || n.naut)})</button><button id="pl-now" class="mini">Now</button></div>
-      <label class="row"><span>Your sky <span class="muted small">${state.skyq && state.skyq.src !== 'pick' ? `(sky check ${new Date(state.skyq.when).toLocaleDateString()})` : state.skyq ? '' : '(guess — check it for better picks)'}</span></span><select id="pl-skysel">${SKY_PICKS.map(([m, l]) => `<option value="${m}" ${Math.abs(skyNelm() - m) < 0.26 ? 'selected' : ''}>${l}</option>`).join('')}${SKY_PICKS.some(([m]) => Math.abs(skyNelm() - m) < 0.26) ? '' : `<option selected>${esc(state.skyq.label)}</option>`}</select></label>
-      <div class="btnrow"><button id="pl-skyq" class="mini">Little Dipper check</button></div>
-      <div class="muted small">Sunset ${hm(n.set)} · dark ${hm(n.astro)} → ${hm(n.astroAm)} · Moon ${moonTxt}${startEvening ? ' · <b>you start before sunset</b>' : ''}</div>
+      <div class="sess"><div><b>${dayLabel(start)} · ${hm(start)} – ${hm(end)}</b>
+        <div class="muted small">${esc(skyName)} · Moon ${moonTxt}</div>
+        <div class="muted small">Sunset ${hm(n.set)} · fully dark ${hm(n.astro)} – ${hm(n.astroAm)}${n.set && start < n.set ? ' · <b>you start before sunset</b>' : ''}</div></div>
+        <button id="pl-edit" class="mini">${planEdit ? 'Done' : 'Change'}</button></div>
+      <div id="pl-form" class="${planEdit ? '' : 'hidden'}" style="margin-top:8px">
+        <div class="btnrow"><button id="pl-dark" class="mini">Start at full dark (${hm(n.astro || n.naut)})</button><button id="pl-now" class="mini">Start now</button></div>
+        <label class="row"><span>Date</span><input id="pl-date" type="date" value="${dateVal(start)}"></label>
+        <label class="row"><span>Going out at</span><input id="pl-time" type="time" step="900" value="${timeVal(start)}"></label>
+        <label class="row"><span>Staying out</span><select id="pl-hours">${[1, 1.5, 2, 3, 4, 6, 8].map((h) => `<option value="${h}" ${+P.hours === h ? 'selected' : ''}>${h} hour${h > 1 ? 's' : ''}</option>`).join('')}</select></label>
+        <label class="row"><span>Your sky</span><select id="pl-skysel">${SKY_PICKS.map(([m, l]) => `<option value="${m}" ${Math.abs(skyNelm() - m) < 0.26 ? 'selected' : ''}>${l}</option>`).join('')}${SKY_PICKS.some(([m]) => Math.abs(skyNelm() - m) < 0.26) ? '' : `<option selected>${esc(state.skyq.label)}</option>`}</select></label>
+        <div class="btnrow"><button id="pl-skyq" class="mini">Measure it: Little Dipper check (30 s)</button></div>
+      </div>
     </div>
-    <h3>Your plan ${P.items.length ? `<span class="muted small">(${P.items.filter((x) => !x.sync).length} targets${P.items.some((x) => x.sync) ? `, ${P.items.filter((x) => x.sync).length} sync stars` : ''})</span>` : ''}</h3>
-    ${P.items.length ? `<ul class="list" id="pl-list">${P.items.map((it, i) => planItemHTML(it, i)).join('')}</ul>
-      <div class="btnrow"><button id="pl-route" class="primary">Suggest hop order + sync stars</button></div>
-      <div class="btnrow"><button id="pl-bytime" class="mini">Order by best time</button><button id="pl-nosync" class="mini">Remove sync stars</button><button id="pl-clear" class="mini">Clear plan</button></div>
-      <p class="muted small">Hop order keeps pushes short and puts a bright star next to each group of targets — centre it and Sync before the group, so pointing is freshly corrected right where you're looking. Tap a name to start pushing; Next on the Push screen follows this list.</p>`
-    : '<p class="muted small">Add targets from the suggestions below with <b>+</b>.</p>'}
-    <h3>Suggested for ${hm(start)}–${hm(new Date(start.getTime() + P.hours * 3600000))}</h3>
+    ${P.items.length ? `<div class="sech"><h3>Your plan <span class="muted small">${T.length} target${T.length === 1 ? '' : 's'}${nSync ? ` + ${nSync} sync star${nSync === 1 ? '' : 's'}` : ''}${nDone ? ` · ${nDone} done` : ''}</span></h3><button id="pl-reorder" class="mini">${planReorder ? 'Done' : 'Edit'}</button></div>
+      <ul class="list" id="pl-list">${P.items.map((it, i) => planItemHTML(it, i)).join('')}</ul>
+      <div class="btnrow"><button id="pl-go" class="primary">Start observing</button><button id="pl-route">Best order + sync stars</button></div>
+      <div class="chips wrap"><button id="pl-bytime">Order by time</button><button id="pl-nosync" ${nSync ? '' : 'disabled'}>Remove sync stars</button><button id="pl-auto">Rebuild for me</button><button id="pl-clear">Clear</button></div>
+      <p class="muted small">"Best order" keeps pushes short and adds a bright star before each long jump. Centre that star and tap Sync, so the pointing is freshly corrected right where you're about to look.</p>`
+    : `<div class="card" style="text-align:center"><b>No plan yet</b><p class="muted small" style="margin:4px 0 10px">Let the app pick a varied tour for this session, or add your own from the suggestions below with <b>+</b>.</p><button id="pl-auto" class="primary big">Build a plan for me</button></div>`}
+    <div class="sech"><h3>Suggestions <span class="muted small">for this session</span></h3></div>
     <div class="chips" id="pl-lv">${[['all', 'All'], ['0', '●●● Obvious'], ['1', '●●○ Visible'], ['2', '●○○ Challenging']].map(([k, l]) => `<button data-lv="${k}" class="${planLevel === k ? 'on' : ''}">${l}</button>`).join('')}</div>
-    <div class="chips" id="pl-sort">${[['time', 'Best time'], ['level', 'Best view first'], ['alt', 'Highest'], ['name', 'Catalog']].map(([k, l]) => `<button data-s="${k}" class="${planSort === k ? 'on' : ''}">${l}</button>`).join('')}</div>
+    <div class="chips" id="pl-sort">${[['top', 'Top picks'], ['time', 'Best time'], ['alt', 'Highest'], ['name', 'Catalog #']].map(([k, l]) => `<button data-s="${k}" class="${planSort === k ? 'on' : ''}">${l}</button>`).join('')}</div>
     <ul class="list" id="pl-sugg"><li class="muted">Working it out…</li></ul>`;
+  const keepScroll = (f) => { const y = $('main').scrollTop; f(); $('main').scrollTop = y; };
   const setStart = (d) => { P.start = d.toISOString(); planRows = null; save(); renderPlan(); };
   const fromInputs = () => { const [y, m, d] = $('#pl-date').value.split('-').map(Number), [hh, mm] = $('#pl-time').value.split(':').map(Number); if (y && hh != null) setStart(new Date(y, m - 1, d, hh, mm || 0)); };
+  $('#pl-edit').onclick = () => { planEdit = !planEdit; renderPlan(); };
   $('#pl-skyq').onclick = () => openSkyCheck();
   $('#pl-skysel').onchange = (e) => { const m = +e.target.value; if (!m) return; const [label] = skyLabel(m); state.skyq = { nelm: m, label, when: Date.now(), src: 'pick' }; planRows = null; save(); renderPlan(); };
   $('#pl-date').onchange = fromInputs; $('#pl-time').onchange = fromInputs;
   $('#pl-hours').onchange = (e) => { P.hours = +e.target.value; planRows = null; save(); renderPlan(); };
   $('#pl-dark').onclick = () => setStart(n.astro || n.naut || start);
   $('#pl-now').onclick = () => setStart(new Date(Math.ceil(Date.now() / 900000) * 900000));
-  el.querySelectorAll('#pl-lv [data-lv]').forEach((b) => b.onclick = () => { planLevel = b.dataset.lv; planLimit = 60; renderPlan(); });
-  el.querySelectorAll('#pl-sort [data-s]').forEach((b) => b.onclick = () => { planSort = b.dataset.s; renderPlan(); });
+  el.querySelectorAll('#pl-lv [data-lv]').forEach((b) => b.onclick = () => keepScroll(() => { planLevel = b.dataset.lv; planLimit = 40; renderPlan(); }));
+  el.querySelectorAll('#pl-sort [data-s]').forEach((b) => b.onclick = () => keepScroll(() => { planSort = b.dataset.s; renderPlan(); }));
+  const applyRoute = (rows) => {
+    const { steps, notUp } = routePlan(sky, rows, { start, hours: P.hours, minAlt: 20 });
+    P.items = steps.map((x) => (x.kind === 'sync' ? { key: x.o.key, sync: true } : { key: x.o.key })).concat(notUp.map((r) => ({ key: r.key })));
+    save(); return { nSync: steps.filter((x) => x.kind === 'sync').length, notUp: notUp.length };
+  };
+  $('#pl-auto').onclick = () => {
+    if (P.items.length && !confirmTwice('pl-auto')) return;
+    const pick = autoPlan(computePlanRows(), { hours: +P.hours });
+    if (!pick.length) return toast('Nothing suitable in that session — try a later start, or a longer stay.', 4000);
+    P.done = {}; const r = applyRoute(pick); renderPlan(); $('main').scrollTop = 0;
+    toast(`Plan built: ${pick.length} targets${r.nSync ? ` and ${r.nSync} sync star${r.nSync === 1 ? '' : 's'}` : ''}. Reorder or remove anything you like.`, 4500);
+  };
   bindPlanList();
+  if ($('#pl-reorder')) $('#pl-reorder').onclick = () => keepScroll(() => { planReorder = !planReorder; renderPlan(); });
   if ($('#pl-route')) {
-    $('#pl-route').onclick = () => {
-      const rows = P.items.filter((x) => !x.sync).map((x) => rowFor(x.key)).filter(Boolean);
-      const { steps, notUp } = routePlan(sky, rows, { start, hours: P.hours });
-      P.items = steps.map((s) => (s.kind === 'sync' ? { key: s.o.key, sync: true } : { key: s.o.key })).concat(notUp.map((r) => ({ key: r.key })));
-      save(); renderPlan();
-      toast(`${steps.filter((s) => s.kind === 'sync').length} sync star${steps.filter((s) => s.kind === 'sync').length === 1 ? '' : 's'} added${notUp.length ? ` · ${notUp.length} not up during your session (left at the end)` : ''}`, 3500);
+    $('#pl-go').onclick = () => {
+      const pp = planProgress(), next = (pp && pp.next) || P.items[0];
+      if (!sensors || !sensors.fresh()) return launch('resume');     // start the sensors (and any ticked tune-up steps) first
+      state.target = next.key; save(); showTab('push');
     };
-    $('#pl-bytime').onclick = () => { P.items = P.items.filter((x) => !x.sync).sort((a, b) => ((rowFor(a.key) || {}).best || 0) - ((rowFor(b.key) || {}).best || 0)); save(); renderPlan(); };
-    $('#pl-nosync').onclick = () => { P.items = P.items.filter((x) => !x.sync); save(); renderPlan(); };
-    $('#pl-clear').onclick = () => { if (P.items.length && !confirmClear()) return; P.items = []; P.done = {}; save(); renderPlan(); };
+    $('#pl-route').onclick = () => keepScroll(() => {
+      const rows = P.items.filter((x) => !x.sync).map((x) => rowFor(x.key)).filter(Boolean);
+      const missing = P.items.filter((x) => !x.sync && !rowFor(x.key));
+      const r = applyRoute(rows); P.items = P.items.concat(missing); save(); renderPlan();
+      toast(`${r.nSync} sync star${r.nSync === 1 ? '' : 's'} added${r.notUp + missing.length ? ` · ${r.notUp + missing.length} not well placed in this session (left at the end)` : ''}`, 3500);
+    });
+    $('#pl-bytime').onclick = () => keepScroll(() => { P.items = P.items.filter((x) => !x.sync).sort((a, b) => ((rowFor(a.key) || {}).best || 0) - ((rowFor(b.key) || {}).best || 0)); save(); renderPlan(); });
+    $('#pl-nosync').onclick = () => keepScroll(() => { P.items = P.items.filter((x) => !x.sync); save(); renderPlan(); });
+    $('#pl-clear').onclick = () => { if (!confirmTwice('pl-clear')) return; P.items = []; P.done = {}; save(); renderPlan(); };
   }
   setTimeout(fillPlanSuggestions, 30);   // let the screen paint first
 }
-let clearArmed = 0;
-function confirmClear() { if (Date.now() - clearArmed < 3000) return true; clearArmed = Date.now(); toast('Tap Clear plan again to empty it'); return false; }
 function computePlanRows() {
   const P = planState();
   const sig = [P.start, P.hours, profile().name, profile().aperture, profile().eyepieces.map((e) => e.fl).join(), skyNelm()].join('|');
@@ -246,44 +326,47 @@ let planDarkNight = null, planSig = '';
 const rowFor = (key) => computePlanRows().find((r) => r.key === key) || null;
 function planItemHTML(it, i) {
   const o = objByKey(it.key); if (!o) return '';
-  const r = it.sync ? null : rowFor(it.key), done = state.plan.done && state.plan.done[it.key];
-  const info = it.sync ? `<div class="t2">Sync star — centre it, tap Sync, then carry on</div>`
-    : r ? `<div class="t2"><span class="lv lv${r.level}">${DOTS[r.level]} ${LEVELS[r.level]}</span> best ${hm(r.best)}, ${r.alt.toFixed(0)}° ${compassName(r.az)}${r.ep ? ' · ' + esc(r.ep.name) : ''}</div><div class="t2">${esc(r.desc)}</div>`
-    : `<div class="t2">Not above 25° during this session</div>`;
-  return `<li class="${done ? 'done' : ''}"><span class="muted small" style="width:18px">${i + 1}</span>
-    <div class="main" data-goplan="${esc(it.key)}"><div class="t1">${it.sync ? '★ ' : ''}${esc(o.label)}${done ? ' ✓' : ''}</div>${info}</div>
-    <button class="mini" data-up="${i}" ${i === 0 ? 'disabled' : ''}>↑</button><button class="mini" data-dn="${i}" ${i === state.plan.items.length - 1 ? 'disabled' : ''}>↓</button><button class="mini" data-rm="${i}">✕</button></li>`;
+  const r = it.sync ? null : rowFor(it.key), done = state.plan.done && state.plan.done[it.key], last = i === state.plan.items.length - 1;
+  const info = it.sync ? '<div class="t2">Sync star — centre it, tap Sync, carry on</div>'
+    : r ? `<div class="t2"><span class="dots lv${r.level}">${DOTS[r.level]}</span> ${hm(r.best)} · ${r.alt.toFixed(0)}° ${compassName(r.az)}${r.ep ? ' · ' + esc(r.ep.name) : ''}</div>${planReorder ? '' : `<div class="t2">${esc(r.desc)}</div>`}`
+    : '<div class="t2">Not well placed in this session</div>';
+  return `<li class="${done ? 'done' : ''}"><span class="muted small" style="width:16px;text-align:right">${i + 1}</span>
+    <div class="main" data-goplan="${esc(it.key)}"><div class="t1">${it.sync ? '★ ' : ''}${nameHTML(o)}${done ? ' <span class="seen">✓</span>' : ''}</div>${info}</div>
+    ${planReorder ? `<button class="ibtn" data-up="${i}" ${i === 0 ? 'disabled' : ''} aria-label="Move up">↑</button><button class="ibtn" data-dn="${i}" ${last ? 'disabled' : ''} aria-label="Move down">↓</button><button class="ibtn" data-rm="${i}" aria-label="Remove from plan">✕</button>` : `<span class="muted" aria-hidden="true">›</span>`}</li>`;
 }
 function bindPlanList() {
   const P = state.plan, ul = $('#pl-list'); if (!ul) return;
-  const mv = (i, j) => { const a = P.items; [a[i], a[j]] = [a[j], a[i]]; save(); renderPlan(); };
+  const redo = () => { const y = $('main').scrollTop; save(); renderPlan(); $('main').scrollTop = y; };
+  const mv = (i, j) => { const a = P.items; [a[i], a[j]] = [a[j], a[i]]; redo(); };
   ul.querySelectorAll('[data-up]').forEach((b) => b.onclick = () => mv(+b.dataset.up, +b.dataset.up - 1));
   ul.querySelectorAll('[data-dn]').forEach((b) => b.onclick = () => mv(+b.dataset.dn, +b.dataset.dn + 1));
-  ul.querySelectorAll('[data-rm]').forEach((b) => b.onclick = () => { P.items.splice(+b.dataset.rm, 1); save(); renderPlan(); });
-  ul.querySelectorAll('[data-goplan]').forEach((d) => d.onclick = () => { state.target = d.dataset.goplan; save(); showTab('push'); });
+  ul.querySelectorAll('[data-rm]').forEach((b) => b.onclick = () => { P.items.splice(+b.dataset.rm, 1); redo(); });
+  ul.querySelectorAll('[data-goplan]').forEach((d) => d.onclick = () => openObject(d.dataset.goplan, { row: rowFor(d.dataset.goplan) }));
 }
 function fillPlanSuggestions() {
   const ul = $('#pl-sugg'); if (!ul) return;
-  const P = state.plan, inPlan = new Set(P.items.map((x) => x.key));
-  let L = computePlanRows();
-  if (planLevel !== 'all') L = L.filter((r) => r.level === +planLevel);
-  const by = { time: (a, b) => a.best - b.best, level: (a, b) => b.margin - a.margin, alt: (a, b) => b.alt - a.alt, name: (a, b) => catNum(a.o) - catNum(b.o) }[planSort];
+  const P = state.plan, inPlan = new Set(P.items.map((x) => x.key)), seen = seenSet();
+  const all = computePlanRows(), end = new Date(P.start).getTime() + P.hours * 3600000, begin = new Date(P.start).getTime();
+  let L = planLevel === 'all' ? all : all.filter((r) => r.level === +planLevel);
+  const by = { top: (a, b) => pickScore(b.o, b, b.alt) - pickScore(a.o, a, a.alt), time: (a, b) => a.best - b.best || a.level - b.level, alt: (a, b) => b.alt - a.alt, name: (a, b) => catNum(a.o) - catNum(b.o) }[planSort];
   L = L.slice().sort(by);
-  const counts = [0, 1, 2].map((l) => computePlanRows().filter((r) => r.level === l).length);
+  const counts = [0, 1, 2].map((l) => all.filter((r) => r.level === l).length);
   $('#pl-lv').querySelectorAll('[data-lv]').forEach((b) => { if (b.dataset.lv !== 'all') b.textContent = `${DOTS[+b.dataset.lv]} ${LEVELS[+b.dataset.lv]} (${counts[+b.dataset.lv]})`; });
-  ul.innerHTML = L.slice(0, planLimit).map((r) => `<li><div class="main" data-info="${esc(r.key)}"><div class="t1">${esc(r.o.label)} <span class="lv lv${r.level}">${DOTS[r.level]} ${LEVELS[r.level]}</span></div>
-      <div class="t2">${esc(typeLabel(r.o.t))}${r.o.mag != null ? ' · mag ' + (+r.o.mag).toFixed(1) : ''}${r.ep ? ' · best with the ' + esc(r.ep.name) : ''}</div>
+  const when = (r) => (r.to.getTime() < end - 30 * 60000 ? ` · go early, low by ${hm(r.to)}` : r.from.getTime() > begin + 30 * 60000 ? ` · up from ${hm(r.from)}` : '');
+  ul.innerHTML = L.slice(0, planLimit).map((r) => `<li class="wrap"><div class="main" data-info="${esc(r.key)}"><div class="t1">${nameHTML(r.o)}${seen.has(r.key) ? ' <span class="seen">✓</span>' : ''}</div>
       <div class="t2">${esc(r.desc)}${r.cause === 'moon' && planDarkNight ? ` — better from ${planDarkNight.toLocaleDateString([], { month: 'short', day: 'numeric' })}` : ''}</div>
-      <div class="t2">Best ${hm(r.best)} at ${r.alt.toFixed(0)}° ${compassName(r.az)} · up ${hm(r.from)}–${hm(r.to)}</div></div>
-      <button class="${inPlan.has(r.key) ? 'mini' : 'mini primary'}" data-add="${esc(r.key)}">${inPlan.has(r.key) ? '✓' : '+'}</button></li>`).join('')
+      <div class="t2"><span class="dots lv${r.level}">${DOTS[r.level]}</span> ${hm(r.best)} · ${r.alt.toFixed(0)}° ${compassName(r.az)}${r.ep ? ' · ' + esc(r.ep.name) : ''}${when(r)}</div></div>
+      <button class="ibtn ${inPlan.has(r.key) ? '' : 'primary'}" data-add="${esc(r.key)}" aria-label="${inPlan.has(r.key) ? 'Remove from plan' : 'Add to plan'}">${inPlan.has(r.key) ? '✓' : '+'}</button></li>`).join('')
     + (L.length > planLimit ? `<li><button id="pl-more" style="width:100%">Show more (${L.length - planLimit})</button></li>` : '')
     + (!L.length ? '<li class="muted">Nothing at this level during your session.</li>' : '');
   ul.querySelectorAll('[data-add]').forEach((b) => b.onclick = () => {
     const k = b.dataset.add, i = P.items.findIndex((x) => x.key === k);
     if (i >= 0) P.items.splice(i, 1); else P.items.push({ key: k });
-    save(); const y = window.scrollY, m = $('main').scrollTop; renderPlan(); $('main').scrollTop = m; window.scrollTo(0, y);
+    save(); const y = $('main').scrollTop, h0 = $('#pl-sugg').offsetTop; renderPlan(); fillPlanSuggestions(); $('main').scrollTop = y + ($('#pl-sugg').offsetTop - h0);
   });
+  ul.querySelectorAll('[data-info]').forEach((d) => d.onclick = () => { const k = d.dataset.info; openObject(k, { row: rowFor(k) }); });
   const more = $('#pl-more'); if (more) more.onclick = () => { planLimit += 60; fillPlanSuggestions(); };
+  restoreScroll();
 }
 
 // ---------------------------------------------------------------- FIND
@@ -309,35 +392,35 @@ function refreshSky(force) { if (force || Date.now() - lastSkyUpdate > 20000) { 
 function lastCheck() { return state.history.slice().reverse().find((h) => h.test === 'check' && h.result && h.result.graded); }
 function siteKnown() { return /^(GPS|entered)/.test(state.site.source || ''); }
 function alignedNow() { return !!align.fit && align.obs.length >= alignNeeded(); }
-function quickStartHTML() {
-  const chk = lastCheck(), V = { solid: 'Solid', usable: 'Usable', poor: 'Poor', unsuitable: 'Not suitable', incomplete: 'Incomplete' };
-  const steps = [
-    chk ? { done: true, html: `Phone tested: <b>${esc(chk.result.phone || chk.phone || 'this phone')}</b> — ${V[chk.result.verdict] || chk.result.verdict} <span class="muted">(${new Date(chk.when).toLocaleDateString()})</span>`, btn: ['qs-retest', 'Retest'] }
-      : state.skipCheck ? { done: true, html: 'Phone check skipped <span class="muted">— accuracy estimates unavailable</span>', btn: ['qs-check', 'Run it'] }
-      : { done: false, html: 'Test this phone <span class="muted">— 4 min, no stars, once per phone</span>', btn: ['qs-check', 'Run check'], btn2: ['qs-skip', 'Skip'] },
-    siteKnown() ? { done: true, html: `Location set <span class="muted">(${esc(state.site.source.split(',')[0])})</span>` }
-      : { done: false, html: 'Set your location', btn: ['qs-gps', 'Use GPS'] },
-    alignedNow() ? { done: true, html: `Aligned on ${align.obs.map((o) => esc(o.label)).join(' and ')} <span class="muted">· sync ${lastSyncAge()}</span>`, btn: ['qs-align', 'Realign'] }
-      : { done: false, html: `Align on ${alignNeeded()} bright star${alignNeeded() > 1 ? 's' : ''}${profile().cal ? ' <span class="muted">(mount tilt already saved)</span>' : ''}`, btn: ['qs-align', 'Align now'] },
-  ];
-  const next = steps.findIndex((x) => !x.done);
-  if (next === -1) {
-    sky.updateAll();
-    const best = pickTargets(sky.objects, { aperture: profile().aperture, sunAlt: sky.sunAlt(), n: 6 }).filter((o) => sky.sunAlt() < -2 || sunSep(o) >= SUN_KEEP);
-    return `<div class="card qs"><div class="qs-row done">✓ Ready — ${esc(profile().name)} aligned <button id="qs-align" class="mini">Realign</button></div>
-      ${best.length ? `<div class="muted small" style="margin-top:6px">${sky.sunAlt() > 0 ? 'Visible in daylight with' : "Tonight's best for"} your ${profile().aperture} mm — tap one to start pushing:</div>
-      <div class="chips wrap">${best.map((o) => `<button data-go="${esc(o.key)}">${esc(o.label)}</button>`).join('')}</div>` : ''}</div>`;
-  }
-  return `<div class="card qs"><b>Get observing</b>
-    ${steps.map((x, i) => `<div class="qs-row ${x.done ? 'done' : i === next ? 'now' : ''}"><span>${x.done ? '✓' : i + 1}.</span> <span class="qs-txt">${x.html}</span>
-      ${x.btn && (i === next || x.done) ? `<button id="${x.btn[0]}" class="${i === next ? 'primary' : 'mini'}">${x.btn[1]}</button>` : ''}${x.btn2 && i === next ? `<button id="${x.btn2[0]}" class="mini">${x.btn2[1]}</button>` : ''}</div>`).join('')}
-    <div class="qs-row ${''}"><span>4.</span> <span class="qs-txt muted">Pick a target below and push</span></div>
-    <div class="btnrow"><button id="qs-explore">Explore the sky now — best guess, no alignment</button></div></div>`;
+/** Only what still needs doing, one slim line each. Nothing at all when everything is ready. */
+function readinessHTML() {
+  const rows = [], st = pointState();
+  if (st === 'off' || st === 'nodata') rows.push(`<div class="strip warn"><span><b>Motion sensors are off.</b></span><button id="qs-start" class="mini primary">Start</button></div>`);
+  else if (st === 'unaligned') rows.push(`<div class="strip warn"><span><b>Not aligned</b> — arrows are a rough guess.</span><button id="qs-align" class="mini primary">Align</button></div>`);
+  else if (st === 'resync') rows.push(`<div class="strip warn"><span><b>Sync recommended.</b> Centre a bright star and tap Sync.</span><button id="qs-align" class="mini">Align</button></div>`);
+  if (!siteKnown()) rows.push(`<div class="strip"><span>Location not set.</span><button id="qs-gps" class="mini primary">Use GPS</button></div>`);
+  if (!lastCheck() && !state.skipCheck) rows.push(`<div class="strip"><span>Phone not tested yet (4 min).</span><button id="qs-check" class="mini">Test</button><button id="qs-skip" class="mini" aria-label="Dismiss">✕</button></div>`);
+  return rows.join('');
+}
+/** The best things up right now for this scope and sky: famous, well above the visibility limit, comfortably high, and varied. */
+function tonightPicks(n = 8) {
+  const sun = sky.sunAlt(), names = new Set();
+  const c = sky.objects.filter((o) => o.alt > 20 && (!o.key.startsWith('st:') || o.show)).map((o) => ({ o, r: rateNow(o) }))
+    .filter((x) => x.r && x.r.level <= 1 && (sun < -2 || sunSep(x.o) >= SUN_KEEP))
+    .map((x) => ({ ...x, s: pickScore(x.o, x.r, x.o.alt) })).sort((a, b) => b.s - a.s)
+    .filter((x) => { if (!x.o.name) return true; if (names.has(x.o.name)) return false; names.add(x.o.name); return true; });
+  return varied(c, n, 2);
+}
+function picksHTML() {
+  const sun = sky.sunAlt(), P = tonightPicks();
+  return `<div class="sech"><h3>${sun > 0 ? 'Visible in daylight' : sun > -12 ? 'Good in twilight' : 'Best right now'} <span class="muted small">for your ${profile().aperture} mm</span></h3><button id="qs-explore" class="mini">Sky view</button></div>
+    ${P.length ? `<div class="picks">${P.map(({ o, r }) => `<button data-go="${esc(o.key)}"><b>${esc(o.label)}</b><span>${esc(o.name || kindLabel(o))}</span><span class="dots lv${r.level}">${DOTS[r.level]} · ${o.alt.toFixed(0)}° ${compassName(o.az)}</span></button>`).join('')}</div>`
+      : '<p class="muted small">Nothing is well placed right now — try the Plan tab for later tonight.</p>'}`;
 }
 function bindQuickStart(el) {
   const on = (id, f) => { const b = $('#' + id, el); if (b) b.onclick = f; };
+  on('qs-start', () => { renderLaunch(); $('#gate').classList.remove('hidden'); });
   on('qs-check', () => { showTab('test'); startTest('check'); });
-  on('qs-retest', () => { showTab('test'); startTest('check'); });
   on('qs-skip', () => { state.skipCheck = true; save(); renderFind(); });
   on('qs-gps', () => getGPS());
   on('qs-align', () => showTab('align'));
@@ -348,12 +431,13 @@ function bindQuickStart(el) {
 function renderFind() {
   refreshSky(true);
   const el = $('#tab-find');
-  el.innerHTML = `${quickStartHTML()}
-    <input id="q" type="search" placeholder="Search: M13, Ring, NGC 7009, Albireo…" value="${esc(findQ)}" autocomplete="off">
+  el.innerHTML = `${readinessHTML()}${picksHTML()}
+    <input id="q" type="search" placeholder="Search: M13, Ring, Andromeda, Albireo…" value="${esc(findQ)}" autocomplete="off" autocorrect="off" spellcheck="false">
     <div class="chips">${CATS.map(([k, l]) => `<button data-cat="${k}" class="${state.catFilter === k ? 'on' : ''}">${l}</button>`).join('')}</div>
     <div class="chips">
-      <button data-up class="${state.upOnly ? 'on' : ''}">Up now (&gt;${state.minAlt}°)</button>
-      ${[['cat', 'Catalog #'], ['alt', 'Highest'], ['mag', 'Brightest']].map(([k, l]) => `<button data-sort="${k}" class="${state.sort === k ? 'on' : ''}">${l}</button>`).join('')}
+      ${[['best', 'Best now'], ['cat', 'Catalog #'], ['alt', 'Highest'], ['mag', 'Brightest']].map(([k, l]) => `<button data-sort="${k}" class="${state.sort === k ? 'on' : ''}">${l}</button>`).join('')}
+      <button data-up class="${state.upOnly ? 'on' : ''}">Up now</button>
+      <button data-unseen class="${state.unseenOnly ? 'on' : ''}">Not seen yet</button>
     </div>
     <div id="sunwarn" class="muted small"></div>
     <ul class="list" id="flist"></ul>`;
@@ -361,6 +445,7 @@ function renderFind() {
   $('#q').addEventListener('input', (e) => { findQ = e.target.value; findLimit = 150; fillFind(); });
   el.querySelectorAll('[data-cat]').forEach((b) => b.onclick = () => { state.catFilter = b.dataset.cat; save(); renderFind(); });
   $('[data-up]', el).onclick = () => { state.upOnly = !state.upOnly; save(); renderFind(); };
+  $('[data-unseen]', el).onclick = () => { state.unseenOnly = !state.unseenOnly; save(); renderFind(); };
   el.querySelectorAll('[data-sort]').forEach((b) => b.onclick = () => { state.sort = b.dataset.sort; save(); renderFind(); });
   fillFind();
 }
@@ -370,191 +455,248 @@ function filtered() {
   if (q) {
     const qn = q.replace(/\s/g, '');
     L = L.filter((o) => [o.label, o.id, o.sub, o.name, o.bayer, o.alt_id, o.con, ...(o.cats || [])].some((s) => s && (String(s).toLowerCase().includes(q) || String(s).toLowerCase().replace(/\s/g, '') === qn)));
+  } else {
+    if (state.upOnly) L = L.filter((o) => o.alt > state.minAlt);
+    if (state.unseenOnly) { const seen = seenSet(); L = L.filter((o) => !seen.has(o.key)); }
   }
-  if (state.upOnly) L = L.filter((o) => o.alt > state.minAlt);
-  const k = { cat: (o) => catNum(o), alt: (o) => -o.alt, mag: (o) => o.mag ?? 99 }[state.sort];
+  // "Best now": what the visibility model rates highest, famous things first within a rating; anything not up sinks to the bottom.
+  const best = (o) => { if (!(o.alt > 0)) return 900 - o.alt; const r = rateNow(o); return r ? r.level * 100 - pickScore(o, r, o.alt) : 350 - interest(o); };
+  const k = { best, cat: (o) => catNum(o), alt: (o) => -o.alt, mag: (o) => o.mag ?? 99 }[state.sort] || best;
   const rank = (o) => { if (!q) return 0; const n = [o.label, o.id, o.name].filter(Boolean).map((x) => String(x).toLowerCase());
     return n.some((x) => x === q || x.replace(/\s/g, '') === q.replace(/\s/g, '')) ? 0 : n.some((x) => x.startsWith(q)) ? 1 : 2; };
-  return L.sort((a, b) => rank(a) - rank(b) || k(a) - k(b));
+  const key = new Map(L.map((o) => [o, k(o)]));
+  return L.sort((a, b) => rank(a) - rank(b) || key.get(a) - key.get(b));
 }
-/** Tonight's rating for an object at its current position (cached conditions, refreshed every 30 s). */
-let nowCond = { t: 0 };
+/** Tonight's rating for an object at its current position (conditions cached for 30 s, results per object). */
+let nowCond = { t: 0 }, rateSig = '';
+const rateCache = new Map();
 function rateNow(o) {
-  if (Date.now() - nowCond.t > 30000) { const m = sky.moonInfo(); nowCond = { t: Date.now(), sun: sky.sunAlt(), m }; }
+  const p = profile(), sig = `${state.active}|${p.aperture}|${p.fl}|${p.eyepieces.map((e) => e.fl).join()}|${skyNelm()}`;
+  if (Date.now() - nowCond.t > 30000 || sig !== rateSig) { nowCond = { t: Date.now(), sun: sky.sunAlt(), m: sky.moonInfo() }; rateSig = sig; rateCache.clear(); }
+  if (rateCache.has(o.key)) return rateCache.get(o.key);
   const c = nowCond, sepM = c.m.alt > 0 ? sepDeg(o.alt, o.az, c.m.alt, c.m.az) : 180;
-  return rate(o, { alt: o.alt, sunAlt: c.sun, moonAlt: c.m.alt, moonFrac: c.m.frac, moonSep: sepM, nelm: skyNelm() }, profile());
+  const r = rate(o, { alt: o.alt, sunAlt: c.sun, moonAlt: c.m.alt, moonFrac: c.m.frac, moonSep: sepM, nelm: skyNelm() }, p);
+  rateCache.set(o.key, r); return r;
 }
-const rateTag = (r) => (r ? `<span class="lv lv${r.level}">${DOTS[r.level]}</span>` : '');
+function findRow(o, seen) {
+  const up = o.alt > 0, r = up ? rateNow(o) : null, mag = o.mag != null ? 'mag ' + (+o.mag).toFixed(1) : '';
+  const line2 = (o.key.startsWith('st:') ? [kindLabel(o), mag, o.sub] : [kindLabel(o), mag, sizeText(o), fullCon(o.con)]).filter(Boolean).join(' · ');
+  return `<li data-k="${esc(o.key)}" class="${state.target === o.key ? 'sel' : ''} ${o.alt < state.minAlt ? 'below' : ''}">
+    <div class="main"><div class="t1">${nameHTML(o)}${seen.has(o.key) ? ' <span class="seen">✓</span>' : ''}</div><div class="t2">${esc(line2)}</div></div>
+    <div class="r">${r ? `<div class="dots lv${r.level}">${DOTS[r.level]}</div>` : ''}<div class="num">${up ? `${o.alt.toFixed(0)}° ${compassName(o.az)}` : 'not up'}</div></div></li>`;
+}
 function fillFind() {
   const L = filtered(); const ul = $('#flist'); if (!ul) return;
   const sun = sky.sunAlt(), sw = $('#sunwarn');
-  if (sun > 0) {
-    const up = DAYLIGHT.map((n) => sky.objects.find((o) => o.key === 'pl:' + n)).filter((o) => o && o.alt > state.minAlt);
-    sw.innerHTML = `<b>Daylight</b> (Sun ${sun.toFixed(0)}° up): only the Moon, Venus, Jupiter, Saturn and perhaps Mars show in the scope — nothing else on this list. <b>Never point near the Sun.</b>`
-      + (up.length ? `<div class="chips wrap" style="margin-top:4px">Up now: ${up.map((o) => `<button data-go="${esc(o.key)}">${esc(o.label)}${sunSep(o) < SUN_KEEP ? ' ⚠' : ''}</button>`).join('')}</div>` : '<div>None of them are above the horizon right now.</div>');
-    sw.querySelectorAll('[data-go]').forEach((b) => b.onclick = () => { state.target = b.dataset.go; save(); showTab('push'); });
-  } else sw.textContent = sun > -6 ? `Twilight (Sun ${(-sun).toFixed(0)}° down): the Moon and bright planets now, then the brightest stars. Deep-sky objects need full dark.`
+  if (sun > 0) sw.innerHTML = `<b>Daylight</b> (Sun ${sun.toFixed(0)}° up): only the Moon, Venus, Jupiter, Saturn and perhaps Mars show in the scope — nothing else on this list. <b>Never point near the Sun.</b>`;
+  else sw.textContent = sun > -6 ? `Twilight (Sun ${(-sun).toFixed(0)}° down): the Moon and bright planets now, then the brightest stars. Deep-sky objects need full dark.`
     : sun > -12 ? `Twilight (Sun ${(-sun).toFixed(0)}° down): planets and bright stars and doubles. Faint galaxies and nebulae need the Sun 18° down.`
     : sun > -18 ? `Almost dark (Sun ${(-sun).toFixed(0)}° down): faint galaxies and nebulae improve until the Sun is 18° down.` : '';
-  ul.innerHTML = L.slice(0, findLimit).map((o) => {
-    const size = o.maj ? (o.maj >= 60 ? `${(o.maj / 60).toFixed(1)}°` : `${o.maj.toFixed(o.maj < 3 ? 1 : 0)}′`) : (o.sep ? `${o.sep}″` : '');
-    return `<li data-k="${esc(o.key)}" class="${state.target === o.key ? 'sel' : ''} ${o.alt < state.minAlt ? 'below' : ''}">
-      <div class="main"><div class="t1">${esc(o.label)} ${o.alt > 0 ? rateTag(rateNow(o)) : ''} <span class="muted small">${esc(typeLabel(o.t))}</span></div>
-      <div class="t2">${esc(o.sub || '')}${o.con ? ' · ' + esc(o.con) : ''}</div></div>
-      <div class="r num">${o.mag != null ? 'mag ' + (+o.mag).toFixed(1) : ''}${size ? '<br>' + size : ''}</div>
-      <div class="r num" style="min-width:58px">${o.alt.toFixed(0)}°<br>${compassName(o.az)}</div></li>`;
-  }).join('') + (L.length > findLimit ? `<li><button id="more" style="width:100%">Show more (${L.length - findLimit})</button></li>` : '') +
-    (!L.length ? `<li class="muted">Nothing matches${state.upOnly ? ' above ' + state.minAlt + '° right now' : ''}.</li>` : '');
+  const seen = seenSet();
+  ul.innerHTML = L.slice(0, findLimit).map((o) => findRow(o, seen)).join('')
+    + (L.length > findLimit ? `<li><button id="more" style="width:100%">Show more (${L.length - findLimit})</button></li>` : '')
+    + (!L.length ? `<li class="muted">${findQ.trim() ? 'Nothing matches that search.' : `Nothing here${state.upOnly ? ' is above ' + state.minAlt + '° right now' : ''}${state.unseenOnly ? (state.upOnly ? ' that you haven\'t already seen' : ' that you haven\'t seen') : ''}. Try turning off a filter.`}</li>` : '');
   ul.querySelectorAll('li[data-k]').forEach((li) => li.onclick = () => { state.target = li.dataset.k; save(); showTab('push'); });
   const m = $('#more'); if (m) m.onclick = () => { findLimit += 200; fillFind(); };
+  restoreScroll();
 }
+const rateTag = (r) => (r ? `<span class="dots lv${r.level}">${DOTS[r.level]}</span>` : '');
 
 // ---------------------------------------------------------------- PUSH
 const SUN_KEEP = 20;   // degrees: warn when a target is this close to the Sun
 function sunSep(o) { const S = sky.sunAltAz(); return sepDeg(o.alt, o.az, S.alt, S.az); }
 const targetObj = () => sky.objects.find((o) => o.key === state.target);
+const ZOOM_ROW = () => `<div class="btnrow zoom"><button id="z-out" aria-label="Zoom out">−</button><button id="z-in" aria-label="Zoom in">+</button><button id="z-ep" title="Tap to cycle eyepieces">${esc(eyepiece().name)}</button><button id="z-auto">Fit</button></div>`;
 function renderPush() {
   const el = $('#tab-push'); const o = targetObj();
+  pstatKey = null; rateT = 0;
   if (!o) {
     el.innerHTML = `<div class="target-h"><span class="name">Sky view</span><span class="muted">no target</span></div>
-      <div class="muted small">The chart follows the scope (or the phone in your hand). Pick a target on Find to get push arrows.</div>
-      <div class="infield" id="infield"></div>
+      <div class="pstat" id="pstat"></div>
+      <canvas id="reticle" class="chart big" width="800" height="800"></canvas>
       <div id="whereami" class="whereami"></div>
-      <canvas id="reticle" width="800" height="800"></canvas>
-      <div class="btnrow zoom"><button id="z-out">−</button><button id="z-in">+</button><button id="z-ep" title="Tap to cycle eyepieces">${esc(eyepiece().name)}</button><button id="z-wide">30°</button><button id="z-auto">Auto</button><button id="z-lock" class="${state.zoomLock ? 'on' : ''}">${state.zoomLock ? 'Locked' : 'Lock'}</button></div>
-      <div class="btnrow"><button id="sv-find">Pick a target</button>${align.fit ? '' : '<button id="sv-align">Align for real pointing</button>'}</div>`;
+      ${ZOOM_ROW()}
+      <p class="muted small">The chart follows the scope — or the phone in your hand. When it says you're near something, tap the name to read about it.</p>
+      <div class="actionbar"><button id="sv-find" class="primary">Pick a target</button>${align.fit || state.mode === 'compass' ? '' : '<button id="sv-align">Align</button>'}</div>`;
     chartCentre = 'scope'; if (zoom == null) zoom = 30;
     bindChartControls();
-    $('#z-ctr')?.remove();
     $('#sv-find').onclick = () => showTab('find');
     if ($('#sv-align')) $('#sv-align').onclick = () => showTab('align');
     return;
   }
-  const eps = profile().eyepieces;
+  const eps = profile().eyepieces, blurb = blurbFor(o), isPlanSync = planList().some((x) => x.key === o.key && x.sync);
+  const via = state.waypoint && state.waypoint.via === o.key;
+  const loggable = !via && !isPlanSync && (!o.key.startsWith('st:') || o.show);
   el.innerHTML = `
-    ${state.waypoint && state.waypoint.via === o.key ? `<div class="muted small">Check star on the way to <b>${esc((sky.objects.find((x) => x.key === state.waypoint.then) || {}).label || '')}</b> — centre it, then tap Sync.</div>` : ''}
-${planBar(o)}
-    <div class="target-h"><span class="name">${esc(o.label)}</span><span class="muted">${esc(typeLabel(o.t))}${o.mag != null ? ' · mag ' + (+o.mag).toFixed(1) : ''}</span></div>
-    ${(() => { const r = o.alt > 0 ? rateNow(o) : null; return r ? `<div class="small" style="margin:2px 0 6px">${rateTag(r)} <b>${LEVEL_NAMES[r.level]}</b> — ${esc(describe(o, r))}${r.ep && r.level < 3 ? ` · best with the ${esc(r.ep.name)}` : ''}</div>` : ''; })()}
-    <div class="muted small">${esc(o.sub || '')}${o.con ? ' · ' + esc(o.con) : ''}${o.mnote ? ' · ' + esc(o.mnote) : ''}</div>
-    ${o.pairs ? `<div class="muted small">${o.pairs.map((p) => `${p.c}: ${p.sep}″ PA ${p.pa}° (${p.mags})`).join(' · ')}</div>` : ''}
-    ${sky.sunAlt() > -2 && sunSep(o) < SUN_KEEP ? `<div class="card bad" style="border-color:var(--hi)">⚠ ${esc(o.label)} is only ${sunSep(o).toFixed(0)}° from the Sun. Don't sweep toward the Sun — a moment of sunlight through the scope or finder can blind you. Keep the cap on the finder and approach from the side away from the Sun.</div>` : ''}
-    <div class="deltas">
-      <div class="delta" id="d-az"><div class="lab">Azimuth</div><div class="val">—</div><div class="dir"></div></div>
-      <div class="delta" id="d-alt"><div class="lab">Altitude</div><div class="val">—</div><div class="dir"></div></div>
+    ${via ? `<div class="planbar">Check star on the way to <b>${esc((sky.objects.find((x) => x.key === state.waypoint.then) || {}).label || '')}</b> — centre it, then tap Sync.</div>` : ''}
+    ${planBar(o)}
+    <div class="target-h"><span class="name">${esc(o.label)}</span>${o.name ? `<span class="cname">${esc(o.name)}</span>` : ''}${o.name && o.name.toLowerCase().includes(kindLabel(o).toLowerCase()) ? '' : `<span class="muted">${esc(kindLabel(o))}</span>`}</div>
+    <div class="rateline" id="p-rate">${rateLineHTML(o, sky.altAz(o))}</div>
+    ${sky.sunAlt() > -2 && sunSep(o) < SUN_KEEP ? `<div class="card bad" style="border-color:var(--hi)">${WARN} ${esc(o.label)} is only ${sunSep(o).toFixed(0)}° from the Sun. Don't sweep toward the Sun — a moment of sunlight through the scope or finder can blind you. Keep the cap on the finder and approach from the side away from the Sun.</div>` : ''}
+    <div class="guide">
+      <div class="delta" id="d-az"><div class="lab">Turn</div><div class="val">—</div><div class="dir"></div></div>
+      <div class="delta" id="d-alt"><div class="lab">Tilt</div><div class="val">—</div><div class="dir"></div></div>
     </div>
-    <div class="infield" id="infield"></div>
-    <div id="whereami" class="whereami"></div>
+    <div class="pstat" id="pstat"></div>
     <div id="waypt"></div>
-    <canvas id="reticle" width="800" height="800"></canvas>
-    <div class="btnrow zoom"><button id="z-out">−</button><button id="z-in">+</button><button id="z-ep" title="Tap to cycle eyepieces">${esc(eyepiece().name)}</button><button id="z-wide">30°</button><button id="z-auto">Auto</button><button id="z-lock" class="${state.zoomLock ? 'on' : ''}">${state.zoomLock ? 'Locked' : 'Lock'}</button></div>
-    <div class="btnrow"><button id="z-ctr">${chartCentre === 'scope' ? 'Centre: scope' : 'Centre: target'}</button></div>
-    <h3>In the eyepiece — what you should see</h3>
+    <canvas id="reticle" class="chart" width="800" height="800"></canvas>
+    <div id="whereami" class="whereami"></div>
+    ${ZOOM_ROW()}
+    <h3>In the eyepiece</h3>
     <div class="chips" id="ep-chips">${eps.map((e, i) => `<button data-ep="${i}" class="${i === state.ep ? 'on' : ''}">${esc(e.name)} · ${(profile().fl / e.fl).toFixed(0)}×</button>`).join('')}</div>
-    <canvas id="eyeview" width="640" height="640" style="width:100%;max-width:360px;display:block;margin:0 auto;background:#000;border-radius:50%"></canvas>
+    <canvas id="eyeview" class="eyeview" width="640" height="640"></canvas>
     <p id="eyenote" class="muted small" style="text-align:center"></p>
-    <label class="row"><span>Show it as your Newtonian does</span><input type="checkbox" id="rot180" ${state.rot180 ? 'checked' : ''}></label>
-    <p class="muted small">Computed for a focuser on the ${({ '-90': 'left side', '-45': 'upper left', 0: 'top', 45: 'upper right', 90: 'right side' })[profile().focuser ?? 90]} (standing behind the scope, tube level). Orientation assumes your head is upright at the eyepiece; tilting your head turns the view with it. <b>⬆Z</b> points toward the zenith, N and E are celestial north and east — match these to a star chart.</p>
-    <p class="muted small">Pinch to zoom out until you recognise the star pattern, then compare with the sky. Drawn as seen standing behind the scope (up = toward zenith); the eyepiece image of a Newtonian is rotated. The red circle is your eyepiece's true field.</p>
-    <label class="row"><span>Eyepiece</span><select id="ep">${eps.map((e, i) => `<option value="${i}" ${i === state.ep ? 'selected' : ''}>${esc(e.name)} — ${(profile().fl / e.fl).toFixed(0)}×, ${(tfov(e) * 60).toFixed(0)}′ field${e.verified ? '' : ' (unverified)'}${baseUncertainty() != null && tfov(e) * 30 < baseUncertainty() ? ' — narrower than phone accuracy' : ''}</option>`).join('')}</select></label>
-    <div class="btnrow"><button id="b-prev">◀ Prev</button><button id="b-sync" class="primary">Centered — Sync</button><button id="b-next">Next ▶</button></div>
-    <div class="btnrow"><button id="b-free">Sky view (no target)</button></div>
-    <div class="kv" id="pinfo"></div>`;
-  $('#ep').onchange = (e) => { state.ep = +e.target.value; save(); renderPush(); };
+    ${blurb ? `<p class="blurb">${esc(blurb)}</p>` : ''}
+    <details class="more"><summary>View options</summary>
+      <div class="btnrow"><button id="z-ctr">${chartCentre === 'scope' ? 'Chart follows: scope' : 'Chart follows: target'}</button><button id="z-wide">Wide (30°)</button><button id="z-lock" class="${state.zoomLock ? 'on' : ''}">${state.zoomLock ? 'Zoom locked' : 'Lock zoom'}</button></div>
+      <label class="row"><span>Draw the eyepiece view the way your Newtonian shows it</span><input type="checkbox" id="rot180" ${state.rot180 ? 'checked' : ''}></label>
+      <p class="muted small" id="eyedim"></p>
+      <p class="muted small">Eyepiece view computed for a focuser on the ${({ '-90': 'left side', '-45': 'upper left', 0: 'top', 45: 'upper right', 90: 'right side' })[profile().focuser ?? 90]} (standing behind the scope, tube level), with your head upright; tilting your head turns the view with it. <b>↑Z</b> points toward the zenith, N and E are celestial north and east.</p>
+      <p class="muted small">The chart above is drawn as you see the sky standing behind the scope (up = toward the zenith). Pinch it, or use − and +, to zoom out until you recognise the star pattern. The circle is your eyepiece's true field; the chart zooms out by itself while you move unless you lock the zoom.</p>
+    </details>
+    <details class="more"><summary>Numbers</summary>
+      <p class="muted small">${esc(o.sub || '')}${o.con ? ' · ' + esc(fullCon(o.con)) : ''}${o.mag != null ? ' · mag ' + (+o.mag).toFixed(1) : ''}${o.mnote ? ' · ' + esc(o.mnote) : ''}</p>
+      ${o.pairs ? `<p class="muted small">${o.pairs.map((p) => `${p.c}: ${p.sep}″ apart, PA ${p.pa}° (mags ${p.mags})`).join(' · ')}</p>` : ''}
+      <div class="kv" id="pinfo"></div>
+    </details>
+    <div class="btnrow"><button id="b-info">About ${esc(o.label)}</button><button id="b-free">Sky view</button></div>
+    <div class="actionbar" id="p-actions"></div>`;
   el.querySelectorAll('[data-ep]').forEach((b) => b.onclick = () => { state.ep = +b.dataset.ep; save(); renderPush(); });
   $('#rot180').onchange = (e) => { state.rot180 = e.target.checked; save(); eyeT = 0; };
   eyeT = 0;
-  $('#b-sync').onclick = () => doSync(o);
   const step = (d) => {
     const P = planList(), i = P.findIndex((x) => x.key === state.target);
-    if (i >= 0) { if (d > 0) markDone(state.target, true); const n = P[i + d]; if (n) { state.target = n.key; save(); renderPush(); } else toast(d > 0 ? 'That was the last target in your plan' : 'Start of your plan'); return; }
-    const L = filtered(); const j = L.findIndex((x) => x.key === state.target); const m = L[(j + d + L.length) % L.length]; if (m) { state.target = m.key; save(); renderPush(); }
+    if (i >= 0) { if (d > 0) markDone(state.target, true); const n = P[i + d]; if (n) { state.target = n.key; save(); renderPush(); $('main').scrollTop = 0; } else toast(d > 0 ? 'That was the last target in your plan' : 'Start of your plan'); return; }
+    const L = filtered(); const j = L.findIndex((x) => x.key === state.target); const m = L[(j + d + L.length) % L.length]; if (m) { state.target = m.key; save(); renderPush(); $('main').scrollTop = 0; }
   };
-  $('#b-prev').onclick = () => step(-1); $('#b-next').onclick = () => step(1);
+  const bar = $('#p-actions');
+  const mainBar = () => {
+    const seen = seenSet().has(o.key);
+    bar.innerHTML = `<button class="ibtn" id="b-prev" aria-label="Previous target">${ICON.prev}</button><button id="b-sync" class="primary wide">Centred — Sync</button>${loggable ? `<button id="b-log">${seen ? 'Seen ✓' : 'Log'}</button>` : ''}<button class="ibtn" id="b-next" aria-label="Next target">${ICON.next}</button>`;
+    $('#b-sync').onclick = () => doSync(o);
+    $('#b-prev').onclick = () => step(-1); $('#b-next').onclick = () => step(1);
+    if ($('#b-log')) $('#b-log').onclick = () => {
+      bar.innerHTML = `<button data-seen="yes" class="primary">Saw it ✓</button><button data-seen="maybe">Not sure</button><button data-seen="no">No</button><button class="ibtn" id="b-logx" aria-label="Cancel">✕</button>`;
+      bar.querySelectorAll('[data-seen]').forEach((b) => b.onclick = () => { logObservation(o, b.dataset.seen); pstatKey = null; mainBar(); });
+      $('#b-logx').onclick = mainBar;
+    };
+  };
+  mainBar(); pushBar = mainBar;
   $('#b-free').onclick = () => { state.target = null; save(); renderPush(); };
+  $('#b-info').onclick = () => openObject(o.key);
+  $('#whereami').onclick = (e) => { const a = e.target.closest('[data-near]'); if (a) openObject(a.dataset.near); };
   bindChartControls();
+}
+let pushBar = null;
+function rateLineHTML(o, tgt) {
+  const r = o.alt > 0 ? rateNow(o) : null;
+  const high = tgt && tgt.alt > 80 ? '<div class="muted small">Nearly overhead — awkward to aim a Dobsonian there. Easier later.</div>' : '';
+  if (!r) return high;
+  if (r.level >= 3) return `${rateTag(r)} <b>${esc(describe(o, r))}</b>`;
+  return `${rateTag(r)} <b>${LEVEL_NAMES[r.level]}</b>${r.ep ? ` · best with the ${esc(r.ep.name)}` : ''}<div class="muted small">${esc(describe(o, r))}</div>${high}`;
+}
+/** Status line under the arrows. Rebuilt only when its state changes, so its buttons stay tappable. */
+let pstatKey = null, rateT = 0, tickT = 0, onState = { key: null, on: false, since: 0 };
+function setPstat(key, html, bind) { if (pstatKey === key) return; pstatKey = key; const el = $('#pstat'); if (!el) return; el.innerHTML = html; if (bind) bind(el); }
+const bindAlignBtn = (el) => { const b = $('#ps-align', el); if (b) b.onclick = () => showTab('align'); };
+function setDelta(el, d, axis, ok, approx) {
+  const v = el.querySelector('.val'), dir = el.querySelector('.dir');
+  if (d == null) { if (v.textContent !== '—') v.textContent = '—'; dir.textContent = ''; el.classList.remove('ok'); return; }
+  const pos = d >= 0, word = axis === 'az' ? (pos ? 'right' : 'left') : (pos ? 'up' : 'down'), num = (approx ? '≈' : '') + fmtDelta(d);
+  const val = ok ? '✓' : axis === 'az' ? (pos ? `${num} ${R_ARR}` : `${L_ARR} ${num}`) : `${pos ? '▲' : '▼'} ${num}`;
+  if (v.textContent !== val) v.textContent = val;
+  const dt = ok ? `${num} ${word}` : `${word}${approx ? ' (guess)' : ''}`;
+  if (dir.textContent !== dt) dir.textContent = dt;
+  el.classList.toggle('ok', !!ok);
+}
+function onTargetHTML(o, wide, U, loggable) {
+  if (wide) return `<div class="ontarget"><b>Close</b><div class="small">Within about ±${fmt.am(U)} — more than this eyepiece shows. Sweep gently around, or drop to a lower power. Sync on a nearby bright star to tighten it up.</div></div>`;
+  const last = lastEntry(state.log, o.key), recent = last && last.seen === 'yes' && Date.now() - last.t < 6 * 3600000;
+  if (!loggable) return `<div class="ontarget"><b>✓ In the eyepiece</b><div class="small">Centre it, then tap <b>Centred — Sync</b>.</div></div>`;
+  if (recent) return `<div class="ontarget"><b>✓ In the eyepiece</b><div class="small">Logged ✓ — tap the arrow for the next one.</div></div>`;
+  return `<div class="ontarget"><b>✓ In the eyepiece</b> — take a look
+    <div class="seenrow"><span>See it?</span><button data-seen="yes" class="primary">Yes</button><button data-seen="maybe">Not sure</button><button data-seen="no">No</button></div></div>`;
 }
 let wpT = 0, wpDismissed = null, eyeT = 0;
 function updateEyeview(o, tgt) {
   const cv = $('#eyeview'); if (!cv || Date.now() - eyeT < 1000) return; eyeT = Date.now();
   const ep = eyepiece(), p = profile();
-  // A named star that is also a catalogued double (Albireo, Mizar…) borrows the double's separation data.
-  let obj = o;
-  if (!o.pairs && o.key.startsWith('st:')) { const d = sky.objects.find((x) => x.key.startsWith('ds:') && x.pairs && Math.abs(x.ra - o.ra) < 0.1 && Math.abs(x.dec - o.dec) < 0.1); if (d) obj = { ...o, key: d.key, pairs: d.pairs, t: 'DS' }; }
   const longest = p.eyepieces.reduce((a, e) => (e.fl > a.fl ? e : a), p.eyepieces[0]);
   const fz = p.focuser ?? 90;
   const matrix = state.rot180 ? newtonianMatrix(tgt, fz) : null;
-  const r = drawEyepiece(cv, sky, obj, tgt, ep, p, { matrix, bright: vis(), refExit: p.aperture / (p.fl / longest.fl) });
+  const r = drawEyepiece(cv, sky, o.pairs && o.key.startsWith('st:') ? { ...o, t: 'DS' } : o, tgt, ep, p, { matrix, bright: vis(), refExit: p.aperture / (p.fl / longest.fl) });
   const exit = p.aperture / r.mag;
-  const dim = r.rel < 0.999 ? `Nebulae, galaxies and the sky background are <b>${(1 / r.rel).toFixed(r.rel > 0.1 ? 1 : 0)}× dimmer</b> than in the ${esc(longest.name)} (${(-2.5 * Math.log10(r.rel)).toFixed(1)} mag); stars stay as bright, so faint stars can be easier to see. Dimming drawn on a compressed scale.`
-    : `Brightest view of extended objects with your eyepieces; higher powers dim nebulae and galaxies, not stars.`;
-  $('#eyenote').innerHTML = `${esc(ep.name)} · ${r.mag.toFixed(0)}× · ${r.tfov >= 1 ? r.tfov.toFixed(2) + '°' : (r.tfov * 60).toFixed(0) + '′'} field · ${exit.toFixed(1)} mm exit pupil${r.mag > 2 * p.aperture ? ' · <b>beyond useful magnification</b>' : ''}${r.note ? '<br>' + esc(r.note) : ''}<br>${dim}<br><span class="muted">Stars shown to mag 8 (your scope shows fainter). Real faint galaxies look dimmer than any screen.${ep.verified ? '' : ' Field size assumes ' + ep.afov + '° AFOV (unverified).'}</span>`;
+  $('#eyenote').innerHTML = `${esc(ep.name)} · ${r.mag.toFixed(0)}× · ${r.tfov >= 1 ? r.tfov.toFixed(1) + '°' : (r.tfov * 60).toFixed(0) + '′'} across${r.mag > 2 * p.aperture ? ' · <b>more power than this scope can use</b>' : ''}${r.note ? '<br>' + esc(r.note) : ''}`;
+  const dim = r.rel < 0.999 ? `Nebulae, galaxies and the sky background are <b>${(1 / r.rel).toFixed(r.rel > 0.1 ? 1 : 0)}× dimmer</b> at this power than in the ${esc(longest.name)}; stars stay as bright, so faint stars can be easier to see. Dimming is drawn on a compressed scale.`
+    : 'This is your brightest view of nebulae and galaxies; higher powers dim them, but not stars.';
+  const d = $('#eyedim'); if (d) d.innerHTML = `${dim} Exit pupil ${exit.toFixed(1)} mm. Stars are drawn to magnitude 8 (your scope shows fainter); real faint galaxies look dimmer than any screen.${ep.verified ? '' : ` Field size assumes a ${ep.afov}° apparent field — check it in Setup.`}`;
 }
-function updateWaypoint(o, tgt) {
+function updateWaypoint(o, tgt, cur) {
   const box = $('#waypt'); if (!box || Date.now() - wpT < 2000) return; wpT = Date.now();
+  const clear = () => { if (box.innerHTML) { box.innerHTML = ''; delete box.dataset.w; } };
   const last = align.syncs[align.syncs.length - 1];
-  if (state.mode !== 'gyro' || !last || !last.pos || (state.waypoint && state.waypoint.via === o.key) || wpDismissed === o.key || o.key.startsWith('st:')) { box.innerHTML = ''; return; }
+  if (state.mode !== 'gyro' || !last || !last.pos || (state.waypoint && state.waypoint.via === o.key) || wpDismissed === o.key || o.key.startsWith('st:')) return clear();
+  if (cur && sepDeg(cur.alt, cur.az, tgt.alt, tgt.az) < 10) return clear();          // nearly there: no point detouring now
   const ph = state.phonePerf, r = tfov() * 60 / 2;
   const errAt = ph ? (d) => Math.hypot(ph.noise || 0, (ph.per90 || 0) * d / 90, align.fit ? align.fit.rms * 60 : 0) : null;
   const errNow = pointingUncertainty(tgt);
   const cands = sky.objects.filter((x) => (x.key.startsWith('st:') || (x.planet && x.id !== 'Moon')) && x.key !== o.key).map((x) => ({ key: x.key, label: x.label, alt: x.alt, az: x.az, mag: x.mag }));
   const w = chooseWaypoint(tgt, last.pos, cands, errAt, r, errNow);
-  if (!w) { box.innerHTML = ''; return; }
-  box.innerHTML = `<div class="card"><b>Long push — ${w.distFromLast.toFixed(0)}° from your last sync.</b>
-    <p class="small" style="margin:4px 0">${errNow != null ? `Estimated error at ${esc(o.label)}: ±${fmt.am(errNow)}, more than your ${fmt.am(r)} field radius.` : 'Run the Phone check for a measured error estimate.'}
-    Check alignment on <b>${esc(w.label)}</b> (mag ${(+w.mag).toFixed(1)}, ${w.d.toFixed(0)}° from ${esc(o.label)}) on the way${w.errAfter != null ? ` — error at ${esc(o.label)} then about ±${fmt.am(w.errAfter)}` : ''}.</p>
-    <div class="btnrow"><button id="wp-go" class="primary">Go to ${esc(w.label)} first</button><button id="wp-no">Push anyway</button></div></div>`;
+  if (!w) return clear();
+  if (box.dataset.w === w.key) return; box.dataset.w = w.key;
+  box.innerHTML = `<div class="strip"><span><b>Long push (${w.distFromLast.toFixed(0)}°).</b> Sync on <b>${esc(w.label)}</b> on the way${w.errAfter != null && errNow != null ? ` — error drops from ±${fmt.am(errNow)} to about ±${fmt.am(w.errAfter)}` : ' for a tighter landing'}.</span><button id="wp-go" class="mini primary">Go</button><button id="wp-no" class="mini" aria-label="Dismiss">✕</button></div>`;
   $('#wp-go').onclick = () => { state.waypoint = { via: w.key, then: o.key }; state.target = w.key; save(); renderPush(); };
-  $('#wp-no').onclick = () => { wpDismissed = o.key; box.innerHTML = ''; };
+  $('#wp-no').onclick = () => { wpDismissed = o.key; clear(); };
 }
 function updateSkyView() {
   const cur = pointing(), live = cur && cur.ready ? cur : guessPointing();
-  const msg = $('#infield');
-  if (!cur) { msg.textContent = 'Waiting for sensors…'; return; }
-  if (!live) { msg.textContent = 'Not aligned, and no compass reading on this phone — align to see the sky move'; drawReticle(null, { alt: cur.alt, az: 0 }, { label: '' }, { noTarget: true }); return; }
-  msg.textContent = live.guess ? '' : `Aligned · ${cur.alt.toFixed(1)}° up, az ${cur.az.toFixed(1)}°`;
+  if (!cur) { setPstat('wait', 'Waiting for sensors…'); return; }
+  if (!live) { setPstat('noaz', '<b>Not aligned</b>, and this phone gives no compass reading — align to see the sky move. <button class="mini primary" id="ps-align">Align</button>', bindAlignBtn); drawReticle(null, { alt: cur.alt, az: 0 }, { label: '' }, { noTarget: true }); return; }
+  if (live.guess) setPstat('sv-guess', '');
+  else { setPstat('sv', '<span id="ps-far"></span>'); const f = $('#ps-far'); if (f) f.textContent = `${cur.alt.toFixed(0)}° up, facing ${compassName(cur.az)}`; }
   trackMotion(live); updateWhere(live);
   drawReticle(cur, { alt: live.alt, az: live.az }, { label: '' }, { noTarget: true });
 }
 function updatePush() {
   const o = targetObj();
   if (!o) { if ($('#reticle')) updateSkyView(); return; }
-  if (!$('#d-az')) return;
-  const tgt = sky.altAz(o); const cur = pointing();
+  const azEl = $('#d-az'), altEl = $('#d-alt'); if (!azEl) return;
+  const tgt = sky.altAz(o), cur = pointing(), now = performance.now();
   updateEyeview(o, tgt);
-  const info = $('#pinfo');
-  const azEl = $('#d-az'), altEl = $('#d-alt');
-  if (!cur) { azEl.querySelector('.val').textContent = '—'; altEl.querySelector('.val').textContent = '—'; $('#infield').textContent = 'Waiting for sensors…'; drawReticle(null, tgt, o); return; }
-  if (!cur.ready) {
+  if (now - rateT > 5000) { rateT = now; const rl = $('#p-rate'); if (rl) rl.innerHTML = rateLineHTML(o, tgt); }
+  if (!cur) { setDelta(azEl, null); setDelta(altEl, null); setPstat('wait', 'Waiting for sensors…'); drawReticle(null, tgt, o); return; }
+  if (!cur.ready) {                                 // no alignment yet: altitude is real, azimuth is the compass's best guess
     const gp = guessPointing();
-    altEl.querySelector('.val').textContent = fmtDelta(tgt.alt - cur.alt); altEl.querySelector('.dir').textContent = tgt.alt - cur.alt >= 0 ? '▲ up' : '▼ down';
-    if (gp) {
-      const gd = guidance(gp, tgt);
-      azEl.querySelector('.val').textContent = '≈' + fmtDelta(gd.dAz); azEl.querySelector('.dir').textContent = (gd.dAz > 0 ? 'right ▶' : '◀ left') + ' (guess)';
-      $('#infield').textContent = 'Not aligned — best guess from the compass. Align for real pointing.';
-    } else {
-      azEl.querySelector('.val').textContent = '—'; azEl.querySelector('.dir').textContent = '';
-      $('#infield').textContent = 'Not aligned, and no compass on this phone — use the Align tab';
-    }
-    azEl.classList.remove('ok'); altEl.classList.remove('ok');
+    setDelta(altEl, tgt.alt - cur.alt, 'alt', false);
+    if (gp) { setDelta(azEl, guidance(gp, tgt).dAz, 'az', false, true); setPstat('guess', '<b>Not aligned</b> — the turn arrow is a rough compass guess. <button class="mini primary" id="ps-align">Align</button>', bindAlignBtn); }
+    else { setDelta(azEl, null); setPstat('noaz', '<b>Not aligned</b>, and this phone gives no compass reading. <button class="mini primary" id="ps-align">Align</button>', bindAlignBtn); }
     drawReticle(cur, tgt, o); return;
   }
   trackMotion(cur); updateWhere(cur);
-  updateWaypoint(o, tgt);
-  const g = guidance(cur, tgt);
-  const half = tfov() / 2;
-  azEl.querySelector('.val').textContent = fmtDelta(g.dAz); azEl.querySelector('.dir').textContent = Math.abs(g.dAz) < 0.05 ? '' : (g.dAz > 0 ? 'right ▶' : '◀ left');
-  altEl.querySelector('.val').textContent = fmtDelta(g.dAlt); altEl.querySelector('.dir').textContent = Math.abs(g.dAlt) < 0.05 ? '' : (g.dAlt > 0 ? '▲ up' : '▼ down');
-  azEl.classList.toggle('ok', Math.abs(g.dAz * Math.cos(tgt.alt * D2R)) < half); altEl.classList.toggle('ok', Math.abs(g.dAlt) < half);
-  const U = pointingUncertainty(tgt);
-  const wide = U != null && U / 60 > half;
-  $('#infield').textContent = tgt.alt < 0 ? 'Target is below the horizon'
-    : g.sep < Math.max(half, U ? U / 60 : 0) ? (wide ? `Within about ±${fmt.am(U)} — wider than this eyepiece; sweep or sync` : 'Should be in the eyepiece field')
-    : `${g.sep.toFixed(1)}° away`;
-  info.innerHTML = `<span>Target alt / az</span><span>${tgt.alt.toFixed(1)}° / ${tgt.az.toFixed(1)}°</span>
-    <span>Scope alt / az</span><span>${cur.alt.toFixed(1)}° / ${cur.az.toFixed(1)}°</span>
+  updateWaypoint(o, tgt, cur);
+  const g = guidance(cur, tgt), half = tfov() / 2;
+  setDelta(azEl, g.dAz, 'az', Math.abs(g.dAz * Math.cos(tgt.alt * D2R)) < half);
+  setDelta(altEl, g.dAlt, 'alt', Math.abs(g.dAlt) < half);
+  const U = pointingUncertainty(tgt), wide = U != null && U / 60 > half, reach = Math.max(half, U ? U / 60 : 0);
+  // On target: inside the eyepiece field (or the phone's uncertainty, if that is wider), with a little hysteresis so it doesn't flicker.
+  if (onState.key !== o.key) onState = { key: o.key, on: false, since: 0 };
+  const inside = tgt.alt > 0 && g.sep < (onState.on ? reach * 1.15 : reach);
+  if (!inside) { onState.on = false; onState.since = 0; }
+  else if (!onState.on) {                           // must settle in the field for a moment: sweeping past doesn't count
+    if (!onState.since) onState.since = now;
+    if (now - onState.since > 500 && !motion.moving) { onState.on = true; cue.onTarget(); if (navigator.vibrate) navigator.vibrate([60, 40, 60]); }
+  }
+  const loggable = !!$('#b-log') || !!$('#b-logx');
+  if (tgt.alt < 0) setPstat('below', `${esc(o.label)} is below the horizon right now.`);
+  else if (onState.on) setPstat(`${wide ? 'onwide' : 'on'}:${(state.log || []).length}`, onTargetHTML(o, wide, U, loggable), (el) => el.querySelectorAll('[data-seen]').forEach((b) => b.onclick = () => { logObservation(o, b.dataset.seen); pstatKey = null; if (pushBar) pushBar(); }));
+  else { setPstat('far', '<span id="ps-far"></span>'); const f = $('#ps-far'); if (f) { const t = `${fmtDelta(g.sep)} to go`; if (f.textContent !== t) f.textContent = t; } }
+  if (sound.mode === 'guide' && !onState.on && tgt.alt > 0) { const iv = tickInterval(g.sep, half); if (iv && now - tickT > iv) { tickT = now; cue.tick(1 - Math.min(1, g.sep / 25)); } }
+  const info = $('#pinfo');
+  if (info) info.innerHTML = `<span>Target height / direction</span><span>${tgt.alt.toFixed(1)}° / ${tgt.az.toFixed(1)}°</span>
+    <span>Scope height / direction</span><span>${cur.alt.toFixed(1)}° / ${cur.az.toFixed(1)}°</span>
     <span>Since last sync</span><span>${lastSyncAge()}</span>
-    <span>Pointing uncertainty</span><span>${U == null ? (state.phonePerf ? '—' : 'run Phone check') : '±' + fmt.am(U)}</span>`;
+    <span>Sky correction here</span><span>${cur.corr != null ? fmt.am(cur.corr * 60) : skyCorrShort()}</span>
+    <span>Pointing uncertainty</span><span>${U == null ? (state.phonePerf ? '—' : 'run the Phone check') : '±' + fmt.am(U)}</span>`;
   drawReticle(cur, tgt, o);
 }
 const fmtDelta = (d) => { const a = Math.abs(d); return a >= 10 ? a.toFixed(0) + '°' : a >= 1 ? a.toFixed(1) + '°' : (a * 60).toFixed(0) + '′'; };
@@ -593,8 +735,8 @@ function updateWhere(cur) {
   }
   const parts = [`In <b>${esc(conName(con))}</b>`];
   if (ast) parts.push(esc(ast.label));
-  if (near) parts.push(near.d < 0.15 ? `on ${esc(near.o.label)}` : `near ${esc(near.o.label)} (${near.d.toFixed(1)}°)`);
-  box.innerHTML = parts.join(' · ');
+  if (near) parts.push(`<a data-near="${esc(near.o.key)}">${near.d < 0.15 ? `on ${esc(near.o.label)}` : `near ${esc(near.o.label)} (${near.d.toFixed(1)}°)`}</a>`);
+  const html = parts.join(' · '); if (box.innerHTML !== html) box.innerHTML = html;
   if (con !== whereCon) { if (whereCon) { box.classList.remove('flash'); void box.offsetWidth; box.classList.add('flash'); } whereCon = con; }
 }
 function setZoom(z) { zoom = z == null ? null : Math.min(ZMAX, Math.max(minView, z)); }
@@ -636,19 +778,20 @@ function cycleEyepiece() {
   setZoom(want);
   const b = $('#z-ep'); if (b) b.textContent = ep.name;
   document.querySelectorAll('#ep-chips [data-ep]').forEach((c) => c.classList.toggle('on', +c.dataset.ep === state.ep));
-  const sel = $('#ep'); if (sel) sel.value = String(state.ep);
   eyeT = 0;
   toast(`${ep.name} · ${(profile().fl / ep.fl).toFixed(0)}× · ${(tfov(ep) * 60).toFixed(0)}′ field${zoom > want + 1e-6 ? (minViewGuess ? ' — chart stays wide until you align' : ' — chart limited by phone accuracy') : ''}`);
 }
 function bindChartControls() {
   const cv = $('#reticle'); if (!cv) return;
-  $('#z-in').onclick = () => setZoom((zoom ?? cv._lastView) / 1.6);
-  $('#z-out').onclick = () => setZoom((zoom ?? cv._lastView) * 1.6);
-  $('#z-auto').onclick = () => setZoom(null);
-  $('#z-lock').onclick = () => { state.zoomLock = !state.zoomLock; save(); const b = $('#z-lock'); b.classList.toggle('on', state.zoomLock); b.textContent = state.zoomLock ? 'Locked' : 'Lock'; toast(state.zoomLock ? 'Zoom locked — it won\'t zoom out while you move' : 'Zoom unlocked — zooms out while you move'); };
-  $('#z-ep').onclick = cycleEyepiece;
-  $('#z-wide').onclick = () => setZoom(30);
-  if ($('#z-ctr')) $('#z-ctr').onclick = () => { chartCentre = chartCentre === 'scope' ? 'target' : 'scope'; $('#z-ctr').textContent = chartCentre === 'scope' ? 'Centre: scope' : 'Centre: target'; };
+  const on = (id, f) => { const b = $('#' + id); if (b) b.onclick = f; };
+  on('z-in', () => setZoom((zoom ?? cv._lastView) / 1.6));
+  on('z-out', () => setZoom((zoom ?? cv._lastView) * 1.6));
+  on('z-auto', () => { setZoom(null); toast('Zoom fits the distance to the target'); });
+  on('z-lock', () => { state.zoomLock = !state.zoomLock; save(); const b = $('#z-lock'); b.classList.toggle('on', state.zoomLock); b.textContent = state.zoomLock ? 'Zoom locked' : 'Lock zoom'; toast(state.zoomLock ? 'Zoom locked — it won\'t zoom out while you move' : 'Zoom unlocked — zooms out while you move'); });
+  on('z-ep', cycleEyepiece);
+  on('z-wide', () => setZoom(30));
+  on('z-ctr', () => { chartCentre = chartCentre === 'scope' ? 'target' : 'scope'; $('#z-ctr').textContent = chartCentre === 'scope' ? 'Chart follows: scope' : 'Chart follows: target'; });
+  if (!targetObj()) $('#whereami').onclick = (e) => { const a = e.target.closest('[data-near]'); if (a) openObject(a.dataset.near); };
   // pinch to zoom
   let d0 = 0, z0 = 0;
   const dist = (e) => Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
@@ -736,11 +879,12 @@ function drawReticle(cur, tgt, o, opt = {}) {
   c.fillStyle = col(130); c.font = '24px system-ui'; c.textAlign = 'left';
   c.fillText(`${view >= 2 ? view.toFixed(view < 10 ? 1 : 0) + '°' : (view * 60).toFixed(0) + '′'} radius · stars to mag ${magLim.toFixed(1)}${zoom == null ? ' · auto' : ''}`, 12, 30);
   if (limited && !guess) { c.fillStyle = col(200, 40, 15); c.fillText(`Zoom limited by phone accuracy (±${fmt.am(U)})`, 12, H - 16); }
-  if (guess) {                                                       // unmistakable label: this view is not aligned
+  if (guess && !opt.noBanner) {                                       // unmistakable label: this view is not aligned
+    const fit = (txt, px, weight = '') => { c.font = `${weight} ${px}px system-ui`; const w = c.measureText(txt).width; if (w > W - 40) c.font = `${weight} ${Math.floor(px * (W - 40) / w)}px system-ui`; };
     c.fillStyle = 'rgba(0,0,0,0.75)'; c.fillRect(0, 44, W, 74);
-    c.fillStyle = col(255, 70, 30); c.font = 'bold 34px system-ui'; c.textAlign = 'center'; c.fillText('NOT ALIGNED — BEST GUESS MODE', cx, 82);
-    c.font = '21px system-ui'; c.fillStyle = col(200, 40, 15);
-    c.fillText(U ? `Direction from the phone's compass (measured ±${fmt.am(U)})` : 'Direction from the phone\'s compass — accuracy unknown until a Phone check', cx, 108);
+    c.fillStyle = col(255, 70, 30); c.textAlign = 'center'; fit('NOT ALIGNED — BEST GUESS MODE', 34, 'bold'); c.fillText('NOT ALIGNED — BEST GUESS MODE', cx, 82);
+    const sub = U ? `Direction from the phone's compass (measured ±${fmt.am(U)})` : 'Direction is a rough compass guess';
+    c.fillStyle = col(200, 40, 15); fit(sub, 21); c.fillText(sub, cx, 108);
     c.textAlign = 'left'; c.font = '24px system-ui';
   }
   const scope = cur ? proj(cur) : null;
@@ -748,7 +892,7 @@ function drawReticle(cur, tgt, o, opt = {}) {
   if (scope && U) { c.strokeStyle = col(200, 40, 15); c.lineWidth = 2; c.setLineDash([8, 8]); c.beginPath(); c.arc(scope.x, scope.y, U / 60 * s, 0, 7); c.stroke(); c.setLineDash([]); }
   if (scope) {
     c.strokeStyle = col(230, 50, 25); c.lineWidth = 3; if (guess) c.setLineDash([10, 8]); c.beginPath(); c.arc(scope.x, scope.y, Math.max(5, half * s), 0, 7); c.stroke(); c.setLineDash([]);
-    if (guess) { c.fillStyle = col(230, 50, 25); c.font = 'bold 22px system-ui'; c.textAlign = 'center'; c.fillText('scope? (guess)', scope.x, scope.y + Math.max(28, half * s + 26)); c.textAlign = 'left'; }
+    if (guess) { c.fillStyle = col(230, 50, 25); c.font = 'bold 22px system-ui'; c.textAlign = 'center'; c.fillText(opt.noBanner ? 'scope (compass guess)' : 'scope? (guess)', scope.x, scope.y + Math.max(28, half * s + 26)); c.textAlign = 'left'; }
     const L = Math.max(14, half * s * 0.35); c.beginPath(); c.moveTo(scope.x - L, scope.y); c.lineTo(scope.x + L, scope.y); c.moveTo(scope.x, scope.y - L); c.lineTo(scope.x, scope.y + L); c.stroke();
   }
 
@@ -769,7 +913,7 @@ function drawReticle(cur, tgt, o, opt = {}) {
 // ---------------------------------------------------------------- ALIGN + SYNC
 function makeObs(o) {
   const R = avgR(1.0); if (!R) return null; const truth = sky.altAz(o);
-  return { key: o.key, label: o.label, R, alt: truth.alt, az: truth.az, t: Date.now() };
+  return { key: o.key, label: o.label, R, alt: truth.alt, az: truth.az, t: Date.now(), ep: align.epoch || 0 };
 }
 function refit() {
   const c = profile().cal;
@@ -777,9 +921,9 @@ function refit() {
   if (!align.obs.length) { align.fit = null; return; }
   const solveAxis = align.obs.length >= 2 && state.calibrate;
   align.fit = fitAlignment(align.obs, model.d0, prior, { thetaOnly: !solveAxis, priorWeight: c ? 0.05 : 0.002 });
-  model.theta = align.fit.theta; model.p = align.fit.p; model.q = align.fit.q; model.t0 = Date.now();
+  model.theta = align.fit.theta; model.p = align.fit.p; model.q = align.fit.q; model.t0 = Date.now(); align.suspect = false;
   const lo = align.obs[align.obs.length - 1];
-  align.syncs.push({ t: Date.now(), theta: model.theta, kind: 'align', pos: { alt: lo.alt, az: lo.az } });
+  align.syncs.push({ t: Date.now(), theta: model.theta, kind: 'align', pos: { alt: lo.alt, az: lo.az }, ep: align.epoch || 0 });
 }
 function doSync(o) {
   const ob = makeObs(o); if (!ob) return toast('No sensor data');
@@ -790,11 +934,13 @@ function doSync(o) {
   }
   const f = fitAlignment([ob], model.d0, { p: model.p, q: model.q }, { thetaOnly: true });
   const prev = align.syncs[align.syncs.length - 1];
-  const before = align.fit ? wrap180(f.theta - model.thetaAt()) : null;
-  model.theta = f.theta; model.t0 = Date.now();
+  const seenBefore = skyTable() ? pointing() : null;       // with sky correction on, report the error of what the arrows actually showed
+  const before = align.fit ? (seenBefore && seenBefore.ready ? wrap180(ob.az - seenBefore.az) : wrap180(f.theta - model.thetaAt())) : null;
+  model.theta = f.theta; model.t0 = Date.now(); align.suspect = false; cue.sync();
   if (!align.fit) align.fit = { theta: f.theta, p: model.p, q: model.q, rms: f.rms, resid: [f.rms], solvedAxis: false };
-  if (prev && Date.now() - prev.t > 120000) { model.rate = wrap180(f.theta - prev.theta) / ((Date.now() - prev.t) / 60000); }
-  align.syncs.push({ t: Date.now(), theta: f.theta, kind: 'sync', key: o.key, correction: before, pos: { alt: ob.alt, az: ob.az } });
+  // Drift is only measured between two syncs with no interruption in between (a heading jump is not drift).
+  if (prev && (prev.ep || 0) === (align.epoch || 0) && Date.now() - prev.t > 120000) { model.rate = wrap180(f.theta - prev.theta) / ((Date.now() - prev.t) / 60000); }
+  align.syncs.push({ t: Date.now(), theta: f.theta, kind: 'sync', key: o.key, correction: before, pos: { alt: ob.alt, az: ob.az }, ep: align.epoch || 0 });
   align.confirm.push({ ...ob, kind: 'sync' });
   const msg = before == null ? `Synced on ${o.label}` : (Math.abs(before) * 60 < 0.5 ? `Synced on ${o.label}: alignment still spot on` : `Synced on ${o.label}: corrected ${Math.abs(before) < 1 ? Math.abs(before * 60).toFixed(0) + '′' : Math.abs(before).toFixed(2) + '°'}`);
   if (state.waypoint && state.waypoint.via === o.key) {
@@ -803,6 +949,7 @@ function doSync(o) {
   }
   toast(msg);
 }
+const cap1 = (t) => t.charAt(0).toUpperCase() + t.slice(1);
 let assist = { skip: new Set(), pending: null };
 function alignCands() {
   return sky.objects.filter((o) => (o.key.startsWith('st:') || (o.planet && o.id !== 'Moon')) && o.alt > 15 && o.alt < 80 && (o.mag ?? 9) < 2.6);
@@ -828,19 +975,18 @@ function renderAlign() {
     assistHTML = `<div class="card verdict v-poor"><div class="vbig" style="font-size:22px">Is that ${esc(assist.pending.ob.label)}?</div><p>${esc(assist.pending.msg)}</p>
       <div class="btnrow"><button id="a-retry" class="primary">Try again</button><button id="a-force">It is — use it</button></div></div>`;
   } else if (s) {
-    assistHTML = `<div class="card"><div class="muted small">Step ${done + 1} of ${need}${need === 2 && done === 0 ? ' · two stars calibrate how the phone sits on the tube' : ''}</div>
-      <div class="target-h" style="margin:4px 0"><span class="name">${esc(s.label)}</span><span class="muted">mag ${(+s.mag).toFixed(1)}</span></div>
-      <p style="margin:2px 0">${esc(starHelp(s))}.</p>
-      <p style="margin:2px 0">Look ${esc(whereWords(s.alt, s.az))}.</p>
-      <canvas id="a-chart" width="600" height="600" style="width:100%;max-width:340px;display:block;margin:8px auto;background:var(--chart);border:1px solid var(--line);border-radius:10px"></canvas>
+    assistHTML = `<div class="muted small">Step ${done + 1} of ${need}${need === 2 && done === 0 ? ' · two stars teach the app how the phone sits on the tube' : ''}</div>
+      <div class="target-h" style="margin:2px 0"><span class="name">${esc(s.label)}</span><span class="muted">${s.planet ? 'planet' : 'star'} · mag ${(+s.mag).toFixed(1)}</span></div>
+      <p style="margin:2px 0">${esc(cap1(starHelp(s)))}. Look ${esc(whereWords(s.alt, s.az))}.</p>
       <p class="infield" id="a-live"></p>
-      <p class="muted small">Get it in the red-dot finder first, then centre it in the eyepiece.</p>
-      <div class="btnrow"><button id="a-ok" class="primary">It's centred</button><button id="a-skip">Different star</button></div></div>`;
+      <canvas id="a-chart" class="chart" width="600" height="600"></canvas>
+      <p class="muted small">Get it in the red-dot finder first, then centre it in the eyepiece and tap <b>It's centred</b>. Not sure it's the right star? Tap <b>Different star</b>.</p>`;
   } else if (done >= need) {
-    assistHTML = `<div class="card"><b>Aligned on ${align.obs.map((o) => esc(o.label)).join(' and ')}.</b> <span class="muted small">Fit ${fmt.am(f.rms * 60)}.</span>
-      ${f.solvedAxis && !c ? '<p class="small">Save the tilt below so next time one star is enough.</p>' : ''}<p class="muted small">Sync on any object you centre to keep it accurate — the Push screen will suggest a check star before long pushes.</p></div>`;
+    assistHTML = `<div class="card"><b>✓ Aligned on ${align.obs.map((o) => esc(o.label)).join(' and ')}.</b> <span class="muted small">Fit ${fmt.am(f.rms * 60)}.</span>
+      ${f.solvedAxis && !c ? '<div class="btnrow"><button id="savecal2">Remember how the phone sits — next time one star is enough</button></div>' : ''}<p class="muted small">Tap Sync on anything you centre to keep it accurate. Before a long push, the app suggests a star to check on the way.</p>
+      <div class="btnrow"><button id="a-find" class="primary">Pick a target</button></div></div>`;
   } else assistHTML = '<p class="muted">No bright stars above 15° right now.</p>';
-  el.innerHTML = `
+  el.innerHTML = `${BACK}
     <h2>Alignment</h2>
     ${state.mode === 'compass' ? `<p class="muted">Compass mode is on: azimuth comes from the magnetometer. Star alignment below uses the gyro instead and is usually more accurate — switch in Setup.</p>` : ''}
     ${assistHTML}
@@ -850,14 +996,19 @@ function renderAlign() {
       <div class="chips" style="justify-content:center">${[1, 10, 30].map((m) => `<button data-mag="${m}" class="${domeMag === m ? 'on' : ''}">errors ×${m}</button>`).join('')}<button id="dome-red" class="${state.domeRed ? 'on' : ''}">Red only</button></div>
       <div id="dome-info"></div></div>` : ''}
     <div class="btnrow"><button id="clr">Start over</button><button id="savecal" ${f && f.solvedAxis ? '' : 'disabled'}>Save tilt to ${esc(profile().name)}</button></div>
+    <details class="more"><summary>Alignment details</summary>
     <div class="card kv">
-      <span>Mount calibration</span><span>${c ? `${Math.hypot(c.p, c.q).toFixed(2)}° tilt · ${c.n} stars` : 'none yet'}</span>
+      <span>Saved mount tilt</span><span>${c ? `${Math.hypot(c.p, c.q).toFixed(2)}° · ${c.n} stars` : 'none yet'}</span>
       <span>Since last sync</span><span>${lastSyncAge()}</span>
       <span>Measured gyro drift</span><span>${model.rate ? fmt.rate(model.rate) : 'needs 2 syncs ≥2 min apart'}</span>
     </div>
-    <label class="row"><span>Solve phone-to-tube tilt (2+ stars)</span><input type="checkbox" id="cal" ${state.calibrate ? 'checked' : ''}></label>
-    <details><summary class="muted">Choose any star yourself</summary>
-    <ul class="list">${alignCands().sort((a, b) => (a.mag ?? 9) - (b.mag ?? 9)).map((o) => `<li data-k="${esc(o.key)}"><div class="main"><div class="t1">${esc(o.label)}</div><div class="t2">${esc(o.sub || '')}</div></div><div class="r num">mag ${(+o.mag).toFixed(1)}</div><div class="r num" style="min-width:64px">${o.alt.toFixed(0)}° ${compassName(o.az)}</div></li>`).join('')}</ul></details>`;
+    <label class="row"><span>Work out how the phone sits on the tube (needs 2+ stars)</span><input type="checkbox" id="cal" ${state.calibrate ? 'checked' : ''}></label>
+    </details>
+    <details class="more"><summary>Choose any star yourself</summary>
+    <ul class="list">${alignCands().sort((a, b) => (a.mag ?? 9) - (b.mag ?? 9)).map((o) => `<li data-k="${esc(o.key)}"><div class="main"><div class="t1">${esc(o.label)}</div><div class="t2">${esc(o.sub || '')}</div></div><div class="r num">mag ${(+o.mag).toFixed(1)}</div><div class="r num" style="min-width:64px">${o.alt.toFixed(0)}° ${compassName(o.az)}</div></li>`).join('')}</ul></details>
+    ${s && !assist.pending ? '<div class="actionbar"><button id="a-ok" class="primary wide">It\'s centred</button><button id="a-skip">Different star</button></div>' : ''}`;
+  bindBack(el);
+  if ($('#a-find')) $('#a-find').onclick = () => showTab('find');
   const addStar = (o, force) => {
     const ob = makeObs(o); if (!ob) return toast('No sensor data yet');
     if (!force) {
@@ -871,7 +1022,11 @@ function renderAlign() {
       }
     }
     assist.pending = null; align.obs.push(ob); align.confirm.push({ ...ob, kind: 'align' }); refit();
-    if (align.obs.length === alignNeeded()) { toast(`Aligned on ${align.obs.map((x) => x.label).join(' and ')} — pick a target`, 3000); showTab('find'); return; }
+    if (align.obs.length === alignNeeded()) {
+      cue.onTarget(); toast(`Aligned on ${align.obs.map((x) => x.label).join(' and ')}`, 3000);
+      if (!flowStepDone('align')) showTab(state.target ? 'push' : 'find');
+      return;
+    }
     toast(`Added ${o.label}`); renderAlign();
   };
   if ($('#a-ok')) $('#a-ok').onclick = () => addStar(s);
@@ -880,7 +1035,8 @@ function renderAlign() {
   if ($('#a-force')) $('#a-force').onclick = () => { const p = assist.pending; addStar(p.o, true); };
   $('#cal').onchange = (e) => { state.calibrate = e.target.checked; save(); refit(); renderAlign(); };
   $('#clr').onclick = () => { align = { obs: [], fit: null, syncs: [], confirm: [] }; model.rate = 0; assist = { skip: new Set(), pending: null }; renderAlign(); };
-  $('#savecal').onclick = () => { profile().cal = { p: model.p, q: model.q, n: align.obs.length, rms: f.rms, date: Date.now() }; save(); toast('Saved. Next session, one star is enough.'); renderAlign(); };
+  const saveTilt = () => { profile().cal = { p: model.p, q: model.q, n: align.obs.length, rms: f.rms, date: Date.now() }; save(); toast('Saved. Next session, one star is enough.'); renderAlign(); };
+  $('#savecal').onclick = saveTilt; if ($('#savecal2')) $('#savecal2').onclick = saveTilt;
   el.querySelectorAll('[data-del]').forEach((b) => b.onclick = (e) => { e.stopPropagation(); align.obs.splice(+b.dataset.del, 1); refit(); renderAlign(); });
   el.querySelectorAll('li[data-k]').forEach((li) => li.onclick = () => addStar(sky.objects.find((x) => x.key === li.dataset.k)));
   el.querySelectorAll('[data-mag]').forEach((b) => b.onclick = () => { domeMag = +b.dataset.mag; renderAlign(); });
@@ -889,22 +1045,46 @@ function renderAlign() {
   updateAlign();
 }
 let domeMag = 10;
+/** Where sky correction stands, in a sentence (dome card) and in a word or two (Push > Numbers). */
+function skyCorrText() {
+  if (state.skyCorr === false) return 'Off. The arrows use only your last Sync and the phone tilt found at alignment.';
+  const T = skyTableAll(), n = align.confirm.length, ck = T && T.check;
+  if (!T) return n < 3 ? `Learning. It needs 6 confirmed objects that agree with each other — you have ${n}. Every Sync adds one; spread them around the sky.`
+    : 'Waiting. The confirmed objects disagree with each other too much to learn from — see below.';
+  const left = T.dropped ? `, ${T.dropped} left out because ${T.dropped === 1 ? 'it disagrees' : 'they disagree'} with the rest` : '';
+  if (ck.short) return `Learning. It needs 6 confirmed objects that agree with each other — you have ${T.n}${left}. Every Sync adds one; spread them around the sky.`;
+  if (ck.n < 2) return 'Learning. It needs another Sync or two before it can check itself.';
+  const trial = `Replayed over your last ${ck.n} objects, the miss on arrival goes from ${fmt.am(ck.raw)} to ${fmt.am(ck.fixed)}`;
+  if (!ck.helps) return `Standing by. ${trial} — no clear gain, so the arrows are left alone.`;
+  const cur = pointing();
+  return `In use. ${trial}. ${T.n} objects in the table${left}${cur && cur.corr != null ? `; where the scope points now the arrows are shifted by ${fmt.am(cur.corr * 60)}` : ''}.`;
+}
+function skyCorrShort() {
+  if (state.skyCorr === false) return 'off';
+  const T = skyTableAll(); if (!T) return align.confirm.length < 3 ? 'learning (needs 6 Syncs)' : 'waiting';
+  return T.check.short ? `learning (${T.n} of 6)` : T.check.n < 2 ? 'learning' : T.check.helps ? '—' : 'standing by';
+}
 function renderDome() {
   const cv = $('#dome'); if (!cv) return;
   const P = align.confirm, r = tfov() * 60 / 2;
-  const c = profile().cal;
-  const fit = fitConsistency(P, model.d0, c ? { p: c.p, q: c.q } : { p: model.p, q: model.q }, { calibrate: state.calibrate });
-  const pc = fit ? pairConsistency(P, model.d0, fit.p, fit.q) : { pairs: [], worst: null };
+  const c = profile().cal, prior = c ? { p: c.p, q: c.q } : { p: model.p, q: model.q };
+  // Heading jumps (the app was in the background, the phone was knocked) get their own offset, as in the correction.
+  const eps = splitJumps(P, model.d0, prior, { calibrate: state.calibrate, r });
+  const fit = fitConsistency(P, model.d0, prior, { calibrate: state.calibrate, epochs: eps });
+  const pc = fit ? pairConsistency(P, model.d0, fit.p, fit.q, eps) : { pairs: [], worst: null };
   const out = outliers(fit, r); const v = domeVerdict(fit, pc, r);
   drawDome(cv, P, fit, { mag: domeMag, bright: vis(), outliers: out, r, redOnly: !!state.domeRed });
   const box = $('#dome-info');
-  box.innerHTML = `<p class="${v.level === 'bad' ? 'bad' : ''}" style="margin:6px 0">${esc(v.text)}</p>
+  box.innerHTML = `<label class="row"><span>Sky correction <span class="muted small">— learn from every Sync</span></span><input type="checkbox" id="dome-corr" ${state.skyCorr === false ? '' : 'checked'}></label>
+    <p class="small" style="margin:4px 0 8px">${skyCorrText()}</p>
+    <p class="${v.level === 'bad' ? 'bad' : ''}" style="margin:6px 0">${esc(v.text)}</p>
     <div class="kv small"><span>Confirmed objects</span><span>${P.length}</span>
       <span>Leftover error (RMS / worst)</span><span>${fit && P.length > 1 ? `${fmt.am(fit.rms)} / ${fmt.am(fit.max)}` : '—'}</span>
       <span>Worst pair-distance mismatch</span><span>${pc.worst != null ? fmt.am(pc.worst) : '—'}</span>
-      <span>Removed as expected</span><span>${fit ? `offset${fit.useAxis ? ', phone tilt' : ''}${fit.useRate ? `, drift ${fmt.rate(fit.rate)}` : ''}` : '—'}</span></div>
+      <span>Removed as expected</span><span>${fit ? `offset${fit.epochs > 1 ? `, ${fit.epochs - 1} heading jump${fit.epochs > 2 ? 's' : ''}` : ''}${fit.useAxis ? ', phone tilt' : ''}${fit.useRate ? `, drift ${fmt.rate(fit.rate)}` : ''}` : '—'}</span></div>
     ${out.map((i) => `<p class="small"><b>${esc(P[i].label)}</b> disagrees with the others by ${fmt.am(fit.resid[i].err)} — probably the wrong star or a bumped scope. <button data-drop="${i}">Remove it</button></p>`).join('')}
-    <p class="muted small">Looking up: north at top, east on the left. White is the true sky; the coloured mesh is how the sensors see it after removing the offset, phone tilt and drift — green perfect, blue good, yellow fair, red poor (compared with your eyepiece field). Dots are confirmed objects, arrows point to where the sensors put them. Colours cost some night vision; use Red only at the eyepiece.</p>`;
+    <p class="muted small">Looking up: north at top, east on the left. White is the true sky; the coloured mesh is how the sensors see it after removing the offset, phone tilt and drift — green perfect, blue good, yellow fair, red poor (compared with your eyepiece field). Dots are confirmed objects, arrows point to where the sensors put them. With Sky correction in use, the arrows on the Push screen are shifted to cancel this map. Colours cost some night vision; use Red only at the eyepiece.</p>`;
+  $('#dome-corr').onchange = (e) => { state.skyCorr = e.target.checked; save(); renderDome(); toast(state.skyCorr ? 'Sky correction on' : 'Sky correction off'); };
   box.querySelectorAll('[data-drop]').forEach((b) => b.onclick = () => {
     const pt = P[+b.dataset.drop]; align.confirm.splice(+b.dataset.drop, 1);
     const k = align.obs.findIndex((o) => o.t === pt.t && o.key === pt.key); if (k >= 0) { align.obs.splice(k, 1); refit(); }
@@ -925,7 +1105,7 @@ function updateAlign() {
     const g = guidance(cur, tgt);
     live.textContent = g.sep < 1 ? 'Should be in the finder — centre it' : `${fmtDelta(g.dAz)} ${g.dAz > 0 ? 'right' : 'left'}, ${fmtDelta(g.dAlt)} ${g.dAlt > 0 ? 'up' : 'down'}`;
   }
-  drawReticle(cur, tgt, s, { canvas: $('#a-chart'), view: 25, centre: 'target' });
+  drawReticle(cur, tgt, s, { canvas: $('#a-chart'), view: 25, centre: 'target', noBanner: true });
 }
 
 // ---------------------------------------------------------------- GAME
@@ -973,7 +1153,9 @@ function newGame(style) {
   sky.updateAll();
   const cur = pointing();
   const ceiling = state.history.slice().reverse().find((h) => h.test === 'check' && h.result && h.result.ceiling)?.result.ceiling;
-  const T = pickTargets(sky.objects, { aperture: profile().aperture, sunAlt: sky.sunAlt(), maxAlt: Math.min(80, ceiling || 80) });
+  // Only things the visibility model rates Obvious or Visible right now: a race is no fun against a target you can't see.
+  const fair = sky.objects.filter((o) => { const r = o.alt > 0 ? rateNow(o) : null; return !r || r.level <= 1; });
+  const T = pickTargets(fair, { aperture: profile().aperture, sunAlt: sky.sunAlt(), maxAlt: Math.min(80, ceiling || 80) });
   if (T.length < 3) return toast(sky.sunAlt() > -6 ? 'Too bright — wait until the sky is darker.' : 'Not enough suitable targets above 25° right now.', 4000);
   const route = routeOrder(T, cur && cur.ready ? cur : null);
   const code = encodeChallenge({ style, tokens: route.map(tokenFor), host: state.player || '' });
@@ -1003,6 +1185,7 @@ function nextTarget(found, how) {
   if (how === 'skip') game.penalty += PENALTY.skip;
   if (how === 'manual') game.manual++;
   if (navigator.vibrate) navigator.vibrate(found ? [80, 60, 80] : 200);
+  if (found) cue.onTarget(); else cue.miss();
   const o = game.play[game.i];
   if (found) toast(`Found ${o.label} in ${fmtTime(game.splits[game.i])}`, 1800);
   game.i++; game.legStart = now; game.dw = {}; game.hintUntil = 0;
@@ -1062,8 +1245,8 @@ function renderReady(el) {
     <div class="card" style="text-align:center"><b>Same site? Others scan this to play the same 10.</b>
       <canvas id="g-qr" width="520" height="520" style="width:70%;max-width:260px;display:block;margin:8px auto;border-radius:8px"></canvas>
       <div class="btnrow"><button id="g-copy">Copy / share code</button></div></div>
-    <div class="btnrow"><button id="g-start" class="primary big">Start — 3, 2, 1…</button></div>
-    <div class="btnrow"><button id="g-back">Back</button></div>`;
+    <div class="btnrow"><button id="g-back">Back</button></div>
+    <div class="actionbar"><button id="g-start" class="primary">Start — 3, 2, 1…</button></div>`;
   drawQR($('#g-qr'), g.code);
   $('#g-copy').onclick = () => exportText(`Skyward challenge ${g.ch.id}`, g.code);
   $('#g-start').onclick = startGame;
@@ -1075,19 +1258,19 @@ function renderPlay(el) {
     <div class="muted small" style="text-align:center">Target ${Math.min(g.i + 1, g.play.length)} of ${g.play.length} · ${esc(STYLES[g.style].name)}${g.penalty ? ` · +${g.penalty} s penalties` : ''}</div>
     <div class="target-h" style="justify-content:center;margin-top:6px"><span class="name">${esc(o.label)}</span><span class="muted">${esc(typeLabel(o.t))}${o.mag != null ? ' · mag ' + (+o.mag).toFixed(1) : ''}</span></div>
     <div class="muted small" style="text-align:center">${esc(o.sub || '')}${o.con ? ' · ' + esc(o.con) : ''}</div>
-    <div class="deltas ${g.style === 'push' ? '' : 'hidden'}" id="g-deltas">
-      <div class="delta" id="gd-az"><div class="lab">Azimuth</div><div class="val">—</div><div class="dir"></div></div>
-      <div class="delta" id="gd-alt"><div class="lab">Altitude</div><div class="val">—</div><div class="dir"></div></div></div>
+    <div class="guide ${g.style === 'push' ? '' : 'hidden'}" id="g-deltas">
+      <div class="delta" id="gd-az"><div class="lab">Turn</div><div class="val">—</div><div class="dir"></div></div>
+      <div class="delta" id="gd-alt"><div class="lab">Tilt</div><div class="val">—</div><div class="dir"></div></div></div>
     <div class="infield" id="g-status"></div>
-    <canvas id="g-chart" width="800" height="800" style="width:100%;display:block;background:var(--chart);border:1px solid var(--line);border-radius:12px"></canvas>
-    <div class="btnrow">${g.style === 'hybrid' ? `<button id="g-hint">Hint (+${PENALTY.hint} s)</button>` : ''}<button id="g-found">Found it</button><button id="g-skip">Skip (+${PENALTY.skip} s)</button></div>
-    <div class="btnrow"><button id="g-quit">Quit game</button></div>`;
+    <canvas id="g-chart" class="chart" width="800" height="800"></canvas>
+    <div class="btnrow"><button id="g-quit">Quit game</button></div>
+    <div class="actionbar">${g.style === 'hybrid' ? `<button id="g-hint">Hint +${PENALTY.hint} s</button>` : ''}<button id="g-found" class="primary">Found it</button><button id="g-skip">Skip +${PENALTY.skip} s</button></div>`;
   if ($('#g-hint')) $('#g-hint').onclick = () => { g.penalty += PENALTY.hint; g.hints++; g.hintUntil = Date.now() + 10000; };
   $('#g-skip').onclick = () => nextTarget(false, 'skip');
   $('#g-found').onclick = () => {
     const cur = pointing(); if (!cur || !cur.ready) return toast('No pointing data');
     const t = sky.altAz(o), d = sepDeg(cur.alt, cur.az, t.alt, t.az), R = foundRadius(o);
-    if (d <= 3 * R) nextTarget(true, d <= R ? 'auto' : 'manual'); else toast(`The sensors put you ${d.toFixed(1)}° away — keep looking`);
+    if (d <= 3 * R) nextTarget(true, d <= R ? 'auto' : 'manual'); else { cue.miss(); toast(`The sensors put you ${d.toFixed(1)}° away — keep looking`); }
   };
   $('#g-quit').onclick = () => { if (confirmTwice('g-quit')) { game = null; renderGame(); } };
 }
@@ -1096,7 +1279,8 @@ function updateGame() {
   if (g.phase === 'count') {
     const left = Math.ceil((g.countEnd - Date.now()) / 1000);
     const tm = $('#g-timer'); if (tm) tm.textContent = left > 0 ? String(left) : 'Go!';
-    if (Date.now() >= g.countEnd) { g.phase = 'play'; g.t0 = Date.now(); g.legStart = g.t0; renderGame(); }
+    if (left !== g.lastCount && left > 0) { g.lastCount = left; cue.count(); }
+    if (Date.now() >= g.countEnd) { g.phase = 'play'; g.t0 = Date.now(); g.legStart = g.t0; cue.go(); renderGame(); }
     return;
   }
   if (g.phase !== 'play') return;
@@ -1108,8 +1292,8 @@ function updateGame() {
   if (!cur || !cur.ready) { st.textContent = 'Waiting for sensors / alignment…'; drawReticle(null, tgt, o, { canvas: $('#g-chart'), view: 6, centre: 'target' }); return; }
   const gd = guidance(cur, tgt), R = foundRadius(o);
   if (showArrows) {
-    $('#gd-az .val').textContent = fmtDelta(gd.dAz); $('#gd-az .dir').textContent = gd.dAz > 0 ? 'right ▶' : '◀ left';
-    $('#gd-alt .val').textContent = fmtDelta(gd.dAlt); $('#gd-alt .dir').textContent = gd.dAlt > 0 ? '▲ up' : '▼ down';
+    const half = tfov() / 2;
+    setDelta($('#gd-az'), gd.dAz, 'az', Math.abs(gd.dAz * Math.cos(tgt.alt * D2R)) < half); setDelta($('#gd-alt'), gd.dAlt, 'alt', Math.abs(gd.dAlt) < half);
   }
   const done = dwell(g.dw, gd.sep, R, Date.now(), 2000);
   st.textContent = g.dw.since != null ? `On target — hold steady ${Math.max(0, 2 - (Date.now() - g.dw.since) / 1000).toFixed(1)} s` : (showArrows ? `${gd.sep.toFixed(1)}° away` : 'Find it from the chart');
@@ -1176,26 +1360,27 @@ const TESTS = {
 function renderTest() {
   const el = $('#tab-test');
   if (test) return renderTestRun();
-  el.innerHTML = `<h2>Sensor tests</h2>
+  el.innerHTML = `${BACK}<h2>Phone check and sensor tests</h2>
     <p class="muted small">Run these on the scope with the phone in its bridge mount unless the test says otherwise. Results are saved below and can be exported.</p>
     ${Object.entries(TESTS).map(([k, t]) => `<div class="card"><h3 style="margin-top:0">${t.name}</h3><p class="muted small">${t.desc}</p><button data-run="${k}" class="primary">Run</button></div>`).join('')}
     <h2>History</h2>
     ${state.history.length ? `<ul class="list">${state.history.slice().reverse().map((h, i) => `<li data-h="${state.history.length - 1 - i}"><div class="main"><div class="t1">${esc(TESTS[h.test]?.name || h.test)}</div><div class="t2">${new Date(h.when).toLocaleString()} · ${esc(h.scope)}${h.phone ? ' · ' + esc(h.phone) : ''}</div></div><div class="r small">${esc(h.summary || '')}</div></li>`).join('')}</ul>
     <div class="btnrow"><button id="exp-csv">Export CSV</button><button id="exp-json">Export JSON</button><button id="clr-h">Clear</button></div>` : '<p class="muted">No results yet.</p>'}
     <textarea id="exp-box" class="hidden" readonly></textarea>`;
+  bindBack(el);
   el.querySelectorAll('[data-run]').forEach((b) => b.onclick = () => startTest(b.dataset.run));
   el.querySelectorAll('li[data-h]').forEach((li) => li.onclick = () => { const h = state.history[+li.dataset.h]; test = { kind: h.test, done: true, result: h.result, view: true, when: h.when }; renderTestRun(); });
   const ex = async (txt, name) => exportText(name, txt);
   if ($('#exp-csv')) { $('#exp-csv').onclick = () => ex(toCSV(state.history), 'skyward-sensor-tests.csv'); $('#exp-json').onclick = () => ex(JSON.stringify(state.history, null, 1), 'skyward-sensor-tests.json'); $('#clr-h').onclick = () => { if (confirmTwice('clr-h')) { state.history = []; save(); renderTest(); } }; }
 }
 function confirmTwice(id) { const b = $('#' + id); if (b.dataset.arm) return true; const label = b.textContent; b.dataset.arm = 1; b.textContent = 'Tap again to confirm'; setTimeout(() => { if (b.isConnected) { delete b.dataset.arm; b.textContent = label; } }, 3000); return false; }
-async function exportText(name, text) {
+async function exportText(name, text, box = $('#exp-box')) {
   if (navigator.share) { try { await navigator.share({ title: name, text }); return; } catch (e) { if (e && e.name === 'AbortError') return; } }
   try { await navigator.clipboard.writeText(text); toast('Copied to clipboard'); } catch (e) { /* fall back to the text box */ }
-  const box = $('#exp-box'); if (box) { box.value = text; box.classList.remove('hidden'); box.focus(); box.select(); }
+  if (box) { box.value = text; box.classList.remove('hidden'); box.focus(); box.select(); }
 }
 function startTest(kind) {
-  if (!sensors || !sensors.fresh()) return toast('Start the sensors first');
+  if (!sensors || !sensors.fresh()) return toast('The motion sensors are off — tap the status at the top to start them');
   test = { kind, rec: new Recorder(sensors, model), marks: [], readings: [], dur: 60, armed: true, away: true };
   if (kind === 'check') Object.assign(test, { step: 'info', phone: state.phone || guessModel(), epIdx: state.ep, dur: 60 });
   test.rec.start(); renderTestRun();
@@ -1261,13 +1446,13 @@ function renderTestRun() {
     el.querySelectorAll('li[data-k]').forEach((li) => li.onclick = () => {
       const o = sky.objects.find((x) => x.key === li.dataset.k); const m = test.rec.lastMean(1); if (!m) return;
       m.truth = sky.altAz(o); m.label = o.label;
-      { const R = avgR(1); if (R) align.confirm.push({ key: o.key, label: o.label, R, alt: m.truth.alt, az: m.truth.az, t: Date.now(), kind: 'test' }); }
+      { const R = avgR(1); if (R) align.confirm.push({ key: o.key, label: o.label, R, alt: m.truth.alt, az: m.truth.az, t: Date.now(), kind: 'test', ep: align.epoch || 0 }); }
       if (state.mode === 'gyro' && align.fit) m.model = { alt: m.alt, az: wrap360(m.az + model.thetaAt()) };
       test.marks.push(m); renderTestRun();
     });
     $('#t-fin').onclick = () => { const r = analyzeAccuracy(test.marks); finishTest(r, `alt ${fmt.am(r.altErrMean)}${r.compassErrMean != null ? ' · compass ' + fmt.deg(r.compassErrMean, 1) : ''}${r.modelRms != null ? ' · model ' + fmt.am(r.modelRms) : ''}`); };
   }
-  $('#t-back').onclick = () => { if (test.rec) test.rec.stop(); test = null; renderTest(); };
+  $('#t-back').onclick = () => { const finished = test.done && !test.view, kind = test.kind; if (test.rec) test.rec.stop(); test = null; if (finished && kind === 'check' && flowStepDone('check')) return; renderTest(); };
 }
 function updateTest() {
   if (!test || test.done || tab !== 'test') return;
@@ -1468,7 +1653,7 @@ function resultHTML(kind, r) {
 // ---------------------------------------------------------------- SETUP
 function renderSetup() {
   const el = $('#tab-setup'); const p = profile();
-  el.innerHTML = `
+  el.innerHTML = `${BACK}
     <h2>Telescope</h2>
     <label class="row"><span>Scope</span><select id="s-prof">${Object.entries(state.profiles).map(([k, v]) => `<option value="${k}" ${k === state.active ? 'selected' : ''}>${esc(v.name)}</option>`).join('')}</select></label>
     <label class="row"><span>Focal length (mm)</span><input id="s-fl" type="number" inputmode="decimal" value="${p.fl}"></label>
@@ -1485,13 +1670,14 @@ function renderSetup() {
     <label class="row"><span>Star declination (°)</span><input id="drift-d" type="number" inputmode="decimal" placeholder="e.g. 0"></label>
     <div class="btnrow"><button id="drift-go">Set AFOV for selected eyepiece from drift</button></div>
 
-    <h2>Phone mount</h2>
+    <details class="more"><summary>Phone mount and sensors (advanced)</summary>
     <label class="row"><span>Phone position</span><select id="s-mount">${Object.entries(MOUNTINGS).map(([k, v]) => `<option value="${k}" ${k === state.mounting ? 'selected' : ''}>${esc(v.label)}</option>`).join('')}</select></label>
     <label class="row"><span>Azimuth source</span><select id="s-mode"><option value="gyro" ${state.mode === 'gyro' ? 'selected' : ''}>Gyro + star alignment (recommended)</option><option value="compass" ${state.mode === 'compass' ? 'selected' : ''}>Compass (no alignment)</option></select></label>
     <label class="row"><span>Compass correction, true − magnetic (°)</span><input id="s-cc" type="number" inputmode="decimal" step="0.1" value="${(+state.compassCorr).toFixed(2)}"></label>
     <label class="row"><span>Apply measured gyro drift between syncs</span><input type="checkbox" id="s-rate" ${state.useRate ? 'checked' : ''}></label>
     <label class="row"><span>Smoothing (s)</span><select id="s-smooth">${[0.2, 0.4, 0.6, 1, 1.5, 2].map((v) => `<option ${v === state.smooth ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
     <div class="btnrow"><button id="s-clrcal" ${p.cal ? '' : 'disabled'}>Forget saved mount tilt for ${esc(p.name)}</button></div>
+    </details>
 
     <h2>Location</h2>
     <label class="row"><span>Latitude (°N)</span><input id="s-lat" type="number" inputmode="decimal" step="0.0001" value="${state.site.lat}"></label>
@@ -1501,14 +1687,16 @@ function renderSetup() {
     <div class="btnrow"><button id="s-gps">Use GPS</button></div>
 
     <h2>Display</h2>
-    <label class="row"><span>Day mode <span class="muted small">(bright colours for daylight; also the ☀ button at top right)</span></span><input id="s-day" type="checkbox" ${state.day ? 'checked' : ''}></label>
+    <label class="row"><span>Day mode <span class="muted small">(bright colours for daylight; also the button at top right)</span></span><input id="s-day" type="checkbox" ${state.day ? 'checked' : ''}></label>
     <label class="row"><span>Screen brightness</span><input id="s-br" type="range" min="0.25" max="1" step="0.05" value="${state.bright}"></label>
     <label class="row"><span>Lowest altitude to list (°)</span><input id="s-min" type="number" value="${state.minAlt}"></label>
+    <p class="muted small">Keep screen awake: ${awakeText()}. Sounds are under More.</p>
 
     <h2>About</h2>
     <p class="small">Skyward Push-To for Ten Telescopes' Skyward 150 Compact and Skyward 200 Visual.</p>
     <p class="muted small">Sky positions: Astronomy Engine © Don Cross (MIT). Deep-sky positions, sizes and magnitudes: OpenNGC © Mattia Verga (CC BY-SA 4.0). Caldwell, Herschel 400, RASC double-star and bright-star selections compiled from the PiFinder project's catalog files. Star field: Hipparcos main catalogue (ESA 1997). Constellation figures: Stellarium modern sky culture. Named asterisms: Saguaro Astronomy Club asterism list v3.2. Telescope specs from the TenTelescopes Skyward150 and Skyward200 repositories (CC BY-NC 4.0).</p>
     <p class="muted small mono" id="s-diag"></p>`;
+  bindBack(el);
   const num = (id) => parseFloat($(id).value);
   $('#s-prof').onchange = (e) => { state.active = e.target.value; state.ep = 0; align = { obs: [], fit: null, syncs: [], confirm: [] }; applyModelSettings(); save(); renderSetup(); };
   $('#s-fl').onchange = () => { p.fl = num('#s-fl') || p.fl; save(); renderSetup(); };
@@ -1542,7 +1730,7 @@ async function getGPS() {
   toast('Getting GPS fix…', 8000);
   const done = (lat, lon, elev, acc) => {
     state.site = { lat: +lat.toFixed(5), lon: +lon.toFixed(5), elev: Math.round(elev || state.site.elev || 0), source: `GPS ±${Math.round(acc)} m, ${new Date().toLocaleString()}` };
-    sky.setSite(state.site.lat, state.site.lon, state.site.elev); save(); toast('Location set'); if (tab === 'setup') renderSetup(); if (tab === 'find') renderFind();
+    sky.setSite(state.site.lat, state.site.lon, state.site.elev); planRows = null; rateCache.clear(); save(); toast('Location set'); if (tab === 'setup') renderSetup(); if (tab === 'find') renderFind(); if (!$('#gate').classList.contains('hidden')) renderLaunch();
   };
   try {
     const G = cap('Geolocation');
@@ -1553,13 +1741,158 @@ async function getGPS() {
 }
 
 // ---------------------------------------------------------------- status + loop
+function syncAgo() { const x = align.syncs[align.syncs.length - 1]; if (!x) return ''; const m = (Date.now() - x.t) / 60000; return m < 1 ? 'synced just now' : m < 90 ? `synced ${m.toFixed(0)} min ago` : `synced ${(m / 60).toFixed(1)} h ago`; }
+/** One word for where pointing stands; drives the header pill. */
+function pointState() {
+  if (!sensors) return 'off'; if (!sensors.fresh()) return 'nodata';
+  if (state.mode === 'compass') return 'compass';
+  if (!align.fit) return 'unaligned';
+  return align.suspect ? 'resync' : 'aligned';
+}
 function updateStatus() {
-  $('#st-scope').textContent = profile().name.replace('Skyward ', 'SW').replace(' Compact', 'C').replace(' Visual', 'V');
-  const cur = pointing();
-  $('#st-point').textContent = cur ? `${cur.alt.toFixed(1)}° / ${cur.az == null ? '—' : cur.az.toFixed(1) + '°'}` : (sensors ? 'No sensor data' : 'Sensors off');
-  $('#st-align').textContent = state.mode === 'compass' ? 'Compass' : (align.fit ? `Sync ${lastSyncAge()}` : 'Not aligned');
+  const short = profile().name.replace(/^Skyward\s+/, ''), sc = $('#st-scope'); if (sc.textContent !== short) sc.textContent = short;
+  const st = pointState();
+  const txt = { off: 'Sensors off — tap', nodata: 'No sensor data — tap', compass: 'Compass mode', unaligned: 'Not aligned — tap',
+    resync: 'Re-sync on a star', aligned: cap1(syncAgo()) }[st];
+  const pill = $('#st-pill'); if (pill.textContent !== txt) pill.textContent = txt; if (pill.dataset.st !== st) pill.dataset.st = st;
   const d = $('#s-diag'); if (d && sensors) d.textContent = `${sensors.constructor === SimSensors ? 'SIMULATED · ' : ''}${sensors.rateHz.toFixed(0)} Hz · compass: ${sensors.compassSource || 'none'}${sensors.compassAccuracy != null ? ' ±' + sensors.compassAccuracy + '°' : ''}`;
 }
+
+// ---------------------------------------------------------------- keep the screen awake; notice when the app was put away
+let wakeLock = null, awake = 'unknown', hiddenAt = 0;
+async function keepAwake() {
+  try { const K = cap('KeepAwake'); if (K) { await K.keepAwake(); awake = 'on'; return; } } catch (e) { /* fall through to the web API */ }
+  if (!('wakeLock' in navigator)) { awake = 'unsupported'; return; }
+  try {
+    if (document.visibilityState !== 'visible' || (wakeLock && !wakeLock.released)) return;
+    wakeLock = await navigator.wakeLock.request('screen'); awake = 'on';
+    wakeLock.addEventListener('release', () => { awake = 'released'; });
+  } catch (e) { awake = 'failed'; }
+}
+const awakeText = () => ({ on: 'on while the app is open', released: 'on while the app is open', unknown: 'starts when you tap an activity',
+  unsupported: "not supported by this browser — set your phone's Auto-Lock to Never while observing", failed: "couldn't be turned on here — set your phone's Auto-Lock to Never while observing" })[awake];
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') { hiddenAt = Date.now(); return; }
+  if (sensors) keepAwake();
+  const away = hiddenAt ? (Date.now() - hiddenAt) / 1000 : 0; hiddenAt = 0;
+  if (away > 20 && align.fit && state.mode === 'gyro') {
+    align.suspect = true; align.epoch = (align.epoch || 0) + 1;      // the heading may have jumped: objects from now on get their own offset
+    toast('Welcome back. The phone may have lost track while the screen was off — centre a bright star and tap Sync before trusting the arrows.', 7000);
+  }
+});
+
+// ---------------------------------------------------------------- OBSERVING LOG
+let seenCache = null;
+const seenSet = () => (seenCache ||= seenKeys(state.log));
+const fullCon = (c) => (c ? conName(String(c).toUpperCase()) : '');
+const RESULT = { yes: 'Seen', maybe: 'Not sure', no: 'Not seen' };
+const shortDate = (t) => new Date(t).toLocaleDateString([], { month: 'short', day: 'numeric' });
+function logObservation(o, seen) {
+  const before = logStats(state.log, sky.objects);
+  (state.log ||= []).push({ key: o.key, label: o.label, t: Date.now(), seen, scope: profile().name, ep: eyepiece().name, sky: state.skyq ? state.skyq.label : '' });
+  if (state.log.length > 5000) state.log.shift();
+  seenCache = null;
+  if (seen === 'yes') markDone(o.key, true);
+  save();
+  if (seen !== 'yes') { toast(seen === 'maybe' ? `Noted: not sure about ${o.label}. Worth another try on a darker night.` : `Noted: no luck with ${o.label} this time.`, 3200); return; }
+  const after = logStats(state.log, sky.objects), fresh = newlyAchieved(before, after);
+  if (fresh.length) { cue.milestone(); toast(`★ Milestone: ${fresh[fresh.length - 1].name}`, 4500); }
+  else { cue.logged(); toast(isMessier(o) && !before.total ? `Logged ${o.label} ✓` : isMessier(o) ? `Logged ${o.label} ✓ — Messier ${after.messier} of ${after.messierTotal}` : `Logged ${o.label} ✓ — ${after.total} objects seen`, 3200); }
+}
+let logLimit = 60;
+function renderLog() {
+  const el = $('#tab-log'), log = state.log || [], st = logStats(log, sky.objects);
+  const entries = log.map((e, i) => ({ e, i })).reverse();
+  const pct = (a, b) => (b ? Math.min(100, 100 * a / b) : 0);
+  el.innerHTML = `${BACK}<h2>Observing log</h2>
+    ${log.length ? '' : '<p class="muted">Nothing logged yet. When a target is in the eyepiece, tap <b>Log</b> on the Push screen. Your Messier count and milestones build up here.</p>'}
+    <div class="stats"><div><b>${st.total}</b>object${st.total === 1 ? '' : 's'} seen</div><div><b>${st.messier}</b>of ${st.messierTotal} Messier</div><div><b>${st.nights}</b>night${st.nights === 1 ? '' : 's'} out</div></div>
+    <div class="prog"><div class="lab"><span>Messier catalogue</span><span>${st.messier} / ${st.messierTotal}</span></div><div class="bar"><div style="width:${pct(st.messier, st.messierTotal)}%"></div></div></div>
+    <div class="prog"><div class="lab"><span>Planets</span><span>${st.types.PL} / ${st.planetTotal}</span></div><div class="bar"><div style="width:${pct(st.types.PL, st.planetTotal)}%"></div></div></div>
+    <p class="muted small">Galaxies ${st.types.GX} · Globular clusters ${st.types.GC} · Open clusters ${st.types.OC} · Nebulae ${st.types.NEB} · Double stars ${st.types.DS}${st.moon ? ' · the Moon' : ''}</p>
+    <h3>Milestones</h3>
+    <div class="badges">${MILESTONES.map((m) => { const h = Math.min(m.need, m.have(st)), got = h >= m.need; return `<div class="badge ${got ? 'got' : ''}"><b>${got ? '★ ' : ''}${esc(m.name)}</b>${esc(m.what)}${got ? '' : ` — ${m.need - h} to go`}</div>`; }).join('')}</div>
+    ${entries.length ? `<h3>Entries</h3>
+      <ul class="list">${entries.slice(0, logLimit).map(({ e, i }) => { const o = objByKey(e.key); return `<li><div class="main" data-lk="${esc(e.key)}"><div class="t1">${o ? nameHTML(o) : esc(e.label)}</div>
+        <div class="t2">${shortDate(e.t)} · ${RESULT[e.seen] || esc(e.seen)} · ${esc((e.scope || '').replace(/^Skyward\s+/, ''))}${e.ep ? ' · ' + esc(e.ep) : ''}</div></div><button class="ibtn" data-ldel="${i}" aria-label="Delete entry">✕</button></li>`; }).join('')}</ul>
+      ${entries.length > logLimit ? `<div class="btnrow"><button id="lg-more">Show more (${entries.length - logLimit})</button></div>` : ''}
+      <div class="btnrow"><button id="lg-exp">Share / export</button><button id="lg-clr">Clear log</button></div><textarea id="lg-box" class="hidden" readonly></textarea>` : ''}`;
+  bindBack(el);
+  el.querySelectorAll('[data-lk]').forEach((d) => d.onclick = () => openObject(d.dataset.lk));
+  el.querySelectorAll('[data-ldel]').forEach((b) => b.onclick = () => { state.log.splice(+b.dataset.ldel, 1); seenCache = null; save(); renderLog(); });
+  if ($('#lg-more')) $('#lg-more').onclick = () => { logLimit += 100; renderLog(); };
+  if ($('#lg-exp')) {
+    $('#lg-exp').onclick = () => exportText('skyward-observing-log.csv', logCSV(state.log, sky.objects), $('#lg-box'));
+    $('#lg-clr').onclick = () => { if (confirmTwice('lg-clr')) { state.log = []; seenCache = null; save(); renderLog(); } };
+  }
+}
+
+// ---------------------------------------------------------------- OBJECT SHEET: what it is, how it looks tonight, what to do with it
+function closeSheet() { $('#sheet').classList.add('hidden'); }
+function openObject(key, opt = {}) {
+  const o = objByKey(key); if (!o) return;
+  refreshSky(false);
+  const box = $('#sheet'), card = $('#sheet-card');
+  const row = opt.row || null, r = row || (o.alt > 0 ? rateNow(o) : null);
+  const blurb = blurbFor(o), last = lastEntry(state.log, key), seen = seenSet().has(key);
+  const inPlan = planList().some((x) => x.key === key && !x.sync), isTarget = !o.key.startsWith('st:') || o.show;
+  card.innerHTML = `<div class="sheet-h"><div><div class="target-h"><span class="name">${esc(o.label)}</span>${o.name ? `<span class="cname">${esc(o.name)}</span>` : ''}</div>
+      <div class="muted small">${esc(kindLabel(o))}${o.con ? ' in ' + esc(fullCon(o.con)) : ''}${o.key.startsWith('dso:') && o.label !== o.id ? ' · ' + esc(o.id) : ''}</div></div>
+      <button class="ibtn" id="sh-x" aria-label="Close">✕</button></div>
+    ${r ? `<p class="rateline"><span class="dots lv${r.level}">${DOTS[r.level]}</span> <b>${LEVEL_NAMES[r.level]}</b> ${row ? 'at its best in your session' : 'right now'} — ${esc(row ? row.desc : describe(o, r))}</p>` : (o.alt <= 0 ? '<p class="rateline muted">Below the horizon right now.</p>' : '')}
+    ${blurb ? `<p class="blurb">${esc(blurb)}</p>` : ''}
+    <div class="kv">
+      ${row ? `<span>Best time</span><span>${hm(row.best)} · ${row.alt.toFixed(0)}° ${compassName(row.az)}</span>` : ''}
+      <span>Right now</span><span>${o.alt > 0 ? `${o.alt.toFixed(0)}° up, ${compassName(o.az)}` : 'below the horizon'}</span>
+      ${r && r.ep ? `<span>Best eyepiece</span><span>${esc(r.ep.name)} (${(profile().fl / r.ep.fl).toFixed(0)}×)</span>` : ''}
+      ${o.mag != null ? `<span>Brightness</span><span>magnitude ${(+o.mag).toFixed(1)}</span>` : ''}
+      ${sizeText(o) ? `<span>${o.maj ? 'Size' : 'Pair'}</span><span>${sizeText(o)}</span>` : ''}
+      <span>Your log</span><span>${seen ? 'Seen ✓' : last ? RESULT[last.seen] : 'Not logged yet'}${last ? ' · ' + shortDate(last.t) : ''}</span>
+    </div>
+    <div class="btnrow"><button id="sh-go" class="primary">Push to it</button>${isTarget ? `<button id="sh-plan">${inPlan ? '✓ In plan — remove' : '+ Add to plan'}</button>` : ''}</div>
+    ${isTarget ? `<div class="btnrow"><button id="sh-seen">${seen ? 'Log it again ✓' : 'Log as seen ✓'}</button></div>` : '<p class="muted small">A bright star for aligning and syncing.</p>'}`;
+  box.classList.remove('hidden'); card.scrollTop = 0;
+  box.onclick = (e) => { if (e.target === box) closeSheet(); };
+  $('#sh-x').onclick = closeSheet;
+  $('#sh-go').onclick = () => { closeSheet(); state.target = key; save(); showTab('push'); };
+  if ($('#sh-plan')) $('#sh-plan').onclick = () => {
+    const P = planState(), i = P.items.findIndex((x) => x.key === key && !x.sync);
+    if (i >= 0) P.items.splice(i, 1); else P.items.push({ key });
+    save(); toast(i >= 0 ? `${o.label} removed from your plan` : `${o.label} added to your plan`, 1800);
+    if (tab === 'plan') { const y = $('main').scrollTop; renderPlan(); $('main').scrollTop = y; }
+    openObject(key, opt);
+  };
+  if ($('#sh-seen')) $('#sh-seen').onclick = () => { logObservation(o, 'yes'); if (tab === 'log') renderLog(); if (tab === 'find') fillFind(); openObject(key, opt); };
+}
+
+// ---------------------------------------------------------------- MORE
+function renderMore() {
+  const el = $('#tab-more'), chk = lastCheck(), st = logStats(state.log, sky.objects);
+  const V = { solid: 'Solid', usable: 'Usable', poor: 'Poor', unsuitable: 'Not suitable', incomplete: 'Incomplete' };
+  const item = (id, title, sub) => `<button class="act" data-go="${id}"><b>${title}</b><span class="muted small">${sub}</span></button>`;
+  el.innerHTML = `<h2>More</h2>
+    ${item('align', 'Alignment', state.mode === 'compass' ? 'Compass mode — no alignment needed' : alignedNow() ? `Aligned on ${align.obs.map((o) => esc(o.label)).join(' and ')} · ${syncAgo()}` : 'Not aligned yet — two minutes, and the app shows you which stars')}
+    ${item('log', 'Observing log', st.total ? `${st.total} object${st.total === 1 ? '' : 's'} seen · Messier ${st.messier} of ${st.messierTotal}` : 'Nothing logged yet — your Messier count and milestones live here')}
+    ${item('sky', 'Sky darkness check', state.skyq ? `${esc(state.skyq.label)} · ${shortDate(state.skyq.when)}` : '30 seconds — tunes the visibility ratings to your sky')}
+    ${item('test', 'Phone check and sensor tests', chk ? `This phone: ${V[chk.result.verdict] || esc(chk.result.verdict)} · ${shortDate(chk.when)}` : 'Find out how accurate this phone can be — 4 minutes')}
+    ${item('setup', 'Setup', `${esc(profile().name)} · eyepieces, location, phone mount`)}
+    ${item('start', 'Start screen', 'Tune-up options and how it works')}
+    <h3>Quick settings</h3>
+    <label class="row"><span>Screen brightness</span><input id="m-br" type="range" min="0.25" max="1" step="0.05" value="${state.bright}" ${state.day ? 'disabled' : ''}></label>
+    <label class="row"><span>Day mode <span class="muted small">(bright colours — not for observing)</span></span><input id="m-day" type="checkbox" ${state.day ? 'checked' : ''}></label>
+    <div style="padding:10px 0 4px">Sounds</div>
+    <div class="seg" id="m-snd">${[['off', 'Off'], ['chime', 'Chime'], ['guide', 'Chime + ticks']].map(([k, l]) => `<button data-snd="${k}" class="${state.sound === k ? 'on' : ''}">${l}</button>`).join('')}</div>
+    <p class="muted small">Chime: a tone when the target enters your eyepiece's field. Ticks get faster as you close in, so you can watch the sky instead of the phone. On an iPhone the silent switch may mute both.</p>
+    <p class="muted small">Keep screen awake: ${awakeText()}.</p>`;
+  el.querySelectorAll('[data-go]').forEach((b) => b.onclick = () => {
+    const k = b.dataset.go;
+    if (k === 'sky') openSkyCheck(); else if (k === 'start') { renderLaunch(); $('#gate').classList.remove('hidden'); } else showTab(k);
+  });
+  $('#m-br').oninput = (e) => { state.bright = parseFloat(e.target.value); applyTheme(); save(); };
+  $('#m-day').onchange = (e) => { state.day = e.target.checked; save(); applyTheme(); renderMore(); };
+  el.querySelectorAll('[data-snd]').forEach((b) => b.onclick = () => { state.sound = b.dataset.snd; sound.mode = state.sound; save(); initSound(); cue.test(); renderMore(); });
+}
+
 let lastFrame = 0;
 function loop(ts) {
   if (ts - lastFrame > 66) {
@@ -1571,41 +1904,74 @@ function loop(ts) {
 
 // ---------------------------------------------------------------- LAUNCH: pick an activity, tick the warm-up steps
 const ACTIVITIES = [
-  ['observe', 'Observe', 'Push to targets — the full set-up'],
-  ['explore', 'Explore the sky', 'Roam around, no alignment needed'],
-  ['plan', 'Plan a session', "Choose tonight's targets — no telescope needed"],
+  ['observe', 'Observe', 'Push to targets'],
+  ['explore', 'Explore the sky', 'Roam around — no alignment'],
+  ['plan', 'Plan a session', 'No telescope needed'],
   ['game', 'Play a game', 'Ten targets against the clock'],
 ];
 const STEP_INFO = {
-  check: ['Phone check', '4 min · once per phone · tells you how accurate this phone can be'],
-  sky: ['Sky darkness check', '30 s · count the Little Dipper stars · tunes target suggestions'],
-  align: ['Star alignment', '2 min · needed for accurate pointing (Observe and Game)'],
+  check: ['Phone check', '4 min, once per phone'],
+  sky: ['Sky darkness check', '30 s, count Little Dipper stars'],
+  align: ['Star alignment', '2 min, needed for accurate arrows'],
 };
 let flow = null;   // { steps: [..], i, dest, started, quiet }
 const stepsFor = (dest) => ['check', 'sky', 'align'].filter((k) => state.launch[k] && !(k === 'align' && (dest === 'explore' || dest === 'plan' || alignedNow())) && !(k === 'check' && dest === 'plan'));
+/** "Dark from 6:32 PM · Moon 27% lit, sets 8:58 PM · Saturn and Jupiter are up" */
+function tonightLine() {
+  try {
+    const now = new Date(), sun = sky.sunAlt(now), n = sky.night(now.getHours() < 12 ? new Date(now.getTime() - 12 * 3600000) : now);
+    const dark = n.astro || n.naut, m = sky.moonInfo(now);
+    const when = sun > -18 && dark && now < dark ? `${sun > 0 ? 'Daylight now — dark' : 'Getting dark — fully dark'} from ${hm(dark)}`
+      : sun <= -18 ? `Dark now${n.astroAm ? ', until ' + hm(n.astroAm) : ''}` : sun > 0 ? 'Daylight' : 'Twilight';
+    const moon = `Moon ${Math.round(m.frac * 100)}% lit${m.alt > 0 ? (n.moonSet && n.moonSet > now ? ', sets ' + hm(n.moonSet) : ', up') : (n.moonRise && n.moonRise > now ? ', rises ' + hm(n.moonRise) : ', down')}`;
+    const at = dark && now < dark ? dark : now;
+    const up = ['Venus', 'Jupiter', 'Saturn', 'Mars'].filter((p) => { const o = sky.objects.find((x) => x.key === 'pl:' + p); return o && sky.altAz(o, at).alt > 15; });
+    return [when, moon, up.length ? `${up.join(' and ')} ${up.length > 1 ? 'are' : 'is'} up` : ''].filter(Boolean).join(' · ');
+  } catch (e) { return ''; }
+}
+function planProgress() {
+  const P = state.plan; if (!P || !P.items.length) return null;
+  if (new Date(P.start).getTime() + P.hours * 3600000 < Date.now() - 6 * 3600000) return null;      // that session is long over
+  const T = P.items.filter((x) => !x.sync), done = T.filter((x) => P.done && P.done[x.key]).length;
+  const next = P.items.find((x) => !(P.done && P.done[x.key]));
+  return { total: T.length, done, next: done < T.length ? next : null };
+}
 function renderLaunch() {
-  const L = state.launch, chk = lastCheck(), sq = state.skyq;
+  const L = state.launch, chk = lastCheck(), sq = state.skyq, pp = planProgress();
+  const V = { solid: 'solid', usable: 'usable', poor: 'poor', unsuitable: 'not suitable', incomplete: 'incomplete' };
   const status = {
-    check: chk ? `Done: ${esc(chk.result.verdict)} (${new Date(chk.when).toLocaleDateString()})` : 'Not done yet',
-    sky: sq ? `Last: ${esc(sq.label)} (${new Date(sq.when).toLocaleDateString()})` : 'Not done yet',
-    align: alignedNow() ? 'Already aligned' : profile().cal ? 'Mount tilt saved — 1–2 stars' : '2 stars',
+    check: chk ? `done — ${V[chk.result.verdict] || chk.result.verdict}` : STEP_INFO.check[1],
+    sky: sq ? `last: ${sq.label.toLowerCase()}` : STEP_INFO.sky[1],
+    align: alignedNow() ? 'already aligned' : STEP_INFO.align[1],
   };
-  const chain = (dest) => ['Start', ...stepsFor(dest).map((k) => STEP_INFO[k][0]), ACTIVITIES.find((a) => a[0] === dest)[1]].join(' → ');
+  const chain = (dest) => { const st = stepsFor(dest).map((k) => STEP_INFO[k][0]); return st.length ? 'First: ' + st.join(', ').toLowerCase() : 'Starts straight away'; };
   $('#launch').innerHTML = `<h1>Skyward Push-To</h1>
-    <p class="muted small" style="margin-top:0">Guides a Skyward telescope with your phone's motion sensors. Works offline.</p>
-    <div class="launch-steps"><h3 style="margin:10px 0 2px">Tune-up <span class="muted small">(optional)</span></h3>
-      ${['check', 'sky', 'align'].map((k) => `<label class="row"><span>${STEP_INFO[k][0]}<br><span class="muted small">${STEP_INFO[k][1]}<br>${status[k]}</span></span><input type="checkbox" data-step="${k}" ${L[k] ? 'checked' : ''}></label>`).join('')}
+    <p class="tonight">${esc(tonightLine())}</p>
+    ${pp && pp.next ? `<button id="l-resume" class="primary" style="width:100%;margin:6px 0 2px">Carry on with your plan — ${pp.done} of ${pp.total} done</button>` : ''}
+    <div class="tune"><h3 style="margin:10px 0 2px">Tune-up <span class="muted small">(optional)</span></h3>
+      ${['check', 'sky', 'align'].map((k) => `<label><input type="checkbox" data-step="${k}" ${L[k] ? 'checked' : ''}><span>${STEP_INFO[k][0]}<span class="muted">${esc(status[k])}</span></span></label>`).join('')}
     </div>
-    <h3 style="margin:14px 0 4px">What would you like to do?</h3>
-    ${ACTIVITIES.map(([k, t, sub]) => `<button class="act" data-act="${k}"><b>${t}</b><span class="muted small">${sub}</span><span class="chain">${esc(chain(k))}</span></button>`).join('')}`;
+    <h3 style="margin:12px 0 6px">What would you like to do?</h3>
+    <div class="lgrid">${ACTIVITIES.map(([k, t, sub]) => `<button class="act" data-act="${k}"><b>${t}</b><span class="muted">${sub}</span><span class="chain">${esc(chain(k))}</span></button>`).join('')}</div>
+    <details class="more" ${state.seenIntro ? '' : 'open'}><summary>How it works</summary>
+      <ol class="how"><li><b>Clip the phone into the bridge mount</b> — screen up, top of the phone toward the sky end of the tube.</li>
+      <li><b>Align on two bright stars.</b> The app tells you which ones and where to look.</li>
+      <li><b>Pick a target and follow the arrows.</b> A chime tells you when it should be in the eyepiece.</li>
+      <li><b>Tap Sync whenever you centre something.</b> It keeps the pointing accurate all night.</li></ol>
+      <p class="muted small">Works offline. Add it to your Home Screen for a full-screen app.</p></details>`;
   $('#launch').querySelectorAll('[data-step]').forEach((c) => c.onchange = () => { state.launch[c.dataset.step] = c.checked; save(); renderLaunch(); });
   $('#launch').querySelectorAll('[data-act]').forEach((b) => b.onclick = () => launch(b.dataset.act));
+  if ($('#l-resume')) $('#l-resume').onclick = () => launch('resume');
 }
 function launch(dest) {
-  if (!state.launch.check && !lastCheck()) { state.skipCheck = true; save(); }   // chose not to test: don't nag about it later
-  flow = { steps: stepsFor(dest), i: -1, dest, started: false, quiet: dest === 'plan' };
+  initSound();                                    // audio can only start from a tap
+  state.seenIntro = true;
+  if (!state.launch.check && !lastCheck()) state.skipCheck = true;   // chose not to test: don't nag about it later
+  save();
+  flow = { steps: stepsFor(dest === 'resume' ? 'observe' : dest), i: -1, dest, started: false, quiet: dest === 'plan' };
   $('#gate-msg').innerHTML = '';
-  if (sensors && sensors.fresh()) { $('#gate').classList.add('hidden'); flowNext(); return; }
+  // Planning needs no sensors, so it doesn't ask for motion access; "Start observing" asks later, when it's needed.
+  if (dest === 'plan' || (sensors && sensors.fresh())) { $('#gate').classList.add('hidden'); if (sensors) keepAwake(); flowNext(); return; }
   startSensors(false);   // the tap is the user gesture iOS needs for motion permission
 }
 function flowGo() { if (flow) { flow.started = false; flowNext(); } }
@@ -1624,13 +1990,16 @@ function goActivity(d) {
   if (d === 'explore') { state.target = null; save(); showTab('push'); }
   else if (d === 'plan') showTab('plan');
   else if (d === 'game') showTab('game');
+  else if (d === 'resume') { const pp = planProgress(); if (pp && pp.next) { state.target = pp.next.key; save(); showTab('push'); } else showTab('plan'); }
   else showTab('find');
 }
+/** The current tune-up step finished on its own (aligned, check done): move on without making the user find the bar. */
+function flowStepDone(k) { if (flow && flow.steps[flow.i] === k) { if (k === 'check') { state.launch.check = false; save(); } flowNext(); return true; } return false; }
 function renderFlowBar() {
   const bar = $('#flowbar');
   if (!flow || flow.i < 0 || flow.i >= flow.steps.length) { bar.classList.add('hidden'); return; }
-  const k = flow.steps[flow.i], nextName = flow.i + 1 < flow.steps.length ? STEP_INFO[flow.steps[flow.i + 1]][0] : ACTIVITIES.find((a) => a[0] === flow.dest)[1];
-  bar.innerHTML = `<span>Step ${flow.i + 1} of ${flow.steps.length}: <b>${STEP_INFO[k][0]}</b></span><button id="fb-next" class="mini primary">Done → ${esc(nextName)}</button><button id="fb-stop" class="mini">✕</button>`;
+  const k = flow.steps[flow.i], nextName = flow.i + 1 < flow.steps.length ? STEP_INFO[flow.steps[flow.i + 1]][0] : flow.dest === 'resume' ? 'Your plan' : ACTIVITIES.find((a) => a[0] === flow.dest)[1];
+  bar.innerHTML = `<span>Step ${flow.i + 1} of ${flow.steps.length}: <b>${STEP_INFO[k][0]}</b></span><button id="fb-next" class="mini">Skip → ${esc(nextName)}</button><button id="fb-stop" class="mini" aria-label="Leave the tune-up">✕</button>`;
   bar.classList.remove('hidden');
   $('#fb-next').onclick = () => { if (k === 'check') { state.launch.check = false; save(); } flowNext(); };
   $('#fb-stop').onclick = () => { flow = null; renderFlowBar(); };
@@ -1678,7 +2047,7 @@ function openSkyCheck() {
     state.skyq = { nelm: m, label, when: Date.now(), lat: state.site.lat, lon: state.site.lon, twilight: sun > -12 }; planRows = null; save(); if (tab === 'plan') renderPlan();
     card.innerHTML = `<h3 style="margin-top:0">${label}</h3><p>Faintest stars you can see: about magnitude ${m.toFixed(1)}.</p><p class="small">${means}</p>
       <button id="sq-done" class="primary" style="width:100%">${flow ? 'Continue' : 'Done'}</button>`;
-    $('#sq-done').onclick = () => (flow ? flowNext() : box.classList.add('hidden'));
+    $('#sq-done').onclick = () => { if (flow) return flowNext(); box.classList.add('hidden'); rateCache.clear(); if (tab === 'more') renderMore(); if (tab === 'find') renderFind(); };
   });
   $('#sq-skip').onclick = () => (flow ? flowNext() : box.classList.add('hidden'));
 }
@@ -1686,10 +2055,15 @@ function openSkyCheck() {
 async function startSensors(sim) {
   const msg = $('#gate-msg');
   try {
-    sensors = sim ? new SimSensors() : new Sensors();
-    await sensors.start(); sensors.on(onSensor);
+    // Reuse sensors that are already listening: starting a second set would feed every reading in twice.
+    if (sim || !(sensors && sensors.constructor === Sensors && sensors.started)) {
+      sensors = sim ? new SimSensors() : new Sensors();
+      await sensors.start(); sensors.on(onSensor);
+    }
     if (sim) {
       window.sim = sensors; // arrow keys move the simulated scope: ←/→ azimuth, ↑/↓ altitude (Shift = fine)
+      // Test hook (simulator only): point the simulated scope at an object or at alt/az.
+      window.simGoto = (k, dAlt = 0, dAz = 0) => { const o = typeof k === 'string' ? sky.objects.find((x) => x.key === k || x.label === k) : null; const t = o ? sky.altAz(o) : k; if (!t) return null; sensors.beta = t.alt + dAlt; sensors.alpha = wrap360(sensors.trueOffset - (t.az + dAz)); return { alt: t.alt, az: t.az }; };
       window.addEventListener('keydown', (e) => {
         const st = e.shiftKey ? 0.1 : 1;
         if (e.key === 'ArrowLeft') sensors.alpha += st; else if (e.key === 'ArrowRight') sensors.alpha -= st;
@@ -1697,6 +2071,7 @@ async function startSensors(sim) {
       });
     }
     $('#gate').classList.add('hidden');
+    initSound(); keepAwake();
     if (!sim && !siteKnown()) getGPS();
     if (tab === 'find') renderFind();
     if (flow && !flow.started) { flow.started = true; const t0 = Date.now(); const w = () => (sensors.fresh() || Date.now() - t0 > 2500 ? flowGo() : setTimeout(w, 100)); w(); }
@@ -1733,6 +2108,9 @@ async function init() {
     for (const k of ['sw150c', 'sw200v']) { const p = state.profiles[k]; if (p && p.eyepieces.length === 1 && /^23 mm/.test(p.eyepieces[0].name)) p.eyepieces = structuredClone(DEFAULT_PROFILES[k].eyepieces); }
     state.v = 2; state.ep = 0;
   }
+  if (state.v < 3) { state.sort = 'best'; state.v = 3; }   // v3: Find opens on what looks best right now
+  if (!Array.isArray(state.log)) state.log = [];
+  sound.mode = state.sound || 'chime';
   if (state.rot180 == null) state.rot180 = true;
   for (const k of ['sw150c', 'sw200v']) if (state.profiles[k] && state.profiles[k].focuser == null) state.profiles[k].focuser = 90;   // Skyward: focuser always on the right
   for (const [k, v] of Object.entries(DEFAULT_PROFILES)) if (!state.profiles[k]) state.profiles[k] = structuredClone(v);
@@ -1741,14 +2119,18 @@ async function init() {
   applyModelSettings();
   document.querySelectorAll('nav#tabs button').forEach((b) => b.onclick = () => showTab(b.dataset.tab));
   $('#hb-day').onclick = (e) => { e.stopPropagation(); toggleDay(); };
+  $('#hb-fs').innerHTML = ICON.full;
   $('#hb-fs').onclick = (e) => { e.stopPropagation(); toggleFullscreen(); };
+  $('#st-scope').onclick = () => showTab('setup');
+  $('#st-pill').onclick = () => { const st = pointState(); if (st === 'off' || st === 'nodata') { renderLaunch(); $('#gate').classList.remove('hidden'); } else showTab('align'); };
+  // iOS ignores user-scalable=no: stop the page itself from pinch-zooming (the charts handle their own pinch).
+  document.addEventListener('gesturestart', (e) => e.preventDefault());
   if (IS_STANDALONE()) $('#hb-fs').classList.add('hidden');
   $('#fs-close').onclick = () => $('#fs-help').classList.add('hidden');
   applyTheme();
   renderLaunch();
   $('#gate-sim').onclick = () => startSensors(true);
-  $('#gate-skip').onclick = () => { $('#gate').classList.add('hidden'); if (flow && !flow.started) flowNext(); toast('Browsing without sensors — the sky view and pointing need them. Tap the status bar to try again.', 5000); };
-  $('#status').onclick = () => { if (!sensors || !sensors.fresh()) { renderLaunch(); $('#gate').classList.remove('hidden'); } };
+  $('#gate-skip').onclick = () => { $('#gate').classList.add('hidden'); if (flow && !flow.started) flowNext(); toast('Browsing without sensors — the sky view and pointing need them. Tap the status at the top to try again.', 5000); };
   if (new URLSearchParams(location.search).has('sim')) $('#gate-sim').classList.remove('hidden');
   showTab('find');
   const flush = () => flushQueue(state).then((n) => { if (n) { save(); toast(`Sent ${n} queued score${n > 1 ? 's' : ''} to the leaderboard`); } }).catch(() => {});

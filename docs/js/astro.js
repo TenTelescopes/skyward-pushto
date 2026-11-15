@@ -1,10 +1,11 @@
 // Sky positions, computed entirely on-device with Astronomy Engine (MIT, Don Cross).
 import * as A from '../vendor/astronomy.mjs';
 import { DSO, DOUBLES, STARS, FIELD, LINES, ASTERISMS } from '../data/catalog.js';
+import { NAMES, STAR_NAMES, BLURBS, STAR_PAIRS } from '../data/blurbs.js';
 
 export const PLANETS = ['Moon', 'Mercury', 'Venus', 'Mars', 'Jupiter', 'Saturn', 'Uranus', 'Neptune'];
 
-const TYPE_LABEL = { OC: 'Open cluster', GC: 'Globular', PN: 'Planetary', GX: 'Galaxy', NB: 'Nebula', DN: 'Dark nebula', CN: 'Cluster+neb', AS: 'Asterism', DS: 'Double', ST: 'Star', PL: 'Planet', OT: 'Other' };
+const TYPE_LABEL = { OC: 'Open cluster', GC: 'Globular cluster', PN: 'Planetary nebula', GX: 'Galaxy', NB: 'Nebula', DN: 'Dark nebula', CN: 'Cluster + nebula', AS: 'Asterism', DS: 'Double star', ST: 'Star', PL: 'Planet', OT: 'Other' };
 export const typeLabel = (t) => TYPE_LABEL[t] || t;
 
 function j2000Vec(raDeg, decDeg) {
@@ -17,11 +18,19 @@ export function buildObjects() {
   for (const o of DSO) {
     const primary = o.cats.find((c) => /^M\d/.test(c)) || o.cats.find((c) => /^C\d/.test(c)) || o.id;
     const label = primary.startsWith('C') && /^C\d/.test(primary) ? `Caldwell ${primary.slice(1)}` : primary;
-    out.push({ ...o, key: 'dso:' + o.id, label, sub: [label !== o.id ? o.id : null, o.name].filter(Boolean).join(' · '), v: j2000Vec(o.ra, o.dec) });
+    const name = NAMES[label] || NAMES[o.id] || o.name;
+    out.push({ ...o, name, key: 'dso:' + o.id, label, sub: [label !== o.id ? o.id : null, name].filter(Boolean).join(' · '), v: j2000Vec(o.ra, o.dec) });
   }
   for (const o of DOUBLES) out.push({ ...o, key: 'ds:' + o.id, label: o.id, sub: [o.wds, o.sep ? `${o.sep}″` : null].filter(Boolean).join(' · '), v: j2000Vec(o.ra, o.dec) });
   for (const a of ASTERISMS) out.push({ ...a, key: 'as:' + a.id, label: a.id, sub: 'Asterism', v: j2000Vec(a.ra, a.dec) });
-  for (const s of STARS) out.push({ ...s, key: 'st:' + s.id, label: s.id, sub: s.bayer, cats: ['Star'], v: j2000Vec(s.ra, s.dec) });
+  for (const s of STARS) {
+    const label = STAR_NAMES[s.id] || s.id;
+    // A named star that is also a catalogued double (Mizar, Castor…) borrows the double's separation data.
+    const d = DOUBLES.find((x) => x.pairs && Math.abs(x.ra - s.ra) < 0.1 && Math.abs(x.dec - s.dec) < 0.1);
+    // Stars with a write-up are worth suggesting as targets in their own right; the rest are for alignment only.
+    const own = STAR_PAIRS[label];
+    out.push({ ...s, key: 'st:' + s.id, label, sub: s.bayer, cats: ['Star'], v: j2000Vec(s.ra, s.dec), show: !!BLURBS[label], ...(d ? { pairs: d.pairs, sep: d.sep } : own ? { pairs: [own], sep: own.sep } : {}) });
+  }
   for (const p of PLANETS) out.push({ id: p, key: 'pl:' + p, label: p, sub: p === 'Moon' ? 'Moon' : 'Planet', t: 'PL', type: 'Planet', cats: ['Planets'], planet: true });
   return out;
 }

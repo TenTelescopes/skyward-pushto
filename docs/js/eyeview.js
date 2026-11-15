@@ -96,7 +96,7 @@ export function drawEyepiece(cv, sky, o, tgt, ep, scope, opts = {}) {
     c.textBaseline = 'alphabetic';
   };
   if (ax) { mark(ax.n.x, ax.n.y, 'N'); mark(ax.e.x, ax.e.y, 'E'); }
-  mark(0, 1, '⬆Z', true);
+  mark(0, 1, '↑Z', true);
   return { mag, tfov, note, exit, rel };
 }
 

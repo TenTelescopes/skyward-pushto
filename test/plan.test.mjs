@@ -46,12 +46,42 @@ ok('daylight session only offers the daylight planets', () => {
   assert.ok(d.length && d.every((r) => r.o.planet), d.map((r) => r.o.label).join());
 });
 ok('next dark night is within a month', () => { const d = nextDarkNight(sky, new Date(2026, 10, 13)); assert.ok(d && d - new Date(2026, 10, 13) <= 31 * 864e5); });
+import { autoPlan, interest, kindOf } from '../docs/js/plan.js';
 {
-  const pick = rows.filter((r) => r.level === 0).slice(0, 12);
-  const { steps, notUp } = routePlan(sky, pick, { start: n.astro, hours: 3 });
-  const tg = steps.filter((s) => s.kind === 'target'), sy = steps.filter((s) => s.kind === 'sync');
-  ok('route visits every target once', () => { assert.equal(tg.length + notUp.length, pick.length); assert.equal(new Set(tg.map((s) => s.o.key)).size, tg.length); });
-  ok('route adds sync stars, but not before every target', () => { assert.ok(sy.length >= 1 && sy.length < tg.length); });
-  console.log('    route:', steps.map((s) => (s.kind === 'sync' ? '★' : '') + s.o.label).join(' → '));
+  const pick = autoPlan(rows, { hours: 2 });
+  ok('auto plan: about four targets an hour, varied, mostly easy', () => {
+    assert.ok(pick.length >= 6 && pick.length <= 9, pick.length);
+    const kinds = new Set(pick.map((r) => kindOf(r.o)));
+    assert.ok(kinds.size >= 4, [...kinds].join());
+    assert.ok(pick.filter((r) => r.level === 2).length <= 1);
+    assert.ok(pick.every((r) => r.to - r.from >= 30 * 60000), 'nothing that is only briefly up');
+    assert.equal(new Set(pick.map((r) => r.key)).size, pick.length);
+  });
+  ok('auto plan includes a planet when one is up, and a double star', () => {
+    assert.ok(pick.some((r) => r.o.planet), pick.map((r) => r.o.label).join());
+    assert.ok(pick.some((r) => kindOf(r.o) === 'DS'), pick.map((r) => r.o.label).join());
+  });
+  ok('famous things outrank obscure ones', () => {
+    assert.ok(interest(find('M13')) > interest(find('NGC 7686')));
+    assert.ok(interest(find('Saturn')) > interest(find('M13')));
+    assert.ok(interest(find('Albireo')) > interest(sky.objects.find((o) => o.key.startsWith('ds:') && /^HD/.test(o.label))));
+  });
+  const { steps, notUp } = routePlan(sky, pick, { start: n.astro, hours: 2, minAlt: 20 });
+  const tg = steps.filter((x) => x.kind === 'target'), sy = steps.filter((x) => x.kind === 'sync');
+  ok('route visits every target once', () => { assert.equal(tg.length + notUp.length, pick.length); assert.equal(new Set(tg.map((x) => x.o.key)).size, tg.length); });
+  ok('route adds only a few sync stars', () => assert.ok(sy.length <= Math.ceil(tg.length / 2), `${sy.length} sync stars for ${tg.length} targets`));
+  ok('a sync star is never also a later target', () => { for (const x of sy) assert.ok(!tg.some((t) => t.o.key === x.o.key)); });
+  ok('things about to set come first', () => {
+    const urgent = pick.filter((r) => r.to - n.astro < 45 * 60000).map((r) => r.key);
+    const firstK = tg.slice(0, Math.max(1, urgent.length)).map((x) => x.o.key);
+    for (const k of urgent.slice(0, 1)) assert.ok(firstK.includes(k), k);
+  });
+  console.log('    route:', steps.map((x) => (x.kind === 'sync' ? '★' : '') + x.o.label).join(' → '));
 }
+ok('showpiece stars are targets; alignment stars are not', () => {
+  assert.ok(rate(find('Albireo'), { alt: 50, nelm: 5 }, S150));
+  assert.equal(rate(find('Markab'), { alt: 50, nelm: 5 }, S150), null);
+  assert.ok(find('Albireo').pairs && find('Mizar').pairs, 'famous doubles carry pair data');
+});
+ok('corrected star names keep their ids', () => { const m = sky.objects.find((o) => o.key === 'st:Merck'); assert.equal(m.label, 'Merak'); });
 console.log('plan tests passed');

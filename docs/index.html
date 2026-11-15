@@ -4,41 +4,43 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
   <meta name="theme-color" content="#000000">
+  <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="Skyward">
   <title>Skyward Push-To</title>
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
   <link rel="stylesheet" href="css/app.css">
 </head>
 <body>
   <header id="status">
-    <div id="st-scope" class="st"></div>
-    <div id="st-point" class="st mono"></div>
-    <div id="st-align" class="st"></div>
-    <button id="hb-day" class="hbtn" aria-label="Day or night mode">☀</button>
-    <button id="hb-fs" class="hbtn" aria-label="Full screen">⛶</button>
+    <button id="st-scope" class="stbtn" aria-label="Telescope settings"></button>
+    <button id="st-pill" class="pill" aria-live="polite"></button>
+    <button id="hb-day" class="hbtn" aria-label="Day or night mode"></button>
+    <button id="hb-fs" class="hbtn" aria-label="Full screen"></button>
   </header>
   <div id="flowbar" class="hidden"></div>
 
   <main>
-    <section id="tab-plan" class="tab"></section>
     <section id="tab-find" class="tab"></section>
+    <section id="tab-plan" class="tab"></section>
     <section id="tab-push" class="tab"></section>
-    <section id="tab-align" class="tab"></section>
     <section id="tab-game" class="tab"></section>
+    <section id="tab-more" class="tab"></section>
+    <section id="tab-align" class="tab"></section>
+    <section id="tab-log" class="tab"></section>
     <section id="tab-test" class="tab"></section>
     <section id="tab-setup" class="tab"></section>
   </main>
 
   <nav id="tabs">
-    <button data-tab="plan">Plan</button>
-    <button data-tab="find">Find</button>
-    <button data-tab="push">Push</button>
-    <button data-tab="align">Align</button>
-    <button data-tab="game">Game</button>
-    <button data-tab="test">Test</button>
-    <button data-tab="setup">Setup</button>
+    <button data-tab="find"><svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 21 21"/></svg><span>Find</span></button>
+    <button data-tab="plan"><svg viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><path d="m3.5 6 1.2 1.2L6.8 5M3.5 12l1.2 1.2L6.8 11M3.5 18l1.2 1.2L6.8 17"/></svg><span>Plan</span></button>
+    <button data-tab="push"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/><path d="M12 2v5M12 17v5M2 12h5M17 12h5"/></svg><span>Push</span></button>
+    <button data-tab="game"><svg viewBox="0 0 24 24"><circle cx="12" cy="14" r="7"/><path d="M12 14v-4M10 3h4M12 3v4M18.5 7.5 20 6"/></svg><span>Game</span></button>
+    <button data-tab="more"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/></svg><span>More</span></button>
   </nav>
 
   <div id="gate" class="overlay">
@@ -46,17 +48,18 @@
       <div id="launch"><h1>Skyward Push-To</h1><p class="muted">Loading…</p></div>
       <p id="gate-msg" class="muted"></p>
       <button id="gate-skip" class="hidden" style="width:100%;margin-top:8px">Continue without sensors</button>
-      <button id="gate-sim" class="hidden">Simulate sensors (desktop testing)</button>
-      <p class="muted small" style="text-align:center;margin:12px 0 0">Build 24 · Nov 13</p>
+      <button id="gate-sim" class="hidden" style="width:100%;margin-top:8px">Simulate sensors (desktop testing)</button>
+      <p class="muted small" style="text-align:center;margin:10px 0 0">Build 26 · Nov 14</p>
     </div>
   </div>
   <div id="skycheck" class="overlay hidden"><div class="card" id="skycheck-card"></div></div>
+  <div id="sheet" class="overlay sheet hidden"><div class="card" id="sheet-card"></div></div>
   <div id="fs-help" class="overlay hidden"><div class="card">
     <h3 style="margin-top:0">Full screen</h3>
     <div class="fs-body"></div>
     <button id="fs-close" class="primary" style="width:100%">OK</button>
   </div></div>
-  <div id="toast" class="hidden"></div>
+  <div id="toast" class="hidden" role="status"></div>
   <div id="scanner" class="overlay hidden"><div class="card" style="text-align:center">
     <h3 style="margin-top:0">Scan a Skyward code</h3>
     <video id="scan-video" playsinline muted style="width:100%;border-radius:10px;background:#000"></video>
