@@ -67,6 +67,26 @@ export function doubleNature(o) {
   return DOUBLE_NATURE[o.label] || DOUBLE_NATURE[o.id] || 'unknown';
 }
 
+/**
+ * Spectral class of each named star (the letter only), for drawing its colour. Keys are catalogue ids.
+ * From general knowledge; the faint field stars have no colour data and stay pale.
+ */
+export const STAR_CLASS = {
+  Acamar: 'A', Achernar: 'B', Acrux: 'B', Adara: 'B', Albireo: 'K', Alcor: 'A', Alcyone: 'B', Aldebaran: 'K', Alderamin: 'A', Algenib: 'B',
+  'Algieba (Algeiba)': 'K', Algol: 'B', Alhena: 'A', Alioth: 'A', Alkaid: 'B', 'Almaak (Almach)': 'K', Alnair: 'B', 'Alnath (Elnath)': 'B', Alnilam: 'B',
+  Alnitak: 'O', Alphard: 'K', Alphekka: 'A', Alpheratz: 'B', Aishain: 'G', Altair: 'A', Ankaa: 'K', Antares: 'M', Arcturus: 'K', Arneb: 'F',
+  Bellatrix: 'B', Betelgeuse: 'M', Canopus: 'F', Capella: 'G', Castor: 'A', CorCaroli: 'A', Deneb: 'A', Denebola: 'A', Diphda: 'K', Dubhe: 'K',
+  Enif: 'K', Etamin: 'K', Fomalhaut: 'A', Hadar: 'B', Hamal: 'K', Izar: 'K', 'Kaus Australis': 'B', 'Kocab (Kochab)': 'K', Markab: 'A', Megrez: 'A',
+  Menkar: 'M', Merck: 'A', Mintaka: 'O', Mira: 'M', Mirach: 'M', Mirphak: 'F', Mizar: 'A', Nihal: 'G', Nunki: 'B', Phad: 'A', Polaris: 'F',
+  Pollux: 'K', Procyon: 'F', Rasalgethi: 'M', Rasalhague: 'A', Regulus: 'B', Rigel: 'B', Sadalmelik: 'G', Saiph: 'B', Scheet: 'M', Shaula: 'B',
+  'Shedir (Shedor)': 'K', Sirius: 'A', Spica: 'B', Tarazed: 'K', Thuban: 'A', Unukalhai: 'K', Vega: 'A', Vindemiatrix: 'G',
+};
+/** Colours of the two stars of some famous doubles (brighter first), by the label the app shows. */
+export const PAIR_CLASS = {
+  Albireo: 'KB', Almach: 'KB', Almaak: 'KB', Izar: 'KA', Rasalgethi: 'MG', 'Cor Caroli': 'AF', Mizar: 'AA', Castor: 'AA', Algieba: 'KG',
+  '61 Cyg': 'KK', Achird: 'GM', Mesarthim: 'AA', Polaris: 'FF',
+};
+
 export const BLURBS = {
   // ---- Solar system
   Moon: 'Craters, mountains and dark lava plains in sharp relief. The best views are along the line between light and shadow, not at full Moon.',

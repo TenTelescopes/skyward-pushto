@@ -14,6 +14,15 @@ export function tint(r, g = 0, b = 0, a = 1, k = 1) {
   }
   return `rgba(${R | 0},${G | 0},${B | 0},${a})`;
 }
+// Star colours by spectral class, somewhat exaggerated so the difference shows on a phone: blue for the hottest stars,
+// through white and yellow, to orange-red for the coolest. Used toward the Day end only; at Night everything is red.
+const STAR_RGB = { O: [130, 170, 255], B: [150, 185, 255], A: [215, 228, 255], F: [255, 246, 214], G: [255, 222, 120], K: [255, 172, 88], M: [255, 112, 80] };
+/** Colour for a star of spectral class cls ('B', 'K'…), blended toward the Night red as the fader moves. Null if unknown. */
+export function starTint(cls, a = 1, k = 1) {
+  const d = STAR_RGB[cls]; if (!d) return null;
+  const t = theme.shade, n = [255 * k, 70 * k, 40 * k];
+  return `rgba(${mix(d[0], n[0], t) | 0},${mix(d[1], n[1], t) | 0},${mix(d[2], n[2], t) | 0},${a})`;
+}
 // token: [day r,g,b,a], [night r,g,b,a] — night values are scaled by the brightness setting k (not alpha).
 const TOKENS = {
   '--bg': [[5, 9, 30, 1], [0, 0, 0, 1], 0], '--bgm': [[18, 24, 66, 1], [0, 0, 0, 1], 0], '--bg2': [[58, 44, 96, 1], [0, 0, 0, 1], 0],

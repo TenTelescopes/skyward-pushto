@@ -6,11 +6,11 @@ import { fitConsistency, pairConsistency, outliers, verdict as domeVerdict, draw
 import { constellationAt, conName, altAzToJ2000 } from './locate.js';
 import { whereWords, recogniseWords, pickStars, checkAltitude, checkPair, chooseWaypoint } from './assist.js';
 import { drawEyepiece, newtonianMatrix } from './eyeview.js';
-import { theme, tint, applyShade } from './theme.js';
+import { theme, tint, applyShade, starTint } from './theme.js';
 import { LEVELS, planTargets, routePlan, nextDarkNight, interest, pickScore, varied, autoPlan, kindOf } from './plan.js';
 import { seenKeys, lastEntry, logStats, MILESTONES, newlyAchieved, logCSV } from './log.js';
 import { sound, initSound, cue, tickInterval } from './sound.js';
-import { blurbFor, doubleNature, NATURE_LABEL, NATURE_NOTE } from '../data/blurbs.js';
+import { blurbFor, doubleNature, NATURE_LABEL, NATURE_NOTE, STAR_CLASS } from '../data/blurbs.js';
 import { rate, describe, DOTS, LEVEL_NAMES, DEFAULT_NELM } from './vis.js';
 import { DAYLIGHT, STYLES, PENALTY, pickTargets, routeOrder, pathLength, tokenFor, buildTokenIndex, encodeChallenge, decodeChallenge, challengeId, encodeResult, decodeResult, points, rank, fmtTime, dwell } from './game.js';
 import { submitScore, fetchBoard, flushQueue } from './wixscores.js';
@@ -951,6 +951,10 @@ function drawReticle(cur, tgt, o, opt = {}) {
     if (n === o || n.alt == null || n.alt < -2 || Math.abs(n.alt - centre.alt) > view * 1.2) continue;
     const q = proj(n); if (!q || q.r > view) continue;
     const star = n.key.startsWith('st:'), aster = n.t === 'AS';
+    if (star && n.mag != null && n.mag <= magLim) {                    // named stars in their own colour (toward Day; red at Night)
+      const sc = starTint(STAR_CLASS[n.id], 1, k);
+      if (sc) { c.fillStyle = sc; c.beginPath(); c.arc(q.x, q.y, Math.max(1.6, (magLim + 1.2 - n.mag) * 2.1) + 0.6, 0, 7); c.fill(); }
+    }
     if (aster) {
       const rr = n.maj ? Math.max(8, n.maj / 120 * s) : 10;
       if (rr > Rpx * 1.5 || rr < 6 || view > 20) continue;

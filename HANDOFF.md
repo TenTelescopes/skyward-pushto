@@ -1,6 +1,6 @@
 # Handoff notes for the next working session
 
-Read this first, then `README.md`. Written 2026-11-16 at Build 40.
+Read this first, then `README.md`. Written 2026-11-16 at Build 42.
 
 ## How the project is worked on
 
@@ -17,7 +17,7 @@ Read this first, then `README.md`. Written 2026-11-16 at Build 40.
 
 ## Testing
 
-- Unit tests: `npm test` (9 files in `test/`). All pass at Build 40.
+- Unit tests: `npm test` (9 files in `test/`). All pass at Build 42.
 - Browser walkthroughs: `tools/walk/` (Playwright, iPhone-sized). Serve `docs/` first: `python3 -m http.server 8765`
   from `docs/`, then `node tools/walk/<script>.js`. They load `http://localhost:8765/?sim`, which shows a
   "Simulate sensors" button on the start screen. In the page, `window.sim` is the simulated phone (`bend`, `noise`,
