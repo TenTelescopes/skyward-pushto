@@ -12,6 +12,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon-192.png">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="preload" as="image" href="icons/skyward.webp">
   <link rel="stylesheet" href="css/app.css">
 </head>
 <body>
@@ -44,32 +45,12 @@
   </nav>
 
   <div id="splash" aria-hidden="true">
-    <svg viewBox="0 0 200 172" class="spl-art">
-      <defs><radialGradient id="mg" cx=".38" cy=".34" r=".8"><stop offset="0" stop-color="#eef1ff"/><stop offset=".7" stop-color="#b9c1e6"/><stop offset="1" stop-color="#8f99c8"/></radialGradient></defs>
-      <g class="spl-stars" fill="#fff"><circle cx="14" cy="34" r=".9"/><circle cx="36" cy="12" r=".7"/><circle cx="186" cy="20" r="1"/><circle cx="192" cy="96" r=".7"/><circle cx="8" cy="112" r=".7"/><circle cx="30" cy="76" r=".6"/><circle cx="58" cy="30" r=".6"/><circle cx="170" cy="-4" r=".8"/><circle cx="-6" cy="60" r=".8"/><circle cx="204" cy="56" r=".6"/><circle cx="46" cy="128" r=".5"/><circle cx="178" cy="134" r=".6"/><circle cx="96" cy="-8" r=".7"/></g>
-      <circle cx="112" cy="74" r="56" fill="url(#mg)"/>
-      <g fill="#7f8abd" opacity=".35"><circle cx="92" cy="50" r="9"/><circle cx="134" cy="62" r="6"/><circle cx="120" cy="98" r="11"/><circle cx="146" cy="92" r="4"/><circle cx="84" cy="84" r="5"/></g>
-      <g stroke="#090d28" stroke-width="3.6" stroke-linecap="round"><path d="M100 130 80 172M100 130v42M100 130l20 42"/></g>
-      <path d="M94 126h12l2 8H92z" fill="#090d28"/>
-      <g class="spl-tube">
-        <rect x="82" y="83" width="82" height="18" fill="#090d28" stroke="#aab6f0" stroke-opacity=".55" stroke-width=".7"/>
-        <path d="M88 86h70M88 98h70" stroke="#aab6f0" stroke-opacity=".3" stroke-width=".6"/>
-        <rect x="80" y="81" width="5" height="22" rx="1" fill="#1c2d8f" stroke="#aab6f0" stroke-opacity=".55" stroke-width=".7"/>
-        <rect x="158" y="81" width="6" height="22" rx="1" fill="#090d28" stroke="#aab6f0" stroke-opacity=".55" stroke-width=".7"/><path d="M164.600 82v20" stroke="#ff5fb0" stroke-width="1.4"/>
-        <path d="M141 83v-5h7v5M143 78v-4h3v4" fill="#090d28" stroke="#aab6f0" stroke-opacity=".55" stroke-width=".7"/>
-        <path d="M120 83v-4h14" fill="none" stroke="#090d28" stroke-width="2.4"/>
-      </g>
-      <path d="M79 126V104q0-13 11-19h20q11 6 11 19v22z" fill="#16226f" stroke="#aab6f0" stroke-opacity=".55" stroke-width=".7"/>
-      <g fill="#090d28" opacity=".7"><path d="M84 121v-9q0-3 2.5-3t2.5 3v9zM93 121v-5q0-2.500 2.500-2.500t2.500 2.500v5zM102 121v-5q0-2.500 2.500-2.500t2.500 2.500v5zM111 121v-9q0-3 2.500-3t2.500 3v9z"/></g>
-      <rect x="75" y="124" width="50" height="5" rx="1" fill="#090d28" stroke="#aab6f0" stroke-opacity=".55" stroke-width=".7"/><path d="M76 129.400h48" stroke="#ff5fb0" stroke-width="1.200"/>
-      <g class="spl-tube">
-        <circle cx="100" cy="92" r="14.500" fill="#090d28" stroke="#3350d6" stroke-width="2.400"/>
-        <circle cx="100" cy="92" r="11" fill="none" stroke="#aab6f0" stroke-opacity=".3" stroke-width=".5"/>
-        <polygon points="100.0,83.5 102.1,89.1 108.1,89.4 103.4,93.1 105.0,98.9 100.0,95.6 95.0,98.9 96.6,93.1 91.9,89.4 97.9,89.1" fill="#ff5fb0"/>
-      </g>
-    </svg>
+    <div class="spl-art">
+      <svg viewBox="0 0 220 204" class="spl-sky"><g class="spl-stars" fill="#fff"><circle cx="14" cy="34" r=".9"/><circle cx="36" cy="12" r=".7"/><circle cx="206" cy="20" r="1"/><circle cx="212" cy="110" r=".7"/><circle cx="8" cy="112" r=".7"/><circle cx="26" cy="76" r=".6"/><circle cx="58" cy="26" r=".6"/><circle cx="190" cy="-4" r=".8"/><circle cx="-6" cy="60" r=".8"/><circle cx="224" cy="56" r=".6"/><circle cx="40" cy="140" r=".5"/><circle cx="196" cy="150" r=".6"/><circle cx="110" cy="-8" r=".7"/></g></svg>
+      <img class="spl-scope" src="icons/skyward.webp" width="720" height="772" alt="">
+    </div>
     <div class="spl-name">Skyward <span>Push-To</span></div>
-    <div class="spl-tag">Point. Push. Wow.</div>
+    <div class="spl-tag">Made with 100% recycled star materials</div>
   </div>
   <div id="gate" class="overlay">
     <div class="card">
@@ -77,10 +58,11 @@
       <p id="gate-msg" class="muted"></p>
       <button id="gate-skip" class="hidden" style="width:100%;margin-top:8px">Continue without sensors</button>
       <button id="gate-sim" class="hidden" style="width:100%;margin-top:8px">Simulate sensors (desktop testing)</button>
-      <p class="muted small" style="text-align:center;margin:10px 0 0">Build 52 · Nov 16</p>
+      <p class="muted small" style="text-align:center;margin:10px 0 0">Build 55 · Nov 16</p>
     </div>
   </div>
   <div id="skycheck" class="overlay hidden"><div class="card" id="skycheck-card"></div></div>
+  <div id="dockq" class="overlay hidden"><div class="card" id="dockq-card"></div></div>
   <div id="sheet" class="overlay sheet hidden"><div class="card" id="sheet-card"></div></div>
   <div id="fs-help" class="overlay hidden"><div class="card">
     <h3 style="margin-top:0">Full screen</h3>

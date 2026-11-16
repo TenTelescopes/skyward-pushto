@@ -1486,7 +1486,7 @@ function renderTest() {
   const el = $('#tab-test');
   if (test) return renderTestRun();
   el.innerHTML = `${BACK}<h2>Phone check-up and sensor tests</h2>
-    <p class="muted small">Run these on the scope with the phone in its bridge mount unless the test says otherwise. Results are saved below and can be exported.</p>
+    <p class="muted small">Run these on the scope with the phone in its dock unless the test says otherwise. Results are saved below and can be exported.</p>
     ${Object.entries(TESTS).map(([k, t]) => `<div class="card"><h3 style="margin-top:0">${t.name}</h3><p class="muted small">${t.desc}</p><button data-run="${k}" class="primary">Run</button></div>`).join('')}
     <h2>History</h2>
     ${state.history.length ? `<ul class="list">${state.history.slice().reverse().map((h, i) => `<li data-h="${state.history.length - 1 - i}"><div class="main"><div class="t1">${esc(TESTS[h.test]?.name || h.test)}</div><div class="t2">${new Date(h.when).toLocaleString()} · ${esc(h.scope)}${h.phone ? ' · ' + esc(h.phone) : ''}</div></div><div class="r small">${esc(h.summary || '')}</div></li>`).join('')}</ul>
@@ -1623,7 +1623,7 @@ function renderCheckStep(el, head, back) {
   const skip = `<button id="c-skip">Skip this step</button>`;
   if (test.step === 'info') {
     const gy = sensors.hasGyro();
-    el.innerHTML = head + `<p>Four short steps, no stars needed — do it outdoors in daylight or at dusk. You'll need a table, the scope set up with the phone in its bridge mount, and a distant landmark low on the horizon.</p>
+    el.innerHTML = head + `<p>Four short steps, no stars needed — do it outdoors in daylight or at dusk. You'll need a table, the scope set up with the phone in its dock, and a distant landmark low on the horizon.</p>
       <label class="row"><span>Phone make & model</span><input id="c-phone" value="${esc(test.phone)}" placeholder="e.g. Pixel 8, iPhone 13"></label>
       <label class="row"><span>Grade against eyepiece</span><select id="c-ep">${profile().eyepieces.map((e, i) => `<option value="${i}" ${i === test.epIdx ? 'selected' : ''}>${esc(e.name)} — ${(tfov(e) * 60).toFixed(0)}′ field</option>`).join('')}</select></label>
       <div class="card kv"><span>Gyroscope</span><span id="c-gyro">${gy === true ? 'present' : gy === false ? '<span class="bad">not found</span>' : 'checking…'}</span>
@@ -1662,7 +1662,7 @@ function renderCheckStep(el, head, back) {
     };
   } else if (test.step === 'still') {
     el.innerHTML = head + checkProgress() + `<h3>Jitter & drift</h3>
-      <p>Put the phone in the bridge mount. Point the scope anywhere comfortable (not straight up), then let go of the scope and the tripod completely.</p>
+      <p>Put the phone in its dock. Point the scope anywhere comfortable (not straight up), then let go of the scope and the tripod completely.</p>
       <div class="bar"><div id="t-bar"></div></div><p id="t-live" class="muted small mono"></p>
       <div class="btnrow"><button id="t-go" class="primary">${test.running ? 'Recording — hands off…' : 'Start 60 s recording'}</button>${skip}</div>` + back;
     $('#t-go').onclick = () => { if (test.running) return; test.running = true; test.rec.start(); test.tEnd = performance.now() + 60000; $('#t-go').textContent = 'Recording — hands off…'; };
@@ -1797,6 +1797,7 @@ function renderSetup() {
     <div class="btnrow"><button id="drift-go">Set AFOV for selected eyepiece from drift</button></div>
 
     <details class="more"><summary>Phone mount and sensors (advanced)</summary>
+    <label class="row"><span>Phone dock</span><select id="s-dock"><option value="yes" ${state.dock !== 'no' ? 'selected' : ''}>Yes, on a bridge mount</option><option value="no" ${state.dock === 'no' ? 'selected' : ''}>No, strapped to the tube</option></select></label>
     <label class="row"><span>Phone position</span><select id="s-mount">${Object.entries(MOUNTINGS).map(([k, v]) => `<option value="${k}" ${k === state.mounting ? 'selected' : ''}>${esc(v.label)}</option>`).join('')}</select></label>
     <label class="row"><span>Azimuth source</span><select id="s-mode"><option value="gyro" ${state.mode === 'gyro' ? 'selected' : ''}>Gyro + star alignment (recommended)</option><option value="compass" ${state.mode === 'compass' ? 'selected' : ''}>Compass (no alignment)</option></select></label>
     <label class="row"><span>Compass correction, true − magnetic (°)</span><input id="s-cc" type="number" inputmode="decimal" step="0.1" value="${(+state.compassCorr).toFixed(2)}"></label>
@@ -1839,6 +1840,7 @@ function renderSetup() {
     const tf = t * 15.041 * Math.cos(d * D2R) / 3600; // true field, degrees (sidereal rate 15.041″/s)
     const e = eyepiece(); e.afov = +(tf * p.fl / e.fl).toFixed(1); e.verified = true; save(); toast(`True field ${(tf * 60).toFixed(1)}′ → AFOV ${e.afov}°`); renderSetup();
   };
+  $('#s-dock').onchange = (e) => { state.dock = e.target.value; save(); };
   $('#s-mount').onchange = (e) => { state.mounting = e.target.value; applyModelSettings(); align = { obs: [], fit: null, syncs: [], confirm: [] }; save(); toast('Mounting changed — re-align'); };
   $('#s-mode').onchange = (e) => { state.mode = e.target.value; save(); };
   $('#s-cc').onchange = () => { state.compassCorr = num('#s-cc') || 0; save(); };
@@ -2116,7 +2118,7 @@ function renderLaunch() {
       <div class="stop end"><span class="dest"></span><button id="l-go" class="primary">${GO[act]}</button></div>
     </div>
     <details class="more"><summary>How it works</summary>
-      <ol class="how"><li><b>Clip the phone into the bridge mount</b> — screen up, top of the phone toward the sky end of the tube.</li>
+      <ol class="how"><li><b>Clip the phone into its dock</b> — screen up, top of the phone toward the sky end of the tube.</li>
       <li><b>Align on two bright stars.</b> The app tells you which ones and where to look.</li>
       <li><b>Pick a target and follow the arrows.</b> A chime tells you when it should be in the eyepiece.</li>
       <li><b>Tap Sync whenever you centre something.</b> It keeps the pointing accurate all night.</li></ol>
@@ -2128,7 +2130,33 @@ function renderLaunch() {
   if ($('#l-resume')) $('#l-resume').onclick = () => launch('resume');
   applyTheme();
 }
+// Asked once, the first time someone heads for the telescope: the pointing depends on how the phone sits on the tube.
+function askDock(dest) {
+  const el = $('#dockq'), card = $('#dockq-card');
+  const done = (v) => { state.dock = v; save(); el.classList.add('hidden'); launch(dest); };   // still inside the tap, so iOS will allow the motion prompt
+  const ask = () => {
+    card.innerHTML = `<h3 style="margin-top:0">One quick question</h3>
+      <p><b>Does your telescope have a phone dock?</b></p>
+      <p class="muted small">The dock holds your phone square to the tube. It sits on a bridge mount made for your telescope.</p>
+      <div class="btnrow"><button id="dq-yes" class="primary">Yes</button><button id="dq-no">Not yet</button></div>
+      <p class="muted small" style="margin-bottom:0">You can change this later in Setup.</p>`;
+    $('#dq-yes').onclick = () => done('yes');
+    $('#dq-no').onclick = none;
+  };
+  const none = () => {
+    card.innerHTML = `<h3 style="margin-top:0">No dock? You can still try it</h3>
+      <ol class="how"><li><b>Lay the phone flat on top of the tube</b>, screen up.</li>
+      <li><b>Point the top of the phone at the sky end</b>, lined up with the tube as straight as you can.</li>
+      <li><b>Strap it down firmly</b> — elastic bands work. It must not shift when you push the scope.</li></ol>
+      <p class="muted small">Expect rougher pointing than with a dock. A phone that is crooked or slips will send you to the wrong spot, and you will need to Sync more often.</p>
+      <div class="btnrow"><button id="dq-go" class="primary">Carry on</button><button id="dq-back">Back</button></div>`;
+    $('#dq-go').onclick = () => done('no');
+    $('#dq-back').onclick = ask;
+  };
+  ask(); el.classList.remove('hidden');
+}
 function launch(dest) {
+  if (dest !== 'plan' && dest !== 'explore' && !state.dock) { askDock(dest); return; }
   initSound();                                    // audio can only start from a tap
   state.seenIntro = true;
   if (!state.launch.check && !lastCheck()) state.skipCheck = true;   // chose not to test: don't nag about it later

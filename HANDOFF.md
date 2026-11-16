@@ -1,6 +1,6 @@
 # Handoff notes for the next working session
 
-Read this first, then `README.md`. Written 2026-11-16 at Build 52.
+Read this first, then `README.md`. Written 2026-11-16 at Build 54.
 
 ## How the project is worked on
 
@@ -17,7 +17,7 @@ Read this first, then `README.md`. Written 2026-11-16 at Build 52.
 
 ## Testing
 
-- Unit tests: `npm test` (9 files in `test/`). All pass at Build 52.
+- Unit tests: `npm test` (9 files in `test/`). All pass at Build 54.
 - Browser walkthroughs: `tools/walk/` (Playwright, iPhone-sized). Serve `docs/` first: `python3 -m http.server 8765`
   from `docs/`, then `node tools/walk/<script>.js`. They load `http://localhost:8765/?sim`, which shows a
   "Simulate sensors" button on the start screen. In the page, `window.sim` is the simulated phone (`bend`, `noise`,
@@ -88,3 +88,7 @@ unrelated extra star in the object-page sentence. Still open with Bryan: whether
 
 - A realistic sky background in the eyepiece preview.
 - Feeding observing-log results back into the visibility ratings.
+
+## Build 55 notes
+- Splash now uses Bryan's own side-view render (`docs/icons/skyward.webp`, cut out from his image) instead of a drawing. He wants to start realistic and move toward whimsical from there. The tube no longer swings (single image).
+- First-run question "Does your telescope have a phone dock?" (`askDock` in main.js, `state.dock` 'yes'/'no', changeable in Setup). Naming: the **phone dock** is standard; it sits on a **bridge mount** that is specific to the telescope. No link for people without a dock yet (Bryan has not given one). `state.dock` does not change the pointing maths.
