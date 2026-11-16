@@ -317,7 +317,7 @@ function renderPlan() {
     : `<div class="card" style="text-align:center"><b>No plan yet</b><p class="muted small" style="margin:4px 0 10px">Let the app pick a varied tour for this session, or add your own from the suggestions below with <b>+</b>.</p><button id="pl-auto" class="primary big">Build a plan for me</button></div>`}
     <div class="sech"><h3>Suggestions <span class="muted small">for this session</span></h3></div>
     <div class="chips" id="pl-lv">${[['all', 'All'], ['0', '●●● Obvious'], ['1', '●●○ Visible'], ['2', '●○○ Challenging']].map(([k, l]) => `<button data-lv="${k}" class="${planLevel === k ? 'on' : ''}">${l}</button>`).join('')}</div>
-    <div class="chips" id="pl-sort">${[['top', 'Top picks'], ['time', 'Best time'], ['alt', 'Highest'], ['name', 'Catalog #']].map(([k, l]) => `<button data-s="${k}" class="${planSort === k ? 'on' : ''}">${l}</button>`).join('')}</div>
+    <div class="chips" id="pl-sort">${[['top', 'Top picks'], ['time', 'Looks best'], ['alt', 'Highest'], ['name', 'Catalog #']].map(([k, l]) => `<button data-s="${k}" class="${planSort === k ? 'on' : ''}">${l}</button>`).join('')}</div>
     <ul class="list" id="pl-sugg"><li class="muted">Working it out…</li></ul>`;
   const keepScroll = (f) => { const y = $('main').scrollTop; f(); $('main').scrollTop = y; };
   const setStart = (d) => { P.start = d.toISOString(); planRows = null; save(); renderPlan(); };
@@ -1966,7 +1966,7 @@ function openObject(key, opt = {}) {
     ${tooWide(o, profile()) && o.t === 'AS' ? `<p class="small"><b>A naked-eye pattern.</b> At ${(o.maj / 60).toFixed(0)}° across it is far bigger than any eyepiece field, so there is no eyepiece view. Use Push to it and the sky chart to find it, then look up.</p>` : isTarget && o.alt != null ? `<div class="eprow" id="sh-eps">${profile().eyepieces.map((e, i) => `<figure><canvas width="300" height="300" data-epi="${i}"></canvas><figcaption><b>${esc(e.name)}</b> ${(profile().fl / e.fl).toFixed(0)}×<span id="sh-epn${i}"></span></figcaption></figure>`).join('')}</div>
       <p class="muted small" id="sh-epcap" style="text-align:center;margin-top:2px">In each of your eyepieces, to scale. Brightness is not to scale. Add or change eyepieces in Setup.</p>` : ''}
     <div class="kv">
-      ${row ? `<span>Best time</span><span>${hm(row.best)} · ${row.alt.toFixed(0)}° ${compassName(row.az)}</span>` : ''}
+      ${row ? `<span>Looks best at</span><span>${hm(row.best)} · ${row.alt.toFixed(0)}° ${compassName(row.az)}</span>` : ''}
       <span>Right now</span><span>${o.alt > 0 ? `${o.alt.toFixed(0)}° up, ${compassName(o.az)}` : 'below the horizon'}</span>
       ${r && r.ep ? `<span>Best eyepiece</span><span>${esc(r.ep.name)} (${(profile().fl / r.ep.fl).toFixed(0)}×)</span>` : ''}
       ${o.mag != null ? `<span>Brightness</span><span>magnitude ${(+o.mag).toFixed(1)}</span>` : ''}
