@@ -6,7 +6,7 @@ import { fitConsistency, pairConsistency, outliers, verdict as domeVerdict, draw
 import { constellationAt, conName, altAzToJ2000 } from './locate.js';
 import { whereWords, recogniseWords, pickStars, checkAltitude, checkPair, chooseWaypoint } from './assist.js';
 import { drawEyepiece, newtonianMatrix } from './eyeview.js';
-import { theme, tint } from './theme.js';
+import { theme, tint, applyShade } from './theme.js';
 import { LEVELS, planTargets, routePlan, nextDarkNight, interest, pickScore, varied, autoPlan, kindOf } from './plan.js';
 import { seenKeys, lastEntry, logStats, MILESTONES, newlyAchieved, logCSV } from './log.js';
 import { sound, initSound, cue, tickInterval } from './sound.js';
@@ -92,21 +92,41 @@ function applyModelSettings() {
   model.useRate = state.useRate;
   applyTheme();
 }
-/** Screen brightness factor: the slider at night; always full in Day mode. */
-const vis = () => (state.day ? 1 : state.bright);
+/** Screen brightness factor: the brightness setting at full Night, easing to full brightness toward Day. */
+const vis = () => 1 + ((state.bright ?? 1) - 1) * (state.shade ?? 1);
+/** One fader for the whole look: state.shade 0 = Day (evening-sky blues), 1 = Night (red on black). */
 function applyTheme() {
-  theme.day = !!state.day;
+  const t = Math.max(0, Math.min(1, state.shade ?? 0));
+  state.day = t < 0.5;
   const r = document.documentElement;
   r.dataset.theme = state.day ? 'day' : 'night';
   r.style.setProperty('--k', vis());
-  document.querySelector('meta[name=theme-color]')?.setAttribute('content', state.day ? '#f4f5f7' : '#000000');
-  const b = $('#hb-day'); if (b) { b.innerHTML = state.day ? ICON.moon : ICON.sun; b.title = state.day ? 'Switch to Night (red) mode' : 'Switch to Day mode'; }
+  const bar = applyShade(t, state.bright ?? 1);
+  document.querySelector('meta[name=theme-color]')?.setAttribute('content', bar);
+  document.querySelectorAll('.shadebtn').forEach((b) => { b.innerHTML = t < 0.5 ? ICON.sun : ICON.moon; b.title = 'Day / Night'; });
   eyeT = 0;
 }
-function toggleDay() {
-  state.day = !state.day; save(); applyTheme();
-  if (tab === 'setup') renderSetup(); if (tab === 'more') renderMore();
-  if (state.day) toast('Day mode — bright colours. Switch back to Night before observing.', 3500);
+function setShade(t, quiet) {
+  state.shade = t; save(); applyTheme();
+  if (!quiet) { if (tab === 'setup') renderSetup(); if (tab === 'more') renderMore(); }
+}
+function toggleDay() { setShade(state.day ? 1 : 0); }
+/** The Day ↔ Night fader, opened from the sun/moon button on every screen. */
+function openShade() {
+  let pop = $('#shadepop');
+  if (pop) { pop.remove(); return; }
+  pop = document.createElement('div'); pop.id = 'shadepop';
+  pop.innerHTML = `<div class="shrow"><button class="shend" data-v="0" aria-label="Day">${ICON.sun}</button>
+      <input id="sh-range" type="range" min="0" max="1" step="0.01" value="${state.shade ?? 0}" aria-label="Day to Night">
+      <button class="shend" data-v="1" aria-label="Night">${ICON.moon}</button></div>
+    <div class="shcap"><span>Day</span><span id="sh-note"></span><span>Night</span></div>`;
+  document.body.appendChild(pop);
+  const note = () => { const t = state.shade ?? 0; $('#sh-note').textContent = t > 0.97 ? 'red only — keeps your night vision' : t < 0.03 ? 'easy to read' : 'in between'; };
+  note();
+  $('#sh-range').oninput = (e) => { setShade(parseFloat(e.target.value), true); note(); };
+  pop.querySelectorAll('.shend').forEach((b) => b.onclick = () => { setShade(+b.dataset.v, true); $('#sh-range').value = b.dataset.v; note(); });
+  const close = (e) => { if (!pop.contains(e.target) && !e.target.closest('.shadebtn')) { pop.remove(); document.removeEventListener('pointerdown', close, true); if (tab === 'setup') renderSetup(); if (tab === 'more') renderMore(); } };
+  document.addEventListener('pointerdown', close, true);
 }
 const IS_STANDALONE = () => (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true || !!window.Capacitor;
 function canFullscreen() { const el = document.documentElement; return !!(el.requestFullscreen || el.webkitRequestFullscreen); }
@@ -746,7 +766,7 @@ function updatePush() {
     <span>Scope height / direction</span><span>${cur.alt.toFixed(1)}° / ${cur.az.toFixed(1)}°</span>
     <span>Since last sync</span><span>${lastSyncAge()}</span>
     <span>Sky correction here</span><span>${cur.corr != null ? fmt.am(cur.corr * 60) : skyCorrShort()}</span>
-    <span>Pointing uncertainty</span><span>${U == null ? (state.phonePerf ? '—' : 'run the Phone check') : '±' + fmt.am(U)}</span>`;
+    <span>Pointing uncertainty</span><span>${U == null ? (state.phonePerf ? '—' : 'run the phone check-up') : '±' + fmt.am(U)}</span>`;
   drawReticle(cur, tgt, o);
 }
 const fmtDelta = (d) => { const a = Math.abs(d); return a >= 10 ? a.toFixed(0) + '°' : a >= 1 ? a.toFixed(1) + '°' : (a * 60).toFixed(0) + '′'; };
@@ -1423,7 +1443,7 @@ async function showBoard(box, q) {
 // ---------------------------------------------------------------- TEST
 let test = null; // {kind, rec, ...}
 const TESTS = {
-  check: { name: 'Phone check (4 min, no stars)', desc: 'Run this first on any new phone. Grades the phone in its mount against your eyepiece field: gyro present, tilt consistency, jitter, drift, behaviour from horizon to zenith, and full turns at the horizon.' },
+  check: { name: 'Phone check-up (4 min, no stars)', desc: 'Run this first on any new phone. Grades the phone in its mount against your eyepiece field: gyro present, tilt consistency, jitter, drift, behaviour from horizon to zenith, and full turns at the horizon.' },
   still: { name: 'Precision & drift', desc: 'Leave the scope untouched. Measures sensor noise (precision) and how fast readings wander (drift) for the gyro and the compass.' },
   repeat: { name: 'Repeatability', desc: 'Centre the same target several times, moving the scope well away in between. Shows how consistently the app reads the same spot.' },
   level: { name: 'Level bias (reversal)', desc: 'Phone flat on a table, then turned 180°. Separates the accelerometer\'s own bias from the table\'s tilt, with no reference needed.' },
@@ -1432,7 +1452,7 @@ const TESTS = {
 function renderTest() {
   const el = $('#tab-test');
   if (test) return renderTestRun();
-  el.innerHTML = `${BACK}<h2>Phone check and sensor tests</h2>
+  el.innerHTML = `${BACK}<h2>Phone check-up and sensor tests</h2>
     <p class="muted small">Run these on the scope with the phone in its bridge mount unless the test says otherwise. Results are saved below and can be exported.</p>
     ${Object.entries(TESTS).map(([k, t]) => `<div class="card"><h3 style="margin-top:0">${t.name}</h3><p class="muted small">${t.desc}</p><button data-run="${k}" class="primary">Run</button></div>`).join('')}
     <h2>History</h2>
@@ -1759,7 +1779,7 @@ function renderSetup() {
     <div class="btnrow"><button id="s-gps">Use GPS</button></div>
 
     <h2>Display</h2>
-    <label class="row"><span>Day mode <span class="muted small">(bright colours for daylight; also the button at top right)</span></span><input id="s-day" type="checkbox" ${state.day ? 'checked' : ''}></label>
+    <label class="row"><span>Day look <span class="muted small">(off = Night, red only; the sun/moon button fades between them)</span></span><input id="s-day" type="checkbox" ${state.day ? 'checked' : ''}></label>
     <label class="row"><span>Screen brightness</span><input id="s-br" type="range" min="0.25" max="1" step="0.05" value="${state.bright}"></label>
     <label class="row"><span>Lowest altitude to list (°)</span><input id="s-min" type="number" value="${state.minAlt}"></label>
     <p class="muted small">Keep screen awake: ${awakeText()}. Sounds are under More.</p>
@@ -1794,7 +1814,7 @@ function renderSetup() {
   const site = () => { state.site = { lat: num('#s-lat'), lon: num('#s-lon'), elev: num('#s-el') || 0, source: 'entered manually' }; sky.setSite(state.site.lat, state.site.lon, state.site.elev); save(); };
   ['#s-lat', '#s-lon', '#s-el'].forEach((id) => $(id).onchange = site);
   $('#s-gps').onclick = getGPS;
-  $('#s-day').onchange = (e) => { state.day = e.target.checked; save(); applyTheme(); };
+  $('#s-day').onchange = (e) => setShade(e.target.checked ? 0 : 1, true);
   $('#s-br').oninput = (e) => { state.bright = parseFloat(e.target.value); applyModelSettings(); save(); };
   $('#s-min').onchange = () => { state.minAlt = num('#s-min') || 0; save(); };
 }
@@ -1946,12 +1966,12 @@ function renderMore() {
     ${item('align', 'Alignment', state.mode === 'compass' ? 'Compass mode — no alignment needed' : alignedNow() ? `Aligned on ${align.obs.map((o) => esc(o.label)).join(' and ')} · ${syncAgo()}` : 'Not aligned yet — two minutes, and the app shows you which stars')}
     ${item('log', 'Observing log', st.total ? `${st.total} object${st.total === 1 ? '' : 's'} seen · Messier ${st.messier} of ${st.messierTotal}` : 'Nothing logged yet — your Messier count and milestones live here')}
     ${item('sky', 'Sky darkness check', state.skyq ? `${esc(state.skyq.label)} · ${shortDate(state.skyq.when)}` : '30 seconds — tunes the visibility ratings to your sky')}
-    ${item('test', 'Phone check and sensor tests', chk ? `This phone: ${V[chk.result.verdict] || esc(chk.result.verdict)} · ${shortDate(chk.when)}` : 'Find out how accurate this phone can be — 4 minutes')}
+    ${item('test', 'Phone check-up and sensor tests', chk ? `This phone: ${V[chk.result.verdict] || esc(chk.result.verdict)} · ${shortDate(chk.when)}` : 'Find out how accurate this phone can be — 4 minutes')}
     ${item('setup', 'Setup', `${esc(profile().name)} · eyepieces, location, phone mount`)}
-    ${item('start', 'Start screen', 'Tune-up options and how it works')}
+    ${item('start', 'Start screen', 'Choose what to do and how it works')}
     <h3>Quick settings</h3>
     <label class="row"><span>Screen brightness</span><input id="m-br" type="range" min="0.25" max="1" step="0.05" value="${state.bright}" ${state.day ? 'disabled' : ''}></label>
-    <label class="row"><span>Day mode <span class="muted small">(bright colours — not for observing)</span></span><input id="m-day" type="checkbox" ${state.day ? 'checked' : ''}></label>
+    <label class="row"><span>Day look <span class="muted small">(off = Night, red only; the sun/moon button fades between them)</span></span><input id="m-day" type="checkbox" ${state.day ? 'checked' : ''}></label>
     <div style="padding:10px 0 4px">Sounds</div>
     <div class="seg" id="m-snd">${[['off', 'Off'], ['chime', 'Chime'], ['guide', 'Chime + ticks']].map(([k, l]) => `<button data-snd="${k}" class="${state.sound === k ? 'on' : ''}">${l}</button>`).join('')}</div>
     <p class="muted small">Chime: a tone when the target enters your eyepiece's field. Ticks get faster as you close in, so you can watch the sky instead of the phone. On an iPhone the silent switch may mute both.</p>
@@ -1961,7 +1981,7 @@ function renderMore() {
     if (k === 'sky') openSkyCheck(); else if (k === 'start') { renderLaunch(); $('#gate').classList.remove('hidden'); } else showTab(k);
   });
   $('#m-br').oninput = (e) => { state.bright = parseFloat(e.target.value); applyTheme(); save(); };
-  $('#m-day').onchange = (e) => { state.day = e.target.checked; save(); applyTheme(); renderMore(); };
+  $('#m-day').onchange = (e) => setShade(e.target.checked ? 0 : 1);
   el.querySelectorAll('[data-snd]').forEach((b) => b.onclick = () => { state.sound = b.dataset.snd; sound.mode = state.sound; save(); initSound(); cue.test(); renderMore(); });
 }
 
@@ -1976,18 +1996,21 @@ function loop(ts) {
 
 // ---------------------------------------------------------------- LAUNCH: pick an activity, tick the warm-up steps
 const ACTIVITIES = [
-  ['observe', 'Observe', 'Push to targets'],
-  ['explore', 'Explore the sky', 'Roam around — no alignment'],
-  ['plan', 'Plan a session', 'No telescope needed'],
-  ['game', 'Play a game', 'Ten targets against the clock'],
+  ['observe', 'Observe', 'Follow the arrows to targets', '<circle cx="12" cy="12" r="7"/><path d="M12 2v5M12 17v5M2 12h5M17 12h5"/>'],
+  ['explore', 'Explore', 'Wander the sky, no set-up', '<path d="M12 3l1.9 5.6L19.5 10l-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.4z"/><path d="M19 16l.6 1.9 1.9.6-1.9.6L19 21l-.6-1.9-1.9-.6 1.9-.6z"/>'],
+  ['game', 'Play', 'Ten targets against the clock', '<circle cx="12" cy="14" r="7"/><path d="M12 14v-4M10 3h4M12 3v4M18.5 7.5 20 6"/>'],
+  ['plan', 'Plan', 'Pick targets for a night out', '<path d="M9 6h11M9 12h11M9 18h11"/><path d="m3.5 6 1.2 1.2L6.8 5M3.5 12l1.2 1.2L6.8 11M3.5 18l1.2 1.2L6.8 17"/>'],
 ];
 const STEP_INFO = {
-  check: ['Phone check', '4 min, once per phone'],
-  sky: ['Sky darkness check', '30 s, count Little Dipper stars'],
-  align: ['Star alignment', '2 min, needed for accurate arrows'],
+  check: ['Phone check-up', '4 min, once per phone — how far to trust the arrows'],
+  sky: ['Sky darkness check', '30 s — count Little Dipper stars'],
+  align: ['Star alignment', '2 min — point at two bright stars'],
 };
+/** The stops that make sense on the way to each activity. Planning and exploring need no phone check-up. */
+const PATH = { observe: ['check', 'sky', 'align'], game: ['check', 'align'], explore: ['sky'], plan: ['sky'], resume: ['check', 'sky', 'align'] };
+const GO = { observe: 'Start observing', explore: 'Start exploring', game: 'Start the game', plan: 'Start planning' };
 let flow = null;   // { steps: [..], i, dest, started, quiet }
-const stepsFor = (dest) => ['check', 'sky', 'align'].filter((k) => state.launch[k] && !(k === 'align' && (dest === 'explore' || dest === 'plan' || alignedNow())) && !(k === 'check' && dest === 'plan'));
+const stepsFor = (dest) => (PATH[dest] || []).filter((k) => state.launch[k] && !(k === 'align' && alignedNow()));
 /** "Dark from 6:32 PM · Moon 27% lit, sets 8:58 PM · Saturn and Jupiter are up" */
 function tonightLine() {
   try {
@@ -2016,24 +2039,29 @@ function renderLaunch() {
     sky: sq ? `last: ${sq.label.toLowerCase()}` : STEP_INFO.sky[1],
     align: alignedNow() ? 'already aligned' : STEP_INFO.align[1],
   };
-  const chain = (dest) => { const st = stepsFor(dest).map((k) => STEP_INFO[k][0]); return st.length ? 'First: ' + st.join(', ').toLowerCase() : 'Starts straight away'; };
-  $('#launch').innerHTML = `<h1>Skyward Push-To</h1>
+  const act = ACTIVITIES.some((x) => x[0] === state.launchAct) ? state.launchAct : 'observe', stops = PATH[act];
+  $('#launch').innerHTML = `<div class="lhead"><h1>Skyward <span>Push-To</span></h1><button class="hbtn shadebtn" id="l-shade" aria-label="Day or night look"></button></div>
     <p class="tonight">${esc(tonightLine())}</p>
     ${pp && pp.next ? `<button id="l-resume" class="primary" style="width:100%;margin:6px 0 2px">Carry on with your plan — ${pp.done} of ${pp.total} done</button>` : ''}
-    <div class="tune"><h3 style="margin:10px 0 2px">Tune-up <span class="muted small">(optional)</span></h3>
-      ${['check', 'sky', 'align'].map((k) => `<label><input type="checkbox" data-step="${k}" ${L[k] ? 'checked' : ''}><span>${STEP_INFO[k][0]}<span class="muted">${esc(status[k])}</span></span></label>`).join('')}
+    <h3 class="lq">What are we up to?</h3>
+    <div class="lgrid">${ACTIVITIES.map(([k, t, sub, ic]) => `<button class="act${k === act ? ' on' : ''}" data-act="${k}"><svg class="ic" viewBox="0 0 24 24">${ic}</svg><b>${t}</b><span class="muted">${sub}</span></button>`).join('')}</div>
+    <div class="path">
+      <div class="pnote">${stops.some((k) => k !== 'sky') ? 'Your path — tap a star to skip a stop' : 'Nothing to set up. One optional stop:'}</div>
+      ${stops.map((k) => `<label class="stop"><input type="checkbox" data-step="${k}" ${L[k] ? 'checked' : ''}><span><b>${STEP_INFO[k][0]}</b><span class="muted">${esc(L[k] ? status[k] : 'skipped')}</span></span></label>`).join('')}
+      <div class="stop end"><span class="dest"></span><button id="l-go" class="primary">${GO[act]}</button></div>
     </div>
-    <h3 style="margin:12px 0 6px">What would you like to do?</h3>
-    <div class="lgrid">${ACTIVITIES.map(([k, t, sub]) => `<button class="act" data-act="${k}"><b>${t}</b><span class="muted">${sub}</span><span class="chain">${esc(chain(k))}</span></button>`).join('')}</div>
-    <details class="more" ${state.seenIntro ? '' : 'open'}><summary>How it works</summary>
+    <details class="more"><summary>How it works</summary>
       <ol class="how"><li><b>Clip the phone into the bridge mount</b> — screen up, top of the phone toward the sky end of the tube.</li>
       <li><b>Align on two bright stars.</b> The app tells you which ones and where to look.</li>
       <li><b>Pick a target and follow the arrows.</b> A chime tells you when it should be in the eyepiece.</li>
       <li><b>Tap Sync whenever you centre something.</b> It keeps the pointing accurate all night.</li></ol>
       <p class="muted small">Works offline. Add it to your Home Screen for a full-screen app.</p></details>`;
   $('#launch').querySelectorAll('[data-step]').forEach((c) => c.onchange = () => { state.launch[c.dataset.step] = c.checked; save(); renderLaunch(); });
-  $('#launch').querySelectorAll('[data-act]').forEach((b) => b.onclick = () => launch(b.dataset.act));
+  $('#launch').querySelectorAll('[data-act]').forEach((b) => b.onclick = () => { state.launchAct = b.dataset.act; save(); renderLaunch(); });
+  $('#l-go').onclick = () => launch(act);
+  $('#l-shade').onclick = (e) => { e.stopPropagation(); openShade(); };
   if ($('#l-resume')) $('#l-resume').onclick = () => launch('resume');
+  applyTheme();
 }
 function launch(dest) {
   initSound();                                    // audio can only start from a tap
@@ -2058,7 +2086,13 @@ function flowNext() {
   else if (k === 'sky') openSkyCheck();
   else if (k === 'align') showTab('align');
 }
+let nightNudged = false;
+/** Once a session: heading out under a dark sky in the Day look? Point at the fader. */
+function nightNudge() {
+  try { if (!nightNudged && (state.shade ?? 0) < 0.5 && sky.sunAlt(new Date()) < -8) { nightNudged = true; setTimeout(() => toast('It is dark out — tap the sun at the top and slide to Night to keep your night vision.', 5000), 1500); } } catch (e) { /* no site yet */ }
+}
 function goActivity(d) {
+  if (d !== 'plan') nightNudge();
   if (d === 'explore') { state.target = null; save(); showTab('push'); }
   else if (d === 'plan') showTab('plan');
   else if (d === 'game') showTab('game');
@@ -2071,7 +2105,7 @@ function renderFlowBar() {
   const bar = $('#flowbar');
   if (!flow || flow.i < 0 || flow.i >= flow.steps.length) { bar.classList.add('hidden'); return; }
   const k = flow.steps[flow.i], nextName = flow.i + 1 < flow.steps.length ? STEP_INFO[flow.steps[flow.i + 1]][0] : flow.dest === 'resume' ? 'Your plan' : ACTIVITIES.find((a) => a[0] === flow.dest)[1];
-  bar.innerHTML = `<span>Step ${flow.i + 1} of ${flow.steps.length}: <b>${STEP_INFO[k][0]}</b></span><button id="fb-next" class="mini">Skip → ${esc(nextName)}</button><button id="fb-stop" class="mini" aria-label="Leave the tune-up">✕</button>`;
+  bar.innerHTML = `<span>Step ${flow.i + 1} of ${flow.steps.length}: <b>${STEP_INFO[k][0]}</b></span><button id="fb-next" class="mini">Skip → ${esc(nextName)}</button><button id="fb-stop" class="mini" aria-label="Skip the rest">✕</button>`;
   bar.classList.remove('hidden');
   $('#fb-next').onclick = () => { if (k === 'check') { state.launch.check = false; save(); } flowNext(); };
   $('#fb-stop').onclick = () => { flow = null; renderFlowBar(); };
@@ -2190,7 +2224,8 @@ async function init() {
   sky.setSite(state.site.lat, state.site.lon, state.site.elev);
   applyModelSettings();
   document.querySelectorAll('nav#tabs button').forEach((b) => b.onclick = () => showTab(b.dataset.tab));
-  $('#hb-day').onclick = (e) => { e.stopPropagation(); toggleDay(); };
+  $('#hb-day').onclick = (e) => { e.stopPropagation(); openShade(); };
+  state.shade = 0;                                 // always open in the Day look; the fader is one tap away on every screen
   $('#hb-fs').innerHTML = ICON.full;
   $('#hb-fs').onclick = (e) => { e.stopPropagation(); toggleFullscreen(); };
   $('#st-scope').onclick = () => showTab('setup');

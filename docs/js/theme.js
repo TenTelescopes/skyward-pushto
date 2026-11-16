@@ -1,11 +1,48 @@
-// Night (red) / Day colour handling for canvases. The drawing code is written in night-red terms
-// (r is the brightness, g/b add warmth); in day mode the same call becomes white for ordinary marks
-// and amber for highlights, on a dark-blue chart, so it stays readable in daylight.
-export const theme = { day: false };
+// Colour handling for the whole app, on one fader: shade 0 = Day (an evening-sky look: deep blue, pale text, gold accents),
+// shade 1 = Night (red on black only, for dark-adapted eyes). Everything in between is a straight blend.
+// The drawing code for canvases is written in night-red terms (r is the brightness, g/b add warmth); tint() turns the
+// same call into pale blue for ordinary marks and gold for highlights at the Day end.
+export const theme = { shade: 1 };
+const mix = (a, b, t) => a + (b - a) * t;
 export function tint(r, g = 0, b = 0, a = 1, k = 1) {
-  if (!theme.day) return `rgba(${r * k | 0},${g * k | 0},${b * k | 0},${a})`;
-  const top = Math.max(r, g, b, 1), L = Math.min(1, (0.25 + 0.75 * top / 255));
-  const warm = g >= 0.2 * r;
-  const [R, G, B] = warm ? [255, 185, 70] : [225, 232, 255];
-  return `rgba(${R * L | 0},${G * L | 0},${B * L | 0},${a})`;
+  const t = theme.shade;
+  let R = r * k, G = g * k, B = b * k;
+  if (t < 1) {
+    const top = Math.max(r, g, b, 1), L = Math.min(1, 0.25 + 0.75 * top / 255), warm = g >= 0.2 * r;
+    const [dr, dg, db] = warm ? [255, 200, 95] : [222, 230, 255];
+    R = mix(dr * L, R, t); G = mix(dg * L, G, t); B = mix(db * L, B, t);
+  }
+  return `rgba(${R | 0},${G | 0},${B | 0},${a})`;
+}
+// token: [day r,g,b,a], [night r,g,b,a] — night values are scaled by the brightness setting k (not alpha).
+const TOKENS = {
+  '--bg': [[5, 9, 30, 1], [0, 0, 0, 1], 0], '--bgm': [[18, 24, 66, 1], [0, 0, 0, 1], 0], '--bg2': [[58, 44, 96, 1], [0, 0, 0, 1], 0],
+  '--panel': [[20, 28, 66, 0.78], [13, 0, 0, 1], 0], '--line': [[76, 90, 150, 1], [95, 0, 0, 1], 1], '--dim': [[160, 171, 212, 1], [145, 0, 0, 1], 1],
+  '--fg': [[233, 237, 255, 1], [210, 20, 10, 1], 1], '--hi': [[255, 214, 128, 1], [255, 45, 25, 1], 1], '--good': [[126, 231, 170, 1], [255, 95, 45, 1], 1],
+  '--press': [[40, 50, 104, 1], [28, 0, 0, 1], 0], '--row': [[33, 42, 88, 1], [23, 0, 0, 1], 0], '--sel': [[44, 56, 118, 1], [23, 0, 0, 1], 0],
+  '--chart': [[4, 8, 24, 1], [5, 0, 0, 1], 0], '--veil': [[4, 7, 22, 0.9], [0, 0, 0, 0.94], 0], '--bar': [[24, 31, 72, 0.96], [26, 0, 0, 1], 0],
+  '--glow': [[255, 214, 128, 0.16], [255, 45, 25, 0.16], 0],
+};
+let starsDone = false;
+/** A sprinkling of stars as one SVG tile (same every time), set once. */
+function starTile() {
+  let s = 7; const rnd = () => { s = (s * 16807) % 2147483647; return (s - 1) / 2147483646; };
+  let c = '';
+  for (let i = 0; i < 120; i++) {
+    const big = rnd() < 0.12, r = big ? 1 + rnd() * 0.7 : 0.35 + rnd() * 0.55, y = 900 * rnd() ** 1.35;      // thicker toward the top, where the sky is darker
+    c += `<circle cx="${(rnd() * 420).toFixed(1)}" cy="${y.toFixed(1)}" r="${r.toFixed(2)}" fill="${big && rnd() < 0.4 ? '#ffe3a8' : '#fff'}" opacity="${(big ? 0.8 : 0.3 + rnd() * 0.45).toFixed(2)}"/>`;
+  }
+  return `url("data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="420" height="900">${c}</svg>`)}")`;
+}
+/** Set every colour token for shade t (0 day … 1 night) and night brightness k. */
+export function applyShade(t, k = 1) {
+  theme.shade = t;
+  const st = document.documentElement.style;
+  for (const [name, [d, n, scale]] of Object.entries(TOKENS)) {
+    const f = scale ? k : 1, v = [0, 1, 2].map((i) => Math.round(mix(d[i], n[i] * f, t)));
+    st.setProperty(name, `rgba(${v[0]},${v[1]},${v[2]},${mix(d[3], n[3], t).toFixed(3)})`);
+  }
+  st.setProperty('--stars', (1 - t).toFixed(3));
+  if (!starsDone) { st.setProperty('--starsimg', starTile()); starsDone = true; }
+  return `rgb(${Math.round(mix(5, 0, t))},${Math.round(mix(9, 0, t))},${Math.round(mix(30, 0, t))})`;     // for the browser's theme-color
 }
