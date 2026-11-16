@@ -960,6 +960,26 @@ function drawReticle(cur, tgt, o, opt = {}) {
     const show = (star && (view < 30 || (n.mag ?? 9) < 1.5)) || n.planet || view < 12 || (view < 30 && n.cats && n.cats.some((x) => /^M\d/.test(x)));
     if (show) { c.fillStyle = col(star || n.planet ? 210 : 150, 30, 10); c.fillText(n.label, q.x + 9, q.y - 7); }
   }
+  let sunNote = null;                                // its warning is drawn last, on top of the scope marker
+  // The Sun: big and impossible to miss whenever it is above the horizon, with the one rule that matters.
+  try {
+    const sunP = sky.sunAltAz(), sq = sunP.alt > -1 ? proj(sunP) : null;
+    if (sq && sq.r < view * 1.5) {
+      const R0 = Math.max(46, 0.27 * s), g = c.createRadialGradient(sq.x, sq.y, R0 * 0.5, sq.x, sq.y, R0 * 2.6);
+      g.addColorStop(0, col(255, 200, 90, 0.55)); g.addColorStop(1, col(255, 200, 90, 0));
+      c.fillStyle = g; c.beginPath(); c.arc(sq.x, sq.y, R0 * 2.6, 0, 7); c.fill();
+      c.strokeStyle = col(255, 210, 100); c.lineWidth = 5; c.lineCap = 'round'; c.beginPath();
+      for (let i = 0; i < 12; i++) { const a = i * Math.PI / 6; c.moveTo(sq.x + Math.cos(a) * R0 * 1.25, sq.y + Math.sin(a) * R0 * 1.25); c.lineTo(sq.x + Math.cos(a) * R0 * 1.6, sq.y + Math.sin(a) * R0 * 1.6); }
+      c.stroke(); c.lineCap = 'butt';
+      c.fillStyle = col(255, 215, 110); c.beginPath(); c.arc(sq.x, sq.y, R0, 0, 7); c.fill();
+      c.fillStyle = 'rgba(0,0,0,0.85)'; c.textAlign = 'center'; c.font = 'bold 30px system-ui'; c.fillText('SUN', sq.x, sq.y + 11);
+      sunNote = () => { c.textAlign = 'center'; c.font = 'bold 22px system-ui'; const wl = ['Never point here unless you have', 'secured a solar filter to the scope'], ww = Math.max(...wl.map((t) => c.measureText(t).width)), wy = sq.y + R0 * 1.6 + 8;
+      const wx = Math.max(ww / 2 + 14, Math.min(W - ww / 2 - 14, sq.x));                 // keep the warning on the chart when the Sun is near the edge
+      c.fillStyle = 'rgba(0,0,0,0.8)'; c.fillRect(wx - ww / 2 - 8, wy, ww + 16, 58);
+      c.fillStyle = col(255, 215, 110); wl.forEach((t, i) => c.fillText(t, wx, wy + 23 + i * 26)); c.textAlign = 'left'; };
+      c.textAlign = 'left';
+    }
+  } catch (e) { /* no site yet */ }
   c.restore();
 
   // frame, scale, eyepiece field (centred on the scope), scope marker when centred on target
@@ -988,6 +1008,7 @@ function drawReticle(cur, tgt, o, opt = {}) {
     const L = Math.max(14, half * s * 0.35); c.beginPath(); c.moveTo(scope.x - L, scope.y); c.lineTo(scope.x + L, scope.y); c.moveTo(scope.x, scope.y - L); c.lineTo(scope.x, scope.y + L); c.stroke();
   }
 
+  if (sunNote) sunNote();
   if (opt.noTarget) return;
   // target
   const tq = proj(tgt); let x, y, inside = !!tq && tq.r <= view;
