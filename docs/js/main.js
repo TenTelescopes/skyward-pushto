@@ -1963,7 +1963,8 @@ function openObject(key, opt = {}) {
     ${r ? `<p class="rateline"><span class="dots lv${r.level}">${DOTS[r.level]}</span> <b>${LEVEL_NAMES[r.level]}</b> ${row ? 'at its best in your session' : 'right now'} — ${esc(row ? row.desc : describe(o, r))}</p>` : (o.alt <= 0 ? '<p class="rateline muted">Below the horizon right now.</p>' : '')}
     ${blurb ? `<p class="blurb">${esc(blurb)}</p>` : ''}
     ${doubleNature(o) ? `<p class="small">${esc(NATURE_NOTE[doubleNature(o)])}</p>` : ''}
-    ${tooWide(o, profile()) && o.t === 'AS' ? `<p class="small"><b>A naked-eye pattern.</b> At ${(o.maj / 60).toFixed(0)}° across it is far bigger than any eyepiece field, so there is no eyepiece view. Use Push to it and the sky chart to find it, then look up.</p>` : isTarget && o.alt != null ? `<div class="eprow" id="sh-eps">${profile().eyepieces.map((e, i) => `<figure><canvas width="300" height="300" data-epi="${i}"></canvas><figcaption><b>${esc(e.name)}</b> ${(profile().fl / e.fl).toFixed(0)}×<span id="sh-epn${i}"></span></figcaption></figure>`).join('')}</div>
+    ${tooWide(o, profile()) && o.t === 'AS' ? `<p class="small"><b>A naked-eye pattern.</b> At ${(o.maj / 60).toFixed(0)}° across it is far bigger than any eyepiece field, so there is no eyepiece view. Use Push to it and the sky chart to find it, then look up.</p>` : isTarget && o.alt != null ? `<div class="eprow" id="sh-eps">${profile().eyepieces.map((e, i) => ({ e, i })).sort((a, b) => b.e.fl - a.e.fl).map(({ e, i }) => `<figure><canvas width="300" height="300" data-epi="${i}"></canvas><figcaption><b>${esc(e.name)}</b><span>${(profile().fl / e.fl).toFixed(0)}×<span id="sh-epn${i}"></span></span></figcaption></figure>`).join('')}</div>
+      <p class="muted small hidden" id="sh-more" style="text-align:right;margin:0">swipe for more ›</p>
       <p class="muted small" id="sh-epcap" style="text-align:center;margin-top:2px">In each of your eyepieces, to scale. Brightness is not to scale. Add or change eyepieces in Setup.</p>` : ''}
     <div class="kv">
       ${row ? `<span>Looks best at</span><span>${hm(row.best)} · ${row.alt.toFixed(0)}° ${compassName(row.az)}</span>` : ''}
@@ -1976,12 +1977,15 @@ function openObject(key, opt = {}) {
     <div class="btnrow"><button id="sh-go" class="primary">Push to it</button>${isTarget ? `<button id="sh-plan">${inPlan ? '✓ In plan — remove' : '+ Add to plan'}</button>` : ''}</div>
     ${isTarget ? `<div class="btnrow"><button id="sh-seen">${seen ? 'Log it again ✓' : 'Log as seen ✓'}</button></div>` : '<p class="muted small">A bright star for aligning and syncing.</p>'}`;
   box.classList.remove('hidden'); card.scrollTop = 0;
+  { const row = $('#sh-eps'), more = $('#sh-more'); if (row && more && row.scrollWidth > row.clientWidth + 4) { more.classList.remove('hidden'); row.addEventListener('scroll', () => more.classList.add('hidden'), { once: true, passive: true }); } }
   // one small preview per eyepiece
   card.querySelectorAll('#sh-eps canvas').forEach((cv) => {
     try {
-      const p = profile(), e = p.eyepieces[+cv.dataset.epi], tg = { alt: o.alt, az: o.az };
+      // Work the position out for this instant. The list's stored position can be minutes old, and the sky turns a
+      // quarter of a degree a minute: enough to slide a high-power field right off the target's own stars.
+      const p = profile(), e = p.eyepieces[+cv.dataset.epi], now = new Date(), tg = sky.altAz(o, now);
       const longest = p.eyepieces.reduce((a, x) => (x.fl > a.fl ? x : a), p.eyepieces[0]);
-      const res = drawEyepiece(cv, sky, o.pairs && o.key.startsWith('st:') ? { ...o, t: 'DS' } : o, tg, e, p, { matrix: state.rot180 ? newtonianMatrix(tg, p.focuser ?? 90) : null, bright: vis(), refExit: p.aperture / (p.fl / longest.fl), thumb: true });
+      const res = drawEyepiece(cv, sky, o.pairs && o.key.startsWith('st:') ? { ...o, t: 'DS' } : o, tg, e, p, { matrix: state.rot180 ? newtonianMatrix(tg, p.focuser ?? 90) : null, bright: vis(), refExit: p.aperture / (p.fl / longest.fl), thumb: true, date: now });
       const n = $('#sh-epn' + cv.dataset.epi); if (n && res) n.textContent = ` · ${res.tfov >= 1 ? res.tfov.toFixed(1) + '°' : (res.tfov * 60).toFixed(0) + '′'}`;
       if (res && res.widened) { const cap = $('#sh-epcap'); if (cap) cap.textContent = 'In each of your eyepieces. Close pairs are drawn a little wider than scale, so a split the eye would see is not lost in the small picture.'; }
       if (res && res.enlarged) { const cap = $('#sh-epcap'); if (cap) cap.textContent = `In each of your eyepieces. The planet is drawn ${res.enlarged}× larger than scale so you can see its shape. In the real eyepiece it looks smaller than this, but sharp.`; }

@@ -90,6 +90,14 @@ export function drawEyepiece(cv, sky, o, tgt, ep, scope, opts = {}) {
   // field stars — point sources: not dimmed by magnification
   const isPair = t === 'DS' && o.pairs && o.pairs.length;
   const pairFaint = isPair ? Math.max(...String(o.pairs[0].mags || '').split('/').map(Number).filter((x) => !Number.isNaN(x)), o.mag ?? 6) : 0;
+  // A big cluster overflows a narrow field, and its catalogue centre can fall between the bright stars. Then aim at its
+  // brightest star instead, as an observer would, so a high-power view is never an empty patch of sky.
+  if ((t === 'OC' || t === 'CN' || t === 'AS') && o.maj && o.maj / 60 > tfov) {
+    let best = null;
+    for (const [, v] of sky.fieldNear(tgt.alt, tgt.az, Math.min(o.maj / 120, 5), 8, date)) if (!best || v.mag < best.mag) best = v;
+    const off = best && tangentOffset(tgt, best);
+    if (off && Math.hypot(off.x, off.y) > rad * 0.45) { tgt = { alt: best.alt, az: best.az }; note = 'Wider than this eyepiece: centred on its brightest star'; }
+  }
   const field = sky.fieldNear(tgt.alt, tgt.az, rad * 1.3, 8, date);
   for (const [, v] of field) {
     if (v.mag > 8) continue;

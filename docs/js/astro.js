@@ -77,7 +77,11 @@ export class Sky {
    */
   fieldNear(alt, az, radius, magLim, date = new Date()) {
     const R = this._rot(date).rot, D = Math.PI / 180;
-    const ca = Math.cos(alt * D), h = [ca * Math.cos(az * D), -ca * Math.sin(az * D), Math.sin(alt * D)]; // AE horizon frame: x=N, y=W, z=up
+    // `alt` is the apparent height, lifted by the air's bending of light: over half a degree at the horizon. Take that
+    // out before turning back to the star catalogue's frame, or a narrow search near (or below) the horizon looks in the
+    // wrong place and comes back without the very stars it was aimed at.
+    const ag = alt + A.InverseRefraction('normal', alt);
+    const ca = Math.cos(ag * D), h = [ca * Math.cos(az * D), -ca * Math.sin(az * D), Math.sin(ag * D)]; // AE horizon frame: x=N, y=W, z=up
     const c = [0, 1, 2].map((j) => R[j][0] * h[0] + R[j][1] * h[1] + R[j][2] * h[2]);                    // back to J2000 equatorial
     const cosLim = Math.cos(Math.min(89, radius) * D), out = new Map();
     for (let i = 0; i < FIELD_N; i++) {
