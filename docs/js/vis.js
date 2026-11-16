@@ -87,6 +87,8 @@ function planetEp(o, scope) {
   if (o.id === 'Moon') return (list.filter((x) => x.ep.afov / x.M >= 0.6).pop() || list[0]).ep;
   return (list.filter((x) => x.M <= 1.3 * scope.aperture).pop() || list[0]).ep;
 }
+/** A pair looks comfortably split when the eyepiece shows it this far apart: 4 arcminutes (2′ is only just separable). */
+export const SPLIT_ARCSEC = 240;
 export const LEVEL_NAMES = ['Obvious', 'Visible', 'Challenging', 'Not now'];
 export const DOTS = ['●●●', '●●○', '●○○', '○○○'];
 const levelOf = (m) => (m >= 1.5 ? 0 : m >= 0.6 ? 1 : m >= -0.2 ? 2 : 3);
@@ -134,7 +136,7 @@ export function rate(o, cond, scope) {
       const p = (o.pairs && o.pairs[0]) || {}, sep = p.sep ?? o.sep;
       if (!sep) return null;
       const limit = Math.max(116 / scope.aperture, 1.5), maxM = Math.max(...mags(scope).map((x) => x.M));
-      const split = sep / limit, needM = 120 / sep;
+      const split = sep / limit, needM = SPLIT_ARCSEC / sep;       // enough power for a comfortable split
       const ms = String(p.mags || '').split('/').map(Number).filter((x) => !Number.isNaN(x)), dm = ms.length > 1 ? Math.abs(ms[1] - ms[0]) : 0;
       let lv = levelOf(one.margin);
       if (split < 1 || needM > maxM * 1.3) lv = 3;

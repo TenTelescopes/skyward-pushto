@@ -80,8 +80,8 @@ export function drawEyepiece(cv, sky, o, tgt, ep, scope, opts = {}) {
     let dx = 0, dy = sepDeg;
     if (ax) { dx = (Math.cos(pr.pa * D2R) * ax.n.x + Math.sin(pr.pa * D2R) * ax.e.x) * sepDeg; dy = (Math.cos(pr.pa * D2R) * ax.n.y + Math.sin(pr.pa * D2R) * ax.e.y) * sepDeg; }
     const A = P(-dx / 2, -dy / 2), B = P(dx / 2, dy / 2), rA = Math.max(2.5, (9 - (mags[0] || 4)) * 1.8), rB = Math.max(2, (9 - (mags[1] || 6)) * 1.8);
-    // Resolvable: separation above the Dawes limit (116/D″) and magnified to ≥ 2′ apparent, a comfortable eye separation.
-    const dawes = 116 / scope.aperture, split = pr.sep >= dawes && mag * pr.sep >= 120;
+    // Split: separation above the Dawes limit (116/D″) and magnified to at least 4′ apparent, a comfortable eye separation.
+    const dawes = 116 / scope.aperture, split = pr.sep >= dawes && mag * pr.sep >= 240;
     c.fillStyle = col(255, 120, 70); c.beginPath(); c.arc(A.x, A.y, rA, 0, 7); c.fill(); c.beginPath(); c.arc(B.x, B.y, rB, 0, 7); c.fill();
     note = `${pr.c}: ${pr.sep}″ — ${pr.sep < dawes ? `below this scope's ${dawes.toFixed(2)}″ resolution limit` : split ? 'split at this power' : 'tight at this power; try a shorter eyepiece'}`;
   }

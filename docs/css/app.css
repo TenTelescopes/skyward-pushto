@@ -309,3 +309,9 @@ body::before, #gate::before { content: ""; position: fixed; inset: 0; z-index: -
 .sqdots { display: flex; justify-content: center; gap: 6px; margin-top: 4px; }
 .sqdots i { width: 7px; height: 7px; border-radius: 50%; background: var(--line); }
 .sqdots i.on { background: var(--hi); }
+
+.eprow { display: flex; gap: 8px; overflow-x: auto; margin: 10px 0 0; padding-bottom: 2px; -webkit-overflow-scrolling: touch; }
+.eprow figure { flex: 1 0 96px; max-width: 150px; margin: 0; text-align: center; }
+.eprow canvas { width: 100%; aspect-ratio: 1; display: block; background: #000; border-radius: 50%; border: 1px solid var(--line); }
+.eprow figcaption { font-size: 12px; color: var(--dim); margin-top: 4px; }
+.eprow figcaption b { color: var(--fg); }
