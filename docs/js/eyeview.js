@@ -132,7 +132,7 @@ export function drawEyepiece(cv, sky, o, tgt, ep, scope, opts = {}) {
     // when the eyepiece splits it cleanly. Draw what the eye would make of it instead: clearly apart when split, just
     // touching when tight, one star when below the telescope's limit. Wider pairs keep their true spacing.
     const L = Math.hypot(dx, dy) || 1, truePx = L * s, app = mag * pr.sep / 60;                                   // how far apart the pair looks to the eye, arcminutes
-    const want = !resolved ? 0 : split ? Math.min(18, 7 + 3 * Math.log2(app / 4)) * u : 4.5 * u, px = Math.max(truePx, want);   // wider at higher power
+    const want = !resolved ? 0 : split ? Math.min(18, 7 + 3 * Math.log2(app / 4)) * u : 4.5 * u, px = truePx >= want ? truePx : truePx + 0.4 * (want - truePx);   // wider at higher power; only 40% of the way from true scale to that spacing
     const hx = (dx / L) * px / 2 / s, hy = (dy / L) * px / 2 / s;
     const A = P(-hx, -hy), B = P(hx, hy);
     const pc = PAIR_CLASS[o.label] || '';

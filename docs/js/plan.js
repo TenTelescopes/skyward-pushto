@@ -58,11 +58,25 @@ export const SYNC_NEAR = 20;     // a sync star must be within this of the targe
 /**
  * Suggest an observing order for `rows` (plan items with .o) starting at `start`:
  * nearest-next while each target is up, targets that are about to set go first, and a bright sync star
- * (mag ≤ 2.6) is inserted whenever the next target is more than SYNC_DIST from the last sync — the star
+ * (mag ≤ 2.6) opens the plan and is inserted again whenever the next target is more than SYNC_DIST from the last sync — the star
  * nearest that target, so you align there and make only a short push. Each target you find and Sync on becomes
  * the new reference, so a sync star is only added before a long jump.
  * Returns { steps: [{ kind: 'sync'|'target', o, at: Date, alt, az, dist }], notUp: [rows] }.
  */
+/**
+ * The star to sync on before the first target of a session: bright (mag ≤ 2.6), comfortably placed (20°–75° up) and as
+ * close to that target as such a star gets. There is no distance limit here — a plan should always open with a fresh
+ * sync, even if the nearest good star is a fair swing away. Null when the first target is itself such a star.
+ */
+export function openingSync(sky, first, at) {
+  if (!first) return null;
+  if ((first.key || '').startsWith('st:') && first.mag != null && first.mag <= 2.6) return null;
+  const p = sky.altAz(first, at);
+  const best = sky.objects.filter((o) => o.key.startsWith('st:') && o.mag != null && o.mag <= 2.6)
+    .map((s) => ({ s, q: sky.altAz(s, at) })).filter((x) => x.q.alt > 20 && x.q.alt < 75)
+    .map((x) => ({ ...x, d: sep_(x.q, p) })).sort((a, b) => (a.d + 3 * a.s.mag) - (b.d + 3 * b.s.mag))[0];
+  return best ? { o: best.s, alt: best.q.alt, az: best.q.az, dist: best.d } : null;
+}
 export function routePlan(sky, rows, { start, hours, minAlt = 25, perTarget = null } = {}) {
   const end = start.getTime() + hours * 3600000;
   const each = (perTarget ?? Math.max(5, Math.min(20, hours * 60 / Math.max(1, rows.length)))) * 60000;
@@ -89,6 +103,12 @@ export function routePlan(sky, rows, { start, hours, minAlt = 25, perTarget = nu
         sync = own.o; cur = best.q; rest = rest.filter((x) => x !== own); t += each; continue;
       }
       if (best) { steps.push({ kind: 'sync', o: best.s, at, alt: best.q.alt, az: best.q.az, dist: best.d, first: !sync }); sync = best.s; }
+    }
+    // Every plan opens with a sync star, even when none sits close to the first target.
+    if (!steps.length) {
+      const open = openingSync(sky, r.o, at), own = open && rest.find((x) => x.o === open.o);
+      if (own) { steps.push({ kind: 'target', o: own.o, at, alt: open.alt, az: open.az, dist: null }); sync = own.o; cur = { alt: open.alt, az: open.az }; rest = rest.filter((x) => x !== own); t += each; continue; }
+      if (open) { steps.push({ kind: 'sync', o: open.o, at, alt: open.alt, az: open.az, dist: open.dist, first: true }); sync = open.o; }
     }
     steps.push({ kind: 'target', o: r.o, at, alt: p.alt, az: p.az, dist: sync ? sep_(sky.altAz(sync, at), p) : null });
     sync = r.o; cur = p; rest = rest.filter((x) => x !== r); t += each;

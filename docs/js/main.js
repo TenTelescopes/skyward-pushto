@@ -7,7 +7,7 @@ import { constellationAt, conName, altAzToJ2000 } from './locate.js';
 import { whereWords, recogniseWords, pickStars, checkAltitude, checkPair, chooseWaypoint } from './assist.js';
 import { drawEyepiece, newtonianMatrix } from './eyeview.js';
 import { theme, tint, applyShade, starTint } from './theme.js';
-import { LEVELS, planTargets, routePlan, nextDarkNight, interest, pickScore, varied, autoPlan, kindOf } from './plan.js';
+import { LEVELS, planTargets, routePlan, nextDarkNight, interest, pickScore, varied, autoPlan, kindOf, openingSync } from './plan.js';
 import { seenKeys, lastEntry, logStats, MILESTONES, newlyAchieved, logCSV } from './log.js';
 import { sound, initSound, cue, tickInterval } from './sound.js';
 import { blurbFor, doubleNature, NATURE_LABEL, NATURE_NOTE, STAR_CLASS } from '../data/blurbs.js';
@@ -294,6 +294,9 @@ function renderPlan() {
   const moonTxt = `${Math.round(n.moonFrac * 100)}% lit${n.moonRise ? ', rises ' + hm(n.moonRise) : ''}${n.moonSet ? ', sets ' + hm(n.moonSet) : ''}`;
   const T = P.items.filter((x) => !x.sync), nSync = P.items.length - T.length, nDone = T.filter((x) => P.done && P.done[x.key]).length;
   const skyName = state.skyq ? state.skyq.label : 'Suburban sky (a guess)';
+  // A plan put together by hand has no sync star at the front: suggest one.
+  const firstObj = P.items.length && !P.items[0].sync ? objByKey(P.items[0].key) : null;
+  let openStar = null; try { openStar = firstObj ? openingSync(sky, firstObj, start) : null; } catch (e) { /* no site yet */ }
   el.innerHTML = `<h2>Plan a session</h2>
     <div class="card">
       <div class="sess"><div><b>${dayLabel(start)} · ${hm(start)} – ${hm(end)}</b>
@@ -310,6 +313,7 @@ function renderPlan() {
       </div>
     </div>
     ${P.items.length ? `<div class="sech"><h3>Your plan <span class="muted small">${T.length} target${T.length === 1 ? '' : 's'}${nSync ? ` + ${nSync} sync star${nSync === 1 ? '' : 's'}` : ''}${nDone ? ` · ${nDone} done` : ''}</span></h3><button id="pl-reorder" class="mini">${planReorder ? 'Done' : 'Edit'}</button></div>
+      ${openStar ? `<div class="planbar" id="pl-open">Start with a sync star: <b>★ ${esc(openStar.o.label)}</b>, ${openStar.dist.toFixed(0)}° from ${esc((objByKey(P.items[0].key) || {}).label || 'your first target')}. Centring it first makes the arrows accurate from the start. <button id="pl-openadd" class="mini primary">Add it</button></div>` : ''}
       <ul class="list" id="pl-list">${P.items.map((it, i) => planItemHTML(it, i)).join('')}</ul>
       <div class="btnrow"><button id="pl-go" class="primary">Start observing</button><button id="pl-route">Best order + sync stars</button></div>
       <div class="chips wrap"><button id="pl-bytime">Order by time</button><button id="pl-nosync" ${nSync ? '' : 'disabled'}>Remove sync stars</button><button id="pl-auto">Rebuild for me</button><button id="pl-clear">Clear</button></div>
@@ -344,6 +348,7 @@ function renderPlan() {
     toast(`Plan built: ${pick.length} targets${r.nSync ? ` and ${r.nSync} sync star${r.nSync === 1 ? '' : 's'}` : ''}. Reorder or remove anything you like.`, 4500);
   };
   bindPlanList();
+  if ($('#pl-openadd')) $('#pl-openadd').onclick = () => keepScroll(() => { P.items.unshift({ key: openStar.o.key, sync: true }); save(); renderPlan(); toast(`${openStar.o.label} added as your opening sync star`, 2500); });
   if ($('#pl-reorder')) $('#pl-reorder').onclick = () => keepScroll(() => { planReorder = !planReorder; renderPlan(); });
   if ($('#pl-route')) {
     $('#pl-go').onclick = () => {
@@ -391,7 +396,7 @@ function bindPlanList() {
   ul.querySelectorAll('[data-up]').forEach((b) => b.onclick = () => mv(+b.dataset.up, +b.dataset.up - 1));
   ul.querySelectorAll('[data-dn]').forEach((b) => b.onclick = () => mv(+b.dataset.dn, +b.dataset.dn + 1));
   ul.querySelectorAll('[data-rm]').forEach((b) => b.onclick = () => { P.items.splice(+b.dataset.rm, 1); redo(); });
-  ul.querySelectorAll('[data-goplan]').forEach((d) => d.onclick = () => openObject(d.dataset.goplan, { row: rowFor(d.dataset.goplan) }));
+  ul.querySelectorAll('[data-goplan]').forEach((d) => d.onclick = () => openObject(d.dataset.goplan, { row: rowFor(d.dataset.goplan), keys: [...ul.querySelectorAll('[data-goplan]')].map((x) => x.dataset.goplan), rowFor }));
 }
 function fillPlanSuggestions() {
   const ul = $('#pl-sugg'); if (!ul) return;
@@ -414,7 +419,7 @@ function fillPlanSuggestions() {
     if (i >= 0) P.items.splice(i, 1); else P.items.push({ key: k });
     save(); const y = $('main').scrollTop, h0 = $('#pl-sugg').offsetTop; renderPlan(); fillPlanSuggestions(); $('main').scrollTop = y + ($('#pl-sugg').offsetTop - h0);
   });
-  ul.querySelectorAll('[data-info]').forEach((d) => d.onclick = () => { const k = d.dataset.info; openObject(k, { row: rowFor(k) }); });
+  ul.querySelectorAll('[data-info]').forEach((d) => d.onclick = () => { const k = d.dataset.info; openObject(k, { row: rowFor(k), keys: [...ul.querySelectorAll('[data-info]')].map((x) => x.dataset.info), rowFor }); });
   const more = $('#pl-more'); if (more) more.onclick = () => { planLimit += 60; fillPlanSuggestions(); };
   restoreScroll();
 }
@@ -1950,6 +1955,7 @@ function renderLog() {
 
 // ---------------------------------------------------------------- OBJECT SHEET: what it is, how it looks tonight, what to do with it
 function closeSheet() { $('#sheet').classList.add('hidden'); }
+let sheetStep = null;                               // steps the open target page through the list it came from
 function openObject(key, opt = {}) {
   const o = objByKey(key); if (!o) return;
   refreshSky(false);
@@ -1957,9 +1963,13 @@ function openObject(key, opt = {}) {
   const row = opt.row || null, r = row || (o.alt > 0 ? rateNow(o) : null);
   const blurb = blurbFor(o), last = lastEntry(state.log, key), seen = seenSet().has(key);
   const inPlan = planList().some((x) => x.key === key && !x.sync), isTarget = !o.key.startsWith('st:') || o.show;
+  // Opened from a list: step through that list with the arrows or a sideways swipe.
+  const keys = opt.keys && opt.keys.length > 1 ? opt.keys : null, at = keys ? keys.indexOf(key) : -1, nav = at >= 0 ? { i: at, n: keys.length } : null;
+  sheetStep = nav ? (d) => { const k = keys[at + d]; if (k) openObject(k, { ...opt, row: opt.rowFor ? opt.rowFor(k) : null }); } : null;
   card.innerHTML = `<div class="sheet-h"><div><div class="target-h"><span class="name">${esc(o.label)}</span>${o.name ? `<span class="cname">${esc(o.name)}</span>` : ''}</div>
       <div class="muted small">${esc(kindLabel(o))}${o.con ? ' in ' + esc(fullCon(o.con)) : ''}${o.key.startsWith('dso:') && o.label !== o.id ? ' · ' + esc(o.id) : ''}</div></div>
       <button class="ibtn" id="sh-x" aria-label="Close">✕</button></div>
+    ${nav ? `<div class="shnav"><button id="sh-prev" aria-label="Previous target" ${nav.i === 0 ? 'disabled' : ''}>${ICON.prev}</button><span>${nav.i + 1} of ${nav.n} · swipe for the next</span><button id="sh-next" aria-label="Next target" ${nav.i === nav.n - 1 ? 'disabled' : ''}>${ICON.next}</button></div>` : ''}
     ${r ? `<p class="rateline"><span class="dots lv${r.level}">${DOTS[r.level]}</span> <b>${LEVEL_NAMES[r.level]}</b> ${row ? 'at its best in your session' : 'right now'} — ${esc(row ? row.desc : describe(o, r))}</p>` : (o.alt <= 0 ? '<p class="rateline muted">Below the horizon right now.</p>' : '')}
     ${blurb ? `<p class="blurb">${esc(blurb)}</p>` : ''}
     ${doubleNature(o) ? `<p class="small">${esc(NATURE_NOTE[doubleNature(o)])}</p>` : ''}
@@ -1993,6 +2003,12 @@ function openObject(key, opt = {}) {
   });
   box.onclick = (e) => { if (e.target === box) closeSheet(); };
   $('#sh-x').onclick = closeSheet;
+  if (nav) { $('#sh-prev').onclick = () => sheetStep(-1); $('#sh-next').onclick = () => sheetStep(1); }
+  if (!card._swipe) {                                // one listener for the life of the page; it calls whatever list is current
+    card._swipe = true; let t0 = null;
+    card.addEventListener('touchstart', (e) => { const row = e.target.closest('.eprow'); t0 = e.touches.length === 1 && !(row && row.scrollWidth > row.clientWidth + 4) ? { x: e.touches[0].clientX, y: e.touches[0].clientY } : null; }, { passive: true });
+    card.addEventListener('touchend', (e) => { if (!t0 || !sheetStep) return; const dx = e.changedTouches[0].clientX - t0.x, dy = e.changedTouches[0].clientY - t0.y; t0 = null; if (Math.abs(dx) > 55 && Math.abs(dx) > 2 * Math.abs(dy)) sheetStep(dx < 0 ? 1 : -1); }, { passive: true });
+  }
   $('#sh-go').onclick = () => { closeSheet(); state.target = key; save(); showTab('push'); };
   if ($('#sh-plan')) $('#sh-plan').onclick = () => {
     const P = planState(), i = P.items.findIndex((x) => x.key === key && !x.sync);

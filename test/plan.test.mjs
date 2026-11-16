@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { Sky } from '../docs/js/astro.js';
-import { planTargets, routePlan, nextDarkNight } from '../docs/js/plan.js';
+import { planTargets, routePlan, nextDarkNight, openingSync } from '../docs/js/plan.js';
 import { rate, skyFromNelm, describe } from '../docs/js/vis.js';
 
 const sky = new Sky(); sky.setSite(43.55, -80.25, 330);          // Guelph
@@ -84,4 +84,25 @@ ok('showpiece stars are targets; alignment stars are not', () => {
   assert.ok(find('Albireo').pairs && find('Mizar').pairs, 'famous doubles carry pair data');
 });
 ok('corrected star names keep their ids', () => { const m = sky.objects.find((o) => o.key === 'st:Merck'); assert.equal(m.label, 'Merak'); });
+ok('every routed plan opens with a sync star (or a bright star that serves as one)', () => {
+  for (const date of ['2026-01-15', '2026-04-15', '2026-07-15', '2026-10-15', '2026-11-16']) {
+    const day = new Date(date + 'T12:00:00-05:00'), n = sky.night(day), start = n.astro || n.naut;
+    for (const scope of [S150, S200]) {
+      const rows = planTargets(sky, { start, hours: 2, scope });
+      for (const pick of [autoPlan(rows, { hours: 2 }), rows.filter((r) => r.o.planet).slice(0, 2), rows.filter((r) => r.o.t === 'GX').slice(0, 3)]) {
+        if (!pick.length) continue;
+        const { steps } = routePlan(sky, pick, { start, hours: 2, minAlt: 20 });
+        if (!steps.length) continue;
+        const f = steps[0], bright = f.o.key.startsWith('st:') && f.o.mag <= 2.6;
+        assert.ok(f.kind === 'sync' || bright, `${date}: plan opens with ${f.o.label} (${f.kind})`);
+      }
+    }
+  }
+});
+ok('the opening sync star is bright, well placed, and not needed when the first target is a bright star', () => {
+  const at = new Date('2026-11-16T21:00:00-05:00'), m57 = sky.objects.find((o) => o.label === 'M57'), vega = sky.objects.find((o) => o.key === 'st:Vega');
+  const s = openingSync(sky, m57, at);
+  assert.ok(s && s.o.mag <= 2.6 && s.alt > 20 && s.alt < 75, 'a bright star at a comfortable height');
+  assert.equal(openingSync(sky, vega, at), null);
+});
 console.log('plan tests passed');
