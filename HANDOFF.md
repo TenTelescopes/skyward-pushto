@@ -92,3 +92,4 @@ unrelated extra star in the object-page sentence. Still open with Bryan: whether
 ## Build 55 notes
 - Splash now uses Bryan's own side-view render (`docs/icons/skyward.webp`, cut out from his image) instead of a drawing. He wants to start realistic and move toward whimsical from there. The tube no longer swings (single image).
 - First-run question "Does your telescope have a phone dock?" (`askDock` in main.js, `state.dock` 'yes'/'no', changeable in Setup). Naming: the **phone dock** is standard; it sits on a **bridge mount** that is specific to the telescope. No link for people without a dock yet (Bryan has not given one). `state.dock` does not change the pointing maths.
+- Build 56: splash image regenerated from Bryan's second, line-free render: simplified, thin lines between features, slim cream edge, gold sparkle, original logo pasted back. He called it "fine for a little phone splash screen".
