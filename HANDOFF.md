@@ -1,6 +1,6 @@
 # Handoff notes for the next working session
 
-Read this first, then `README.md`. Written 2026-11-16 at Build 42.
+Read this first, then `README.md`. Written 2026-11-16 at Build 44.
 
 ## How the project is worked on
 
@@ -17,7 +17,7 @@ Read this first, then `README.md`. Written 2026-11-16 at Build 42.
 
 ## Testing
 
-- Unit tests: `npm test` (9 files in `test/`). All pass at Build 42.
+- Unit tests: `npm test` (9 files in `test/`). All pass at Build 44.
 - Browser walkthroughs: `tools/walk/` (Playwright, iPhone-sized). Serve `docs/` first: `python3 -m http.server 8765`
   from `docs/`, then `node tools/walk/<script>.js`. They load `http://localhost:8765/?sim`, which shows a
   "Simulate sensors" button on the start screen. In the page, `window.sim` is the simulated phone (`bend`, `noise`,
@@ -27,6 +27,7 @@ Read this first, then `README.md`. Written 2026-11-16 at Build 42.
   - `look28.js`: splash, start screen, Day/Night fader, in-app look (screenshots).
   - `guess27.js`: unaligned sky view with no compass, direction set by hand, no sensor data.
   - `corr.js`, `jump.js`, `domeshot.js`: sky correction end to end, heading jumps, the dome card (slow: allow 5–10 min).
+  - `blank43.js`: draws every target in every eyepiece and lists any preview that comes up empty.
   - `gate.mjs`: thousands of simulated sessions for the sky-correction safeguards (Node only, no browser).
   - Start-screen flow in scripts: untick `[data-step=...]`, click `[data-act=...]`, then click `#l-go`.
 - Nothing has been tested on a real telescope. On a real iPhone only informally, by Bryan.

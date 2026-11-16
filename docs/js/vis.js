@@ -113,11 +113,19 @@ function objectGeometry(o) {
  * cond: { alt, sunAlt, moonAlt, moonFrac, moonSep, nelm }
  * Returns { level 0..3, margin, ep (best eyepiece), cause } or null when the model has nothing to go on.
  */
+/** True when an object is more than 1.5 times wider than the widest eyepiece's true field. */
+export function tooWide(o, scope) {
+  if (!o.maj || !scope || !scope.eyepieces || !scope.eyepieces.length) return false;
+  const widest = Math.max(...scope.eyepieces.map((e) => (e.afov || 62) / (scope.fl / e.fl)));      // degrees
+  return o.maj / 60 > widest * 1.5;
+}
 export function rate(o, cond, scope) {
   const { alt, sunAlt = -30, moonAlt = -90, moonFrac = 0, moonSep = 180, nelm = DEFAULT_NELM } = cond;
   if (alt <= 0) return { level: 3, margin: -9, ep: null, cause: 'below' };
   const key = o.key || '', isStar = key.startsWith('st:'), isDouble = key.startsWith('ds:') || (isStar && !!o.pairs);
   if (isStar && !o.show) return null;                                // alignment stars aren't targets
+  // Star patterns far bigger than the widest eyepiece field are naked-eye or binocular sights, not telescope targets.
+  if (o.t === 'AS' && o.maj && tooWide(o, scope)) return null;
   if (o.planet && DAY_PLANETS.includes(o.id)) return { level: 0, margin: 5, ep: planetEp(o, scope), cause: null };
   if (sunAlt > 0) return { level: 3, margin: -9, ep: null, cause: 'daylight' };   // with the Sun up: Moon, Venus, Jupiter, Saturn, Mars only
   if (o.planet) {

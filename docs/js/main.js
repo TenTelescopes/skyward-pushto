@@ -11,7 +11,7 @@ import { LEVELS, planTargets, routePlan, nextDarkNight, interest, pickScore, var
 import { seenKeys, lastEntry, logStats, MILESTONES, newlyAchieved, logCSV } from './log.js';
 import { sound, initSound, cue, tickInterval } from './sound.js';
 import { blurbFor, doubleNature, NATURE_LABEL, NATURE_NOTE, STAR_CLASS } from '../data/blurbs.js';
-import { rate, describe, DOTS, LEVEL_NAMES, DEFAULT_NELM } from './vis.js';
+import { rate, describe, DOTS, LEVEL_NAMES, DEFAULT_NELM, tooWide } from './vis.js';
 import { DAYLIGHT, STYLES, PENALTY, pickTargets, routeOrder, pathLength, tokenFor, buildTokenIndex, encodeChallenge, decodeChallenge, challengeId, encodeResult, decodeResult, points, rank, fmtTime, dwell } from './game.js';
 import { submitScore, fetchBoard, flushQueue } from './wixscores.js';
 import qrcode from '../vendor/qrcode.mjs';
@@ -1963,8 +1963,8 @@ function openObject(key, opt = {}) {
     ${r ? `<p class="rateline"><span class="dots lv${r.level}">${DOTS[r.level]}</span> <b>${LEVEL_NAMES[r.level]}</b> ${row ? 'at its best in your session' : 'right now'} — ${esc(row ? row.desc : describe(o, r))}</p>` : (o.alt <= 0 ? '<p class="rateline muted">Below the horizon right now.</p>' : '')}
     ${blurb ? `<p class="blurb">${esc(blurb)}</p>` : ''}
     ${doubleNature(o) ? `<p class="small">${esc(NATURE_NOTE[doubleNature(o)])}</p>` : ''}
-    ${isTarget && o.alt != null ? `<div class="eprow" id="sh-eps">${profile().eyepieces.map((e, i) => `<figure><canvas width="300" height="300" data-epi="${i}"></canvas><figcaption><b>${esc(e.name)}</b> ${(profile().fl / e.fl).toFixed(0)}×<span id="sh-epn${i}"></span></figcaption></figure>`).join('')}</div>
-      <p class="muted small" style="text-align:center;margin-top:2px">In each of your eyepieces, to scale. Brightness is not to scale. Add or change eyepieces in Setup.</p>` : ''}
+    ${tooWide(o, profile()) && o.t === 'AS' ? `<p class="small"><b>A naked-eye pattern.</b> At ${(o.maj / 60).toFixed(0)}° across it is far bigger than any eyepiece field, so there is no eyepiece view. Use Push to it and the sky chart to find it, then look up.</p>` : isTarget && o.alt != null ? `<div class="eprow" id="sh-eps">${profile().eyepieces.map((e, i) => `<figure><canvas width="300" height="300" data-epi="${i}"></canvas><figcaption><b>${esc(e.name)}</b> ${(profile().fl / e.fl).toFixed(0)}×<span id="sh-epn${i}"></span></figcaption></figure>`).join('')}</div>
+      <p class="muted small" id="sh-epcap" style="text-align:center;margin-top:2px">In each of your eyepieces, to scale. Brightness is not to scale. Add or change eyepieces in Setup.</p>` : ''}
     <div class="kv">
       ${row ? `<span>Best time</span><span>${hm(row.best)} · ${row.alt.toFixed(0)}° ${compassName(row.az)}</span>` : ''}
       <span>Right now</span><span>${o.alt > 0 ? `${o.alt.toFixed(0)}° up, ${compassName(o.az)}` : 'below the horizon'}</span>
@@ -1983,6 +1983,7 @@ function openObject(key, opt = {}) {
       const longest = p.eyepieces.reduce((a, x) => (x.fl > a.fl ? x : a), p.eyepieces[0]);
       const res = drawEyepiece(cv, sky, o.pairs && o.key.startsWith('st:') ? { ...o, t: 'DS' } : o, tg, e, p, { matrix: state.rot180 ? newtonianMatrix(tg, p.focuser ?? 90) : null, bright: vis(), refExit: p.aperture / (p.fl / longest.fl), thumb: true });
       const n = $('#sh-epn' + cv.dataset.epi); if (n && res) n.textContent = ` · ${res.tfov >= 1 ? res.tfov.toFixed(1) + '°' : (res.tfov * 60).toFixed(0) + '′'}`;
+      if (res && res.enlarged) { const cap = $('#sh-epcap'); if (cap) cap.textContent = `In each of your eyepieces. The planet is drawn ${res.enlarged}× larger than scale so you can see its shape. In the real eyepiece it looks smaller than this, but sharp.`; }
     } catch (err) { console.error(err); }
   });
   box.onclick = (e) => { if (e.target === box) closeSheet(); };

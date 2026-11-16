@@ -24,7 +24,7 @@ function skyAxes(sky, o, date) {
 export function drawEyepiece(cv, sky, o, tgt, ep, scope, opts = {}) {
   const c = cv.getContext('2d'), W = cv.width, H = cv.height, cx = W / 2, cy = H / 2, Rpx = W * 0.47, k = opts.bright ?? 1;
   const col = (r, g = 0, b = 0, a = 1) => tint(r, g, b, a, k);
-  const date = new Date();
+  const date = opts.date || new Date();
   const mag = scope.fl / ep.fl, tfov = ep.afov / mag, rad = tfov / 2, s = Rpx / rad;   // px per degree
   // Surface brightness of extended things (and of the sky background) scales with exit pupil², capped at the eye's
   // pupil (~7 mm). Stars are points and stay as bright. `refExit` is the longest eyepiece's exit pupil, so its view = 1.
@@ -63,7 +63,7 @@ export function drawEyepiece(cv, sky, o, tgt, ep, scope, opts = {}) {
     }
   };
   const t = o.planet ? 'PL' : o.key.startsWith('ds:') ? 'DS' : o.t;
-  let note = '';
+  let note = '', enlarged = 0;
   if (t === 'GX') ell(o.maj || 3, o.min, o.pa, (a, b) => { glow(a, b, 0.55); c.scale(1, a / b); glow(a * 0.12, b * 0.12, 0.9); });
   else if (t === 'GC') ell(o.maj || 5, o.maj || 5, 0, (a) => { glow(a, a, 0.85); c.globalAlpha = 1; /* member stars are points: they don't dim, so a globular resolves better at high power */ let sd = 12345; const rnd = () => ((sd = (sd * 16807) % 2147483647) / 2147483647); for (let i = 0; i < 90; i++) { const r = a * Math.sqrt(rnd()) * 0.9, th = rnd() * 7; c.fillStyle = col(255, 90, 50, 0.75); c.fillRect(Math.cos(th) * r, Math.sin(th) * r, 2, 2); } c.globalAlpha = shown; });
   else if (t === 'PN') ell(o.maj || 1, o.min, o.pa, (a, b) => { c.fillStyle = col(200, 60, 40, 0.75); c.beginPath(); c.ellipse(0, 0, a, b, 0, 0, 7); c.fill(); if (/^M57$|Ring/.test(o.label + o.name)) { c.fillStyle = col(10, 0, 0); c.beginPath(); c.ellipse(0, 0, a * 0.45, b * 0.45, 0, 0, 7); c.fill(); } });
@@ -85,12 +85,17 @@ export function drawEyepiece(cv, sky, o, tgt, ep, scope, opts = {}) {
   // planets / Moon / double stars at the centre
   if (t === 'PL') {
     const d = sky.diameter(o.id, date);
-    const r = d ? (d / 60 / 2) * s : 3;
+    // In the small previews a planet drawn to scale is a pixel or two, so it is drawn 4x larger there (the caption says so).
+    const boost = opts.thumb && d && d < 2 ? 4 : 1;
+    const r = d ? (d / 60 / 2) * s * boost : 3;
     if (r > 3) c.globalAlpha = Math.max(0.35, shown);  // a resolved disc is an extended object too
-    c.fillStyle = col(255, 110, 60); c.beginPath(); c.arc(cx, cy, Math.max(2, r), 0, 7); c.fill();
-    if (o.id === 'Saturn' && r > 3) { c.strokeStyle = col(255, 110, 60); c.lineWidth = Math.max(1, r * 0.18); c.beginPath(); c.ellipse(cx, cy, r * 2.25, r * 0.7, -0.3, 0, 7); c.stroke(); }
+    const pc = col(255, 110, 60);
+    c.fillStyle = pc; c.beginPath(); c.arc(cx, cy, Math.max(1.5, r), 0, 7); c.fill();
+    if (o.id === 'Saturn' && r > 1.2) { c.strokeStyle = pc; c.lineWidth = Math.max(1, r * 0.22); c.beginPath(); c.ellipse(cx, cy, r * 2.25, r * 0.7, -0.3, 0, 7); c.stroke(); }
+    if (o.id === 'Jupiter' && r > 4) { c.strokeStyle = 'rgba(0,0,0,0.45)'; c.lineWidth = Math.max(1, r * 0.13); for (const y of [-0.3, 0.3]) { const w = r * Math.sqrt(1 - y * y); c.beginPath(); c.moveTo(cx - w, cy + y * r); c.lineTo(cx + w, cy + y * r); c.stroke(); } }
     c.globalAlpha = 1;
     note = d ? `${o.id} disc ${d >= 1 ? d.toFixed(1) + '′' : (d * 60).toFixed(0) + '″'} across` : '';
+    if (boost > 1) enlarged = boost;
   } else if (t === 'DS' && o.pairs && o.pairs.length) {
     const pr = o.pairs[0], sepDeg = pr.sep / 3600, mags = String(pr.mags).split('/').map(Number);
     let dx = 0, dy = sepDeg;
@@ -115,7 +120,7 @@ export function drawEyepiece(cv, sky, o, tgt, ep, scope, opts = {}) {
   };
   if (ax) { mark(ax.n.x, ax.n.y, 'N'); mark(ax.e.x, ax.e.y, 'E'); }
   mark(0, 1, '↑Z', true);
-  return { mag, tfov, note, exit, rel };
+  return { mag, tfov, note, enlarged, exit, rel };
 }
 
 // ---------------------------------------------------------------- Newtonian image orientation
