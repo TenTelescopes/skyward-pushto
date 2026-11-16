@@ -281,20 +281,20 @@ body::before, #gate::before { content: ""; position: fixed; inset: 0; z-index: -
 /* ---- splash: two seconds of fun, then out of the way. Pure CSS so it shows before the app has loaded. */
 #splash { position: fixed; inset: 0; z-index: 60; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; pointer-events: none;
   background: linear-gradient(#05091e, #121842 55%, #3a2c60); color: #e9edff; animation: splout .6s ease 1.9s forwards; }
-.spl-art { width: min(70vw, 300px); overflow: visible; }
+.spl-art { width: min(72vw, 310px); overflow: visible; margin-bottom: 10px; }
 .spl-stars circle { animation: twinkle 1.6s ease-in-out infinite alternate; }
 .spl-stars circle:nth-child(2n) { animation-delay: -.6s; } .spl-stars circle:nth-child(3n) { animation-delay: -1.1s; }
 .spl-shoot { stroke-dasharray: 46; stroke-dashoffset: 46; animation: shoot .7s ease-out .55s forwards; }
-.spl-tube { transform-origin: 100px 84px; transform: rotate(0deg); animation: tip .9s cubic-bezier(.3, 1.5, .5, 1) .15s forwards; }
-.spl-name { font-size: 34px; font-weight: 700; color: #ffd680; letter-spacing: .3px; animation: rise .6s ease .2s both; }
+.spl-tube { transform-origin: 100px 92px; transform: rotate(0deg); animation: tip .9s cubic-bezier(.3, 1.5, .5, 1) .15s forwards; }
+.spl-name { font-size: 32px; font-weight: 600; color: #ffd680; letter-spacing: 1.5px; animation: rise .6s ease .2s both; }
 .spl-name span { font-weight: 400; color: #e9edff; }
-.spl-tag { font-size: 16px; color: #a0abd4; animation: rise .6s ease .5s both; }
+.spl-tag { font-size: 13px; letter-spacing: 3px; text-transform: uppercase; color: #a0abd4; animation: rise .6s ease .5s both; }
 @keyframes twinkle { from { opacity: .25; } to { opacity: 1; } }
 @keyframes shoot { 0% { stroke-dashoffset: 46; opacity: 1; } 70% { opacity: 1; } 100% { stroke-dashoffset: -46; opacity: 0; } }
-@keyframes tip { to { transform: rotate(-36deg); } }
+@keyframes tip { to { transform: rotate(-40deg); } }
 @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
 @keyframes splout { to { opacity: 0; visibility: hidden; } }
-@media (prefers-reduced-motion: reduce) { #splash { animation-delay: .9s; } .spl-tube, .spl-shoot, .spl-stars circle, .spl-name, .spl-tag { animation: none; } .spl-tube { transform: rotate(-36deg); } }
+@media (prefers-reduced-motion: reduce) { #splash { animation-delay: .9s; } .spl-tube, .spl-shoot, .spl-stars circle, .spl-name, .spl-tag { animation: none; } .spl-tube { transform: rotate(-40deg); } }
 
 /* start screen holds still when you switch activity: it sits at the top, and every activity shows the same three stops */
 #gate > .card { margin: 0 0 auto; }
