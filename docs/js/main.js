@@ -2046,8 +2046,10 @@ function renderLaunch() {
     <h3 class="lq">What are we up to?</h3>
     <div class="lgrid">${ACTIVITIES.map(([k, t, sub, ic]) => `<button class="act${k === act ? ' on' : ''}" data-act="${k}"><svg class="ic" viewBox="0 0 24 24">${ic}</svg><b>${t}</b><span class="muted">${sub}</span></button>`).join('')}</div>
     <div class="path">
-      <div class="pnote">${stops.some((k) => k !== 'sky') ? 'Your path — tap a star to skip a stop' : 'Nothing to set up. One optional stop:'}</div>
-      ${stops.map((k) => `<label class="stop"><input type="checkbox" data-step="${k}" ${L[k] ? 'checked' : ''}><span><b>${STEP_INFO[k][0]}</b><span class="muted">${esc(L[k] ? status[k] : 'skipped')}</span></span></label>`).join('')}
+      <div class="pnote">Your path — tap a star to skip a stop</div>
+      ${['check', 'sky', 'align'].map((k) => (stops.includes(k)
+    ? `<label class="stop"><input type="checkbox" data-step="${k}" ${L[k] ? 'checked' : ''}><span><b>${STEP_INFO[k][0]}</b><span class="muted">${esc(L[k] ? status[k] : 'skipped')}</span></span></label>`
+    : `<div class="stop na"><input type="checkbox" disabled aria-hidden="true"><span><b>${STEP_INFO[k][0]}</b><span class="muted">not needed for this</span></span></div>`)).join('')}
       <div class="stop end"><span class="dest"></span><button id="l-go" class="primary">${GO[act]}</button></div>
     </div>
     <details class="more"><summary>How it works</summary>
@@ -2057,7 +2059,7 @@ function renderLaunch() {
       <li><b>Tap Sync whenever you centre something.</b> It keeps the pointing accurate all night.</li></ol>
       <p class="muted small">Works offline. Add it to your Home Screen for a full-screen app.</p></details>`;
   $('#launch').querySelectorAll('[data-step]').forEach((c) => c.onchange = () => { state.launch[c.dataset.step] = c.checked; save(); renderLaunch(); });
-  $('#launch').querySelectorAll('[data-act]').forEach((b) => b.onclick = () => { state.launchAct = b.dataset.act; save(); renderLaunch(); });
+  $('#launch').querySelectorAll('[data-act]').forEach((b) => b.onclick = () => { const g = $('#gate'), y = g.scrollTop; state.launchAct = b.dataset.act; save(); renderLaunch(); g.scrollTop = y; });
   $('#l-go').onclick = () => launch(act);
   $('#l-shade').onclick = (e) => { e.stopPropagation(); openShade(); };
   if ($('#l-resume')) $('#l-resume').onclick = () => launch('resume');
