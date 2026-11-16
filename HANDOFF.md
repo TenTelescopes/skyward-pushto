@@ -1,6 +1,6 @@
 # Handoff notes for the next working session
 
-Read this first, then `README.md`. Written 2026-11-16 at Build 34.
+Read this first, then `README.md`. Written 2026-11-16 at Build 36.
 
 ## How the project is worked on
 
@@ -17,7 +17,7 @@ Read this first, then `README.md`. Written 2026-11-16 at Build 34.
 
 ## Testing
 
-- Unit tests: `npm test` (9 files in `test/`). All pass at Build 34.
+- Unit tests: `npm test` (9 files in `test/`). All pass at Build 36.
 - Browser walkthroughs: `tools/walk/` (Playwright, iPhone-sized). Serve `docs/` first: `python3 -m http.server 8765`
   from `docs/`, then `node tools/walk/<script>.js`. They load `http://localhost:8765/?sim`, which shows a
   "Simulate sensors" button on the start screen. In the page, `window.sim` is the simulated phone (`bend`, `noise`,
@@ -67,6 +67,13 @@ Plan:
 This was deferred because the previous session could not install packages or reach CelesTrak from its workspace.
 Check both first. If the workspace still cannot reach CelesTrak, vendor the library, mock the data for tests, and tell
 Bryan the live fetch is untested until he tries it.
+
+## Double-star classification (started in Build 36, incomplete)
+
+`docs/data/blurbs.js` has `DOUBLE_NATURE`: binary / multiple / optical / unsure for about two dozen well-known doubles,
+entered from general knowledge. The other ~95 show as plain "Double star". Fill the rest from a real source: the
+Washington Double Star Catalog note codes (orbit, common proper motion, same or different parallax) or Gaia distances
+for both components. The catalogue entries carry a `wds` discoverer code to match on. No optical doubles are marked yet.
 
 ## Smaller ideas not built
 

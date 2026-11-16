@@ -30,6 +30,36 @@ export const STAR_PAIRS = {
   Izar: { c: 'AB', sep: 2.9, pa: 343, mags: '2.6/4.8' },
 };
 
+/**
+ * What kind of double each one is. "Double star" is the umbrella term for two stars that look close together.
+ *   binary   — a true pair, bound by gravity and orbiting each other (also called a physical double)
+ *   multiple — three or more stars bound together
+ *   optical  — an optical double: a chance line-up of two unrelated stars at different distances
+ *   unsure   — astronomers have not settled it
+ * Only well-established cases are listed, from general knowledge. Anything not listed is shown simply as
+ * "Double star". To do: fill the rest from the Washington Double Star Catalog notes or Gaia distances.
+ * Keys are the labels the app shows.
+ */
+export const DOUBLE_NATURE = {
+  Keid: 'multiple', '61 Cyg': 'binary', Achird: 'binary', Almaak: 'multiple', Almach: 'multiple', 'Cor Caroli': 'binary', Mesarthim: 'binary',
+  Polaris: 'multiple', Rasalgethi: 'binary', 'Xi Sco': 'multiple', Tegmen: 'multiple', 'Sigma CrB': 'binary', 'Gamma 2 Del': 'binary', Kuma: 'binary',
+  'Theta 1 Ser': 'binary', 'Beta Mon': 'multiple', 'Epsilon 1 Lyr': 'multiple', Trapezium: 'multiple', Alkalurops: 'multiple',
+  Mizar: 'multiple', Castor: 'multiple', Algieba: 'binary', Izar: 'binary', Albireo: 'unsure',
+};
+export const NATURE_LABEL = { binary: 'Binary star', multiple: 'Multiple star', optical: 'Optical double', unsure: 'Double star' };
+export const NATURE_NOTE = {
+  binary: 'A binary star: a true pair, held together by gravity and orbiting each other.',
+  multiple: 'A multiple star: three or more stars bound together by gravity, though you may only split two of them.',
+  optical: 'An optical double: the two stars only line up from where we stand. They are at different distances and are not a pair.',
+  unsure: 'A double star. Whether these two really orbit each other is still debated.',
+  unknown: 'A double star: two stars that look close together. The app does not yet know whether this is a true pair (a binary) or a chance line-up (an optical double).',
+};
+/** 'binary' | 'multiple' | 'optical' | 'unsure' | 'unknown' for a double, or null for anything else. */
+export function doubleNature(o) {
+  if (!o || !(o.t === 'DS' || ((o.key || '').startsWith('st:') && o.pairs))) return null;
+  return DOUBLE_NATURE[o.label] || DOUBLE_NATURE[o.id] || 'unknown';
+}
+
 export const BLURBS = {
   // ---- Solar system
   Moon: 'Craters, mountains and dark lava plains in sharp relief. The best views are along the line between light and shadow, not at full Moon.',

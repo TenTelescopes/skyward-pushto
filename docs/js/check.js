@@ -107,9 +107,9 @@ export function gradeCheck({ sensors, reversal, still, swing, sweep, turns }, r)
   // 3. Tilt consistency (reversal repeatability). Bias itself is absorbed by alignment, so it is informational.
   if (reversal) {
     const rep = reversal.pairs.length > 1 ? Math.max(reversal.pitchBiasStd, reversal.rollBiasStd) : null;
-    add('tilt', 'Tilt sensor consistency', rep == null ? 'needs 2 pairs' : am(rep), by(rep, r / 20, r / 6), 'Tilt readings differed between identical placements. Put the phone against the same edge each time on a firm table, then rerun; if it stays high, the tilt sensor itself is inconsistent.');
+    add('tilt', 'Tilt sensor consistency', rep == null ? 'needs 2 pairs' : am(rep), by(rep, r / 20, r / 6), 'Tilt readings differed between identical placements. Put the phone against the same edge each time on a firm table, and make sure it is not rocking on its camera bump (a case helps), then rerun; if it stays high, the tilt sensor itself is inconsistent.');
     const b = Math.hypot(reversal.pitchBias, reversal.rollBias);
-    add('bias', 'Tilt sensor offset', am(b), b <= 60 ? 'good' : b <= 180 ? 'ok' : 'poor', b > 60 ? 'Large but fixed — a 2-star alignment calibrates it out.' : 'Calibrated out by alignment either way.', false);
+    add('bias', 'Tilt sensor offset', am(b), b <= 60 ? 'good' : b <= 180 ? 'ok' : 'poor', b > 60 ? 'Large but fixed — a camera bump that tilts the phone on the table shows up here too. A 2-star alignment calibrates it out.' : 'Calibrated out by alignment either way.', false);
   } else add('tilt', 'Tilt sensor consistency', '—', 'na', '');
   // 4. Noise: jitter while still, both axes combined, vs the field.
   if (still) {

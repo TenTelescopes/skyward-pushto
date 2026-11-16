@@ -10,7 +10,7 @@ import { theme, tint, applyShade } from './theme.js';
 import { LEVELS, planTargets, routePlan, nextDarkNight, interest, pickScore, varied, autoPlan, kindOf } from './plan.js';
 import { seenKeys, lastEntry, logStats, MILESTONES, newlyAchieved, logCSV } from './log.js';
 import { sound, initSound, cue, tickInterval } from './sound.js';
-import { blurbFor } from '../data/blurbs.js';
+import { blurbFor, doubleNature, NATURE_LABEL, NATURE_NOTE } from '../data/blurbs.js';
 import { rate, describe, DOTS, LEVEL_NAMES, DEFAULT_NELM } from './vis.js';
 import { DAYLIGHT, STYLES, PENALTY, pickTargets, routeOrder, pathLength, tokenFor, buildTokenIndex, encodeChallenge, decodeChallenge, challengeId, encodeResult, decodeResult, points, rank, fmtTime, dwell } from './game.js';
 import { submitScore, fetchBoard, flushQueue } from './wixscores.js';
@@ -81,8 +81,10 @@ const ICON = {
 const L_ARR = '◀︎', R_ARR = '▶︎', WARN = '⚠︎';   // forced to text style
 const isMessier = (o) => !!(o.cats && o.cats.some((c) => /^M\d/.test(c)));
 /** "Galaxy", "Double star", "Moon" — the kind of thing, in plain words. */
-const kindLabel = (o) => (o.id === 'Moon' ? 'Moon' : o.key.startsWith('st:') ? (o.pairs ? 'Double star' : 'Star') : typeLabel(o.t));
+const kindLabel = (o) => { const n = doubleNature(o); return n ? (NATURE_LABEL[n] || 'Double star') : o.id === 'Moon' ? 'Moon' : o.key.startsWith('st:') ? 'Star' : typeLabel(o.t); };
 const sizeText = (o) => (o.maj ? (o.maj >= 60 ? `${(o.maj / 60).toFixed(1)}°` : `${o.maj.toFixed(o.maj < 3 ? 1 : 0)}′`) : (o.sep ? `${o.sep}″ apart` : ''));
+/** For doubles in lists that don't otherwise say what a thing is: " Binary star", " Optical double"… */
+const kindTag = (o) => (doubleNature(o) ? ` <span class="cname">${esc(kindLabel(o))}</span>` : '');
 /** Label with the common name: "M31 Andromeda Galaxy". */
 const nameHTML = (o) => `${esc(o.label)}${o.name ? ` <span class="cname">${esc(o.name)}</span>` : ''}`;
 
@@ -379,7 +381,7 @@ function planItemHTML(it, i) {
     : r ? `<div class="t2"><span class="dots lv${r.level}">${DOTS[r.level]}</span> ${hm(r.best)} · ${r.alt.toFixed(0)}° ${compassName(r.az)}${r.ep ? ' · ' + esc(r.ep.name) : ''}</div>${planReorder ? '' : `<div class="t2">${esc(r.desc)}</div>`}`
     : '<div class="t2">Not well placed in this session</div>';
   return `<li class="${done ? 'done' : ''}"><span class="muted small" style="width:16px;text-align:right">${i + 1}</span>
-    <div class="main" data-goplan="${esc(it.key)}"><div class="t1">${it.sync ? '★ ' : ''}${nameHTML(o)}${done ? ' <span class="seen">✓</span>' : ''}</div>${info}</div>
+    <div class="main" data-goplan="${esc(it.key)}"><div class="t1">${it.sync ? '★ ' : ''}${nameHTML(o)}${kindTag(o)}${done ? ' <span class="seen">✓</span>' : ''}</div>${info}</div>
     ${planReorder ? `<button class="ibtn" data-up="${i}" ${i === 0 ? 'disabled' : ''} aria-label="Move up">↑</button><button class="ibtn" data-dn="${i}" ${last ? 'disabled' : ''} aria-label="Move down">↓</button><button class="ibtn" data-rm="${i}" aria-label="Remove from plan">✕</button>` : `<span class="muted" aria-hidden="true">›</span>`}</li>`;
 }
 function bindPlanList() {
@@ -401,7 +403,7 @@ function fillPlanSuggestions() {
   const counts = [0, 1, 2].map((l) => all.filter((r) => r.level === l).length);
   $('#pl-lv').querySelectorAll('[data-lv]').forEach((b) => { if (b.dataset.lv !== 'all') b.textContent = `${DOTS[+b.dataset.lv]} ${LEVELS[+b.dataset.lv]} (${counts[+b.dataset.lv]})`; });
   const when = (r) => (r.to.getTime() < end - 30 * 60000 ? ` · go early, low by ${hm(r.to)}` : r.from.getTime() > begin + 30 * 60000 ? ` · up from ${hm(r.from)}` : '');
-  ul.innerHTML = L.slice(0, planLimit).map((r) => `<li class="wrap"><div class="main" data-info="${esc(r.key)}"><div class="t1">${nameHTML(r.o)}${seen.has(r.key) ? ' <span class="seen">✓</span>' : ''}</div>
+  ul.innerHTML = L.slice(0, planLimit).map((r) => `<li class="wrap"><div class="main" data-info="${esc(r.key)}"><div class="t1">${nameHTML(r.o)}${kindTag(r.o)}${seen.has(r.key) ? ' <span class="seen">✓</span>' : ''}</div>
       <div class="t2">${esc(r.desc)}${r.cause === 'moon' && planDarkNight ? ` — better from ${planDarkNight.toLocaleDateString([], { month: 'short', day: 'numeric' })}` : ''}</div>
       <div class="t2"><span class="dots lv${r.level}">${DOTS[r.level]}</span> ${hm(r.best)} · ${r.alt.toFixed(0)}° ${compassName(r.az)}${r.ep ? ' · ' + esc(r.ep.name) : ''}${when(r)}</div></div>
       <button class="ibtn ${inPlan.has(r.key) ? '' : 'primary'}" data-add="${esc(r.key)}" aria-label="${inPlan.has(r.key) ? 'Remove from plan' : 'Add to plan'}">${inPlan.has(r.key) ? '✓' : '+'}</button></li>`).join('')
@@ -595,6 +597,7 @@ function renderPush() {
     <canvas id="eyeview" class="eyeview" width="640" height="640"></canvas>
     <p id="eyenote" class="muted small" style="text-align:center"></p>
     ${blurb ? `<p class="blurb">${esc(blurb)}</p>` : ''}
+    ${doubleNature(o) ? `<p class="small">${esc(NATURE_NOTE[doubleNature(o)])}</p>` : ''}
     <details class="more"><summary>View options</summary>
       <div class="btnrow"><button id="z-ctr">${chartCentre === 'scope' ? 'Chart follows: scope' : 'Chart follows: target'}</button><button id="z-wide">Wide (30°)</button><button id="z-lock" class="${state.zoomLock ? 'on' : ''}">${state.zoomLock ? 'Zoom locked' : 'Lock zoom'}</button></div>
       <label class="row"><span>Draw the eyepiece view the way your Newtonian shows it</span><input type="checkbox" id="rot180" ${state.rot180 ? 'checked' : ''}></label>
@@ -1629,6 +1632,7 @@ function renderCheckStep(el, head, back) {
       <p>Take the phone out of the mount. You'll record <b>four times, alternating A, B, A, B</b>. The second A and B are deliberate repeats: they show whether the sensor gives the same answer twice.</p>
       <ol class="steps">${steps.map(([pos, txt], i) => `<li class="${i < n ? 'done' : i === n ? 'now' : ''}"><b>${i < n ? '✓' : i + 1}. Position ${pos}</b> — ${txt}${i < n ? ` <span class="muted mono">(${test.readings[i].beta.toFixed(2)}°, ${test.readings[i].gamma.toFixed(2)}°)</span>` : ''}</li>`).join('')}</ol>
       <p class="muted small">Hands off while it records — 2 seconds.</p>
+      <p class="muted small"><b>Camera bump?</b> It doesn't matter that the phone sits tilted, only that it sits the same way each time. If it rocks, put its case on, or let it settle onto the same corner every time before you record.</p>
       <div class="bar"><div id="t-bar"></div></div>
       <p id="t-live" class="muted small mono"></p>
       <div class="btnrow"><button id="t-rec" class="primary big">Record ${n + 1} of 4 — position ${steps[n][0]}${n >= 2 ? ' (repeat)' : ''}</button></div>
@@ -1954,6 +1958,7 @@ function openObject(key, opt = {}) {
       <button class="ibtn" id="sh-x" aria-label="Close">✕</button></div>
     ${r ? `<p class="rateline"><span class="dots lv${r.level}">${DOTS[r.level]}</span> <b>${LEVEL_NAMES[r.level]}</b> ${row ? 'at its best in your session' : 'right now'} — ${esc(row ? row.desc : describe(o, r))}</p>` : (o.alt <= 0 ? '<p class="rateline muted">Below the horizon right now.</p>' : '')}
     ${blurb ? `<p class="blurb">${esc(blurb)}</p>` : ''}
+    ${doubleNature(o) ? `<p class="small">${esc(NATURE_NOTE[doubleNature(o)])}</p>` : ''}
     <div class="kv">
       ${row ? `<span>Best time</span><span>${hm(row.best)} · ${row.alt.toFixed(0)}° ${compassName(row.az)}</span>` : ''}
       <span>Right now</span><span>${o.alt > 0 ? `${o.alt.toFixed(0)}° up, ${compassName(o.az)}` : 'below the horizon'}</span>
