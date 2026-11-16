@@ -31,30 +31,37 @@ export const STAR_PAIRS = {
 };
 
 /**
- * What kind of double each one is. "Double star" is the umbrella term for two stars that look close together.
- *   binary   — a true pair, bound by gravity and orbiting each other (also called a physical double)
- *   multiple — three or more stars bound together
- *   optical  — an optical double: a chance line-up of two unrelated stars at different distances
- *   unsure   — astronomers have not settled it
- * Only well-established cases are listed, from general knowledge. Anything not listed is shown simply as
- * "Double star". To do: fill the rest from the Washington Double Star Catalog notes or Gaia distances.
- * Keys are the labels the app shows.
+ * What kind of double each one is. "Double star" is the umbrella term for stars that look close together.
+ *   True binary / True multiple     — bound by gravity, confirmed (an orbit has been measured somewhere in the system)
+ *   Likely binary / Likely multiple — same distance and moving together, so probably bound, but not proven
+ *   Optical double / Optical multiple — a chance line-up of unrelated stars at different distances
+ *   (not listed)                    — shown simply as "Double star"
+ * "Binary" is two stars, "multiple" three or more. Only well-established cases are listed, from general knowledge.
+ * To do: fill the rest from the Washington Double Star Catalog note codes or Gaia distances and motions.
+ * Keys are the labels the app shows. Codes: tb, lb, tm, lm, od, om, and 'unsure' for cases still argued over.
  */
 export const DOUBLE_NATURE = {
-  Keid: 'multiple', '61 Cyg': 'binary', Achird: 'binary', Almaak: 'multiple', Almach: 'multiple', 'Cor Caroli': 'binary', Mesarthim: 'binary',
-  Polaris: 'multiple', Rasalgethi: 'binary', 'Xi Sco': 'multiple', Tegmen: 'multiple', 'Sigma CrB': 'binary', 'Gamma 2 Del': 'binary', Kuma: 'binary',
-  'Theta 1 Ser': 'binary', 'Beta Mon': 'multiple', 'Epsilon 1 Lyr': 'multiple', Trapezium: 'multiple', Alkalurops: 'multiple',
-  Mizar: 'multiple', Castor: 'multiple', Algieba: 'binary', Izar: 'binary', Albireo: 'unsure',
+  // an orbit has been measured
+  Castor: 'tm', Algieba: 'tb', Izar: 'tb', '61 Cyg': 'tb', Achird: 'tb', Almaak: 'tm', Almach: 'tm', 'Xi Sco': 'tm', Tegmen: 'tm',
+  'Sigma CrB': 'tb', 'Gamma 2 Del': 'tb', Rasalgethi: 'tb', Mizar: 'tm', 'Epsilon 1 Lyr': 'tm', Polaris: 'tm', Keid: 'tm', Alkalurops: 'tm',
+  // travelling together at the same distance; too wide and slow to watch orbiting
+  'Cor Caroli': 'lb', Mesarthim: 'lb', Kuma: 'lb', 'Theta 1 Ser': 'lb', 'Beta Mon': 'lm', Trapezium: 'lm',
+  Albireo: 'unsure',
 };
-export const NATURE_LABEL = { binary: 'Binary star', multiple: 'Multiple star', optical: 'Optical double', unsure: 'Double star' };
+export const NATURE_LABEL = { tb: 'True binary', lb: 'Likely binary', tm: 'True multiple', lm: 'Likely multiple', od: 'Optical double', om: 'Optical multiple', unsure: 'Double star', unknown: 'Double star' };
 export const NATURE_NOTE = {
-  binary: 'A binary star: a true pair, held together by gravity and orbiting each other.',
-  multiple: 'A multiple star: three or more stars bound together by gravity, though you may only split two of them.',
-  optical: 'An optical double: the two stars only line up from where we stand. They are at different distances and are not a pair.',
-  unsure: 'A double star. Whether these two really orbit each other is still debated.',
-  unknown: 'A double star: two stars that look close together. The app does not yet know whether this is a true pair (a binary) or a chance line-up (an optical double).',
+  tb: 'True binary: two stars bound by gravity, orbiting each other.',
+  lb: 'Likely binary: the two stars are at the same distance and moving together, so they are probably in orbit.',
+  tm: 'True multiple: three or more stars bound by gravity. A small telescope usually splits only two of them.',
+  lm: 'Likely multiple: three or more stars at the same distance and moving together, so probably bound by gravity.',
+  od: 'Optical double: a chance line-up. The two stars are at different distances and are not a pair.',
+  om: 'Optical multiple: a chance line-up of unrelated stars at different distances.',
+  unsure: 'Double star. Whether these two really orbit each other is still debated.',
+  unknown: 'Double star: stars that look close together. The app does not yet know whether they are bound by gravity or a chance line-up.',
 };
-/** 'binary' | 'multiple' | 'optical' | 'unsure' | 'unknown' for a double, or null for anything else. */
+/** True when the stars are, or probably are, bound by gravity. */
+export const isBound = (code) => ['tb', 'lb', 'tm', 'lm'].includes(code);
+/** The code for a double ('tb', 'lb', 'tm', 'lm', 'od', 'om', 'unsure', 'unknown'), or null for anything else. */
 export function doubleNature(o) {
   if (!o || !(o.t === 'DS' || ((o.key || '').startsWith('st:') && o.pairs))) return null;
   return DOUBLE_NATURE[o.label] || DOUBLE_NATURE[o.id] || 'unknown';
@@ -146,7 +153,7 @@ export const BLURBS = {
   Albireo: 'A gold and blue double star — the best colour contrast in the sky. It splits at low power.',
   Mizar: 'With Alcor it makes a naked-eye pair; the telescope splits Mizar itself into two stars.',
   Alcor: 'The fainter naked-eye companion of Mizar in the handle of the Big Dipper.',
-  Polaris: 'The North Star. A telescope shows a faint companion close beside it.',
+  Polaris: 'The North Star. A telescope shows one faint companion beside it; a second, far closer one was only seen with the Hubble Space Telescope.',
   Castor: 'A tight pair of bright white stars. It needs high power.',
   Almach: 'A gold and blue-green double star, like a tighter Albireo.',
   Rigel: 'A brilliant blue-white star with a faint companion very close by.',

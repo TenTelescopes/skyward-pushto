@@ -19,7 +19,7 @@ export function planTargets(sky, { start, hours, scope, nelm = DEFAULT_NELM, min
   const n = Math.max(1, Math.round(hours * 60 / STEP_MIN)), times = [];
   for (let i = 0; i <= n; i++) times.push(new Date(start.getTime() + i * STEP_MIN * 60000));
   const cond = times.map((t) => ({ sun: sky.sunAlt(t), moon: sky.moonInfo(t) }));
-  const cands = sky.objects.filter((o) => !o.key.startsWith('st:') || o.show);
+  const cands = sky.objects.filter((o) => (!o.key.startsWith('st:') || o.show) && !o.twin);
   const out = [];
   for (const o of cands) {
     let bestR = null, bi = -1, from = null, to = null, pos = null;

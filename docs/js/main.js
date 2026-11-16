@@ -455,7 +455,7 @@ function readinessHTML() {
 /** The best things up right now for this scope and sky: famous, well above the visibility limit, comfortably high, and varied. */
 function tonightPicks(n = 8) {
   const sun = sky.sunAlt(), names = new Set();
-  const c = sky.objects.filter((o) => o.alt > 20 && (!o.key.startsWith('st:') || o.show)).map((o) => ({ o, r: rateNow(o) }))
+  const c = sky.objects.filter((o) => o.alt > 20 && (!o.key.startsWith('st:') || o.show) && !o.twin).map((o) => ({ o, r: rateNow(o) }))
     .filter((x) => x.r && x.r.level <= 1 && (sun < -2 || sunSep(x.o) >= SUN_KEEP))
     .map((x) => ({ ...x, s: pickScore(x.o, x.r, x.o.alt) })).sort((a, b) => b.s - a.s)
     .filter((x) => { if (!x.o.name) return true; if (names.has(x.o.name)) return false; names.add(x.o.name); return true; });

@@ -26,10 +26,14 @@ export function buildObjects() {
   for (const s of STARS) {
     const label = STAR_NAMES[s.id] || s.id;
     // A named star that is also a catalogued double (Mizar, Castor…) borrows the double's separation data.
-    const d = DOUBLES.find((x) => x.pairs && Math.abs(x.ra - s.ra) < 0.1 && Math.abs(x.dec - s.dec) < 0.1);
+    const sv = j2000Vec(s.ra, s.dec), near = (x) => { const v = j2000Vec(x.ra, x.dec); return sv.x * v.x + sv.y * v.y + sv.z * v.z > 0.999994; };   // within 0.2° (works at the pole too)
+    const d = DOUBLES.find((x) => x.pairs && near(x));
     // Stars with a write-up are worth suggesting as targets in their own right; the rest are for alignment only.
     const own = STAR_PAIRS[label];
     out.push({ ...s, key: 'st:' + s.id, label, sub: s.bayer, cats: ['Star'], v: j2000Vec(s.ra, s.dec), show: !!BLURBS[label], ...(d ? { pairs: d.pairs, sep: d.sep } : own ? { pairs: [own], sep: own.sep } : {}) });
+    // The same star is then in the list twice. Where the named star is a target in its own right, its catalogue twin is
+    // kept for the catalogue listing but not suggested again (twin: true).
+    if (d && BLURBS[label]) { const t = out.find((x) => x.key === 'ds:' + d.id); if (t) t.twin = true; }
   }
   for (const p of PLANETS) out.push({ id: p, key: 'pl:' + p, label: p, sub: p === 'Moon' ? 'Moon' : 'Planet', t: 'PL', type: 'Planet', cats: ['Planets'], planet: true });
   return out;

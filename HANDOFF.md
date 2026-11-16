@@ -1,6 +1,6 @@
 # Handoff notes for the next working session
 
-Read this first, then `README.md`. Written 2026-11-16 at Build 36.
+Read this first, then `README.md`. Written 2026-11-16 at Build 39.
 
 ## How the project is worked on
 
@@ -17,7 +17,7 @@ Read this first, then `README.md`. Written 2026-11-16 at Build 36.
 
 ## Testing
 
-- Unit tests: `npm test` (9 files in `test/`). All pass at Build 36.
+- Unit tests: `npm test` (9 files in `test/`). All pass at Build 39.
 - Browser walkthroughs: `tools/walk/` (Playwright, iPhone-sized). Serve `docs/` first: `python3 -m http.server 8765`
   from `docs/`, then `node tools/walk/<script>.js`. They load `http://localhost:8765/?sim`, which shows a
   "Simulate sensors" button on the start screen. In the page, `window.sim` is the simulated phone (`bend`, `noise`,
@@ -68,12 +68,20 @@ This was deferred because the previous session could not install packages or rea
 Check both first. If the workspace still cannot reach CelesTrak, vendor the library, mock the data for tests, and tell
 Bryan the live fetch is untested until he tries it.
 
-## Double-star classification (started in Build 36, incomplete)
+## Double-star classification (labels agreed with Bryan; data incomplete)
 
-`docs/data/blurbs.js` has `DOUBLE_NATURE`: binary / multiple / optical / unsure for about two dozen well-known doubles,
-entered from general knowledge. The other ~95 show as plain "Double star". Fill the rest from a real source: the
-Washington Double Star Catalog note codes (orbit, common proper motion, same or different parallax) or Gaia distances
-for both components. The catalogue entries carry a `wds` discoverer code to match on. No optical doubles are marked yet.
+Labels, agreed 2026-11-16: **True binary**, **Likely binary**, **True multiple**, **Likely multiple**, **Optical double**,
+**Optical multiple**, and plain **Double star** when not known. "True" = bound by gravity and confirmed (an orbit is
+measured somewhere in the system); "Likely" = same distance and common motion but not proven. Lists show only the label;
+the object page adds one plain sentence ("bound by gravity" is spelled out there).
+
+`docs/data/blurbs.js` has `DOUBLE_NATURE` with codes (tb, lb, tm, lm, od, om, unsure) for about two dozen well-known
+doubles, entered from general knowledge. The other ~95 show as "Double star", and no optical doubles are marked yet.
+Fill the rest from a real source: Washington Double Star Catalog note codes first (orbit, proper motion says physical or
+not, parallax same or different), Gaia distances and motions for both components to fill gaps; leave anything unclear
+as "Double star". The catalogue entries carry a `wds` discoverer code to match on. Label by the main pair; mention an
+unrelated extra star in the object-page sentence. Still open with Bryan: whether to add a small symbol beside the label
+(linked rings = bound, separate dots = optical) and a "True pairs only" filter in Find.
 
 ## Smaller ideas not built
 
