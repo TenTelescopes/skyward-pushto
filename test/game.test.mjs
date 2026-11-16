@@ -12,7 +12,7 @@ ok(T.every((a, i) => T.every((b, j) => i === j || sepDeg(a.alt, a.az, b.alt, b.a
 const types = {}; T.forEach((o) => { const t = o.planet ? 'PL' : o.key.startsWith('ds:') ? 'DS' : o.t; types[t] = (types[t] || 0) + 1; });
 ok(Object.values(types).every((n) => n <= 3), `variety: no type more than 3 (${JSON.stringify(types)})`);
 ok(JSON.stringify(pickTargets(sky.objects, { aperture: 150, sunAlt: sky.sunAlt(night) }).map(tokenFor)) === JSON.stringify(T.map(tokenFor)), 'deterministic: same sky gives same 10');
-const T200 = pickTargets(sky.objects, { aperture: 203, sunAlt: sky.sunAlt(night) });
+const T200 = pickTargets(sky.objects, { aperture: 200, sunAlt: sky.sunAlt(night) });
 ok(T200.length === 10, `200 mm also gets 10 (${T200.map(tokenFor).join(' ')})`);
 // twilight: only bright things
 for (const [iso, label, test] of [['2026-11-02T22:00:00Z', 'daylight', (o) => o.planet], ['2026-11-02T22:45:00Z', 'nautical twilight', (o) => o.planet || o.key.startsWith('ds:') || (o.mag != null && o.mag < 5)]]) {

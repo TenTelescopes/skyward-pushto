@@ -1,6 +1,6 @@
 # Handoff notes for the next working session
 
-Read this first, then `README.md`. Written 2026-11-16 at Build 45.
+Read this first, then `README.md`. Written 2026-11-16 at Build 48.
 
 ## How the project is worked on
 
@@ -17,7 +17,7 @@ Read this first, then `README.md`. Written 2026-11-16 at Build 45.
 
 ## Testing
 
-- Unit tests: `npm test` (9 files in `test/`). All pass at Build 45.
+- Unit tests: `npm test` (9 files in `test/`). All pass at Build 48.
 - Browser walkthroughs: `tools/walk/` (Playwright, iPhone-sized). Serve `docs/` first: `python3 -m http.server 8765`
   from `docs/`, then `node tools/walk/<script>.js`. They load `http://localhost:8765/?sim`, which shows a
   "Simulate sensors" button on the start screen. In the page, `window.sim` is the simulated phone (`bend`, `noise`,
@@ -45,7 +45,7 @@ Read this first, then `README.md`. Written 2026-11-16 at Build 45.
   but which one his phone hit is unknown. Ask what the line above the chart says in Explore with no set-up:
   "No compass." (compass reading missing), "Sensors are off" (motion access), or just the chart (something else).
 - Start screen (Build 28) takes two taps (tile, then Start). He may prefer one.
-- Eyepiece apparent field: 62° assumed for the 23, 10 and 4 mm. 200 Visual focal length: 812 mm assumed.
+- Eyepiece apparent field: 62° assumed for the 23, 10 and 4 mm. (The 200 Visual is confirmed as 200 mm f/4, 800 mm.)
 - `docs/data/blurbs.js`: about 95 object notes and the double-star figures were written from general knowledge. Skim them.
 - Light-pollution map by GPS: the candidate data is CC BY-NC; needs a licence decision before use.
 

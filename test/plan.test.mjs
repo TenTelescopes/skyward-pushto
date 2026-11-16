@@ -5,7 +5,7 @@ import { rate, skyFromNelm, describe } from '../docs/js/vis.js';
 
 const sky = new Sky(); sky.setSite(43.55, -80.25, 330);          // Guelph
 const eps = [23, 10, 4].map((f) => ({ name: `${f} mm`, fl: f, afov: 62 }));
-const S150 = { aperture: 150, fl: 750, eyepieces: eps }, S200 = { aperture: 203, fl: 812, eyepieces: eps };
+const S150 = { aperture: 150, fl: 750, eyepieces: eps }, S200 = { aperture: 200, fl: 800, eyepieces: eps };
 const find = (label) => sky.objects.find((o) => o.label === label);
 const R = (label, c = {}, sc = S150) => rate(find(label), { alt: 60, nelm: 5, ...c }, sc);
 const ok = (name, f) => { f(); console.log('ok  ', name); };

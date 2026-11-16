@@ -44,8 +44,8 @@ const DEFAULT_PROFILES = {
   sw150c: { name: 'Skyward 150 Compact', aperture: 150, fl: 750,
     source: 'D150F750 primary — Skyward 150 Compact Sourcing Guide (Jan 2026)', focuser: 90,
     eyepieces: [{ name: '23 mm', fl: 23, afov: 62, verified: false }, { name: '10 mm', fl: 10, afov: 62, verified: false }, { name: '4 mm', fl: 4, afov: 62, verified: false }], cal: null },
-  sw200v: { name: 'Skyward 200 Visual', aperture: 203, fl: 812,
-    source: '8″ f/4 primary (AD048) — SW200 Visual packing list rev H. Focal length assumes 203 mm × 4; edit if your mirror is marked differently.', focuser: 90,
+  sw200v: { name: 'Skyward 200 Visual', aperture: 200, fl: 800,
+    source: '200 mm f/4 primary, 800 mm focal length (confirmed by Ten Telescopes). Edit if your mirror is marked differently.', focuser: 90,
     eyepieces: [{ name: '23 mm', fl: 23, afov: 62, verified: false }, { name: '10 mm', fl: 10, afov: 62, verified: false }, { name: '4 mm', fl: 4, afov: 62, verified: false }], cal: null },
 };
 const DEFAULTS = {
@@ -1983,6 +1983,7 @@ function openObject(key, opt = {}) {
       const longest = p.eyepieces.reduce((a, x) => (x.fl > a.fl ? x : a), p.eyepieces[0]);
       const res = drawEyepiece(cv, sky, o.pairs && o.key.startsWith('st:') ? { ...o, t: 'DS' } : o, tg, e, p, { matrix: state.rot180 ? newtonianMatrix(tg, p.focuser ?? 90) : null, bright: vis(), refExit: p.aperture / (p.fl / longest.fl), thumb: true });
       const n = $('#sh-epn' + cv.dataset.epi); if (n && res) n.textContent = ` · ${res.tfov >= 1 ? res.tfov.toFixed(1) + '°' : (res.tfov * 60).toFixed(0) + '′'}`;
+      if (res && res.widened) { const cap = $('#sh-epcap'); if (cap) cap.textContent = 'In each of your eyepieces. Close pairs are drawn a little wider than scale, so a split the eye would see is not lost in the small picture.'; }
       if (res && res.enlarged) { const cap = $('#sh-epcap'); if (cap) cap.textContent = `In each of your eyepieces. The planet is drawn ${res.enlarged}× larger than scale so you can see its shape. In the real eyepiece it looks smaller than this, but sharp.`; }
     } catch (err) { console.error(err); }
   });
@@ -2293,6 +2294,8 @@ async function init() {
   if (state.rot180 == null) state.rot180 = true;
   for (const k of ['sw150c', 'sw200v']) if (state.profiles[k] && state.profiles[k].focuser == null) state.profiles[k].focuser = 90;   // Skyward: focuser always on the right
   for (const [k, v] of Object.entries(DEFAULT_PROFILES)) if (!state.profiles[k]) state.profiles[k] = structuredClone(v);
+  // The 200 Visual was first entered as 203 mm / 812 mm. It is 200 mm f/4: correct a saved copy that still has the old figures.
+  { const q = state.profiles.sw200v; if (q && q.aperture === 203 && q.fl === 812) { q.aperture = 200; q.fl = 800; q.source = DEFAULT_PROFILES.sw200v.source; } }
   if (state.calibrate == null) state.calibrate = true;
   sky.setSite(state.site.lat, state.site.lon, state.site.elev);
   applyModelSettings();

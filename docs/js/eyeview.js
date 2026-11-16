@@ -2,7 +2,7 @@
 // Stars come from the Hipparcos field (to mag 8); deep-sky shapes use OpenNGC size and position angle;
 // planet discs use their real radius and current distance. Brightness is NOT to scale — the label says so.
 import { tangentOffset, D2R, vecFromAltAz, cross, norm, dot } from './model.js';
-import { tint, starTint } from './theme.js';
+import { tint, starTint, theme } from './theme.js';
 import { PAIR_CLASS, STAR_CLASS } from '../data/blurbs.js';
 
 /** Unit direction (in the alt-az tangent plane, x right / y up) of celestial north and east at a target. */
@@ -49,6 +49,20 @@ export function drawEyepiece(cv, sky, o, tgt, ep, scope, opts = {}) {
     c.save(); c.translate(cx, cy); c.rotate(ang); draw(Math.max(2, a), Math.max(2, b)); c.restore();
   };
   const glow = (a, b, peak, edge = 0) => { const g = c.createRadialGradient(0, 0, 0, 0, 0, Math.max(a, b)); g.addColorStop(0, col(220, 40, 20, peak)); g.addColorStop(1, col(120, 0, 0, edge)); c.scale(1, b / a); c.fillStyle = g; c.beginPath(); c.arc(0, 0, a, 0, 7); c.fill(); };
+  // Every star is drawn the same way: a bright centre melting into a soft veil, with no hard edge. Size and strength both
+  // scale with brightness, so a faint star is a small dim glow and a bright one a larger, stronger glow. Veils add where
+  // they overlap, so close stars blend at the edges while their centres stay distinct. `paint(alpha)` gives the colour.
+  const u = Math.max(1, W / 300);
+  const star = (x, y, m, paint) => {
+    const lum = Math.max(0.42, Math.min(1, 1 - (m - 2.5) * 0.085));
+    const R = Math.max(2.6, Math.min(13, 4 + 1.25 * (7 - m))) * u;
+    const g = c.createRadialGradient(x, y, 0, x, y, R);
+    g.addColorStop(0, paint(lum)); g.addColorStop(0.16, paint(lum * 0.95)); g.addColorStop(0.36, paint(lum * 0.42)); g.addColorStop(0.65, paint(lum * 0.12)); g.addColorStop(1, paint(0));
+    c.save(); c.globalCompositeOperation = 'lighter'; c.fillStyle = g; c.beginPath(); c.arc(x, y, R, 0, 7); c.fill();
+    if (m < 3.2) { const w = c.createRadialGradient(x, y, 0, x, y, R * 0.2); w.addColorStop(0, `rgba(255,255,255,${(0.6 * (1 - theme.shade)).toFixed(2)})`); w.addColorStop(1, 'rgba(255,255,255,0)'); c.fillStyle = w; c.beginPath(); c.arc(x, y, R * 0.2, 0, 7); c.fill(); }   // white-hot centre on the brightest, toward Day
+    c.restore();
+  };
+  const plain = (al) => col(255, 90, 50, al);
   // A cluster's own stars are mostly fainter than the star catalogue here (mag 8), so they are sketched: a sprinkle of
   // faint points inside the catalogued size, thicker toward the middle, the same every time for the same object.
   // Brighter (richer) clusters get more. It shows the look and the size, not the real star positions.
@@ -56,16 +70,16 @@ export function drawEyepiece(cv, sky, o, tgt, ep, scope, opts = {}) {
     c.restore(); c.save(); c.beginPath(); c.arc(cx, cy, Rpx, 0, 7); c.clip();
     let sd = 7; for (const ch of String(o.id || o.label)) sd = (sd * 31 + ch.charCodeAt(0)) % 2147483647;
     const rnd = () => ((sd = (sd * 16807) % 2147483647) / 2147483647);
-    const a = (majArcmin / 120) * s, n = Math.round(Math.max(24, Math.min(140, 30 + (9 - m) * 22))), u = W / 640;
+    const a = (majArcmin / 120) * s, n = Math.round(Math.max(24, Math.min(140, 30 + (9 - m) * 22)));
     for (let i = 0; i < n; i++) {
       const rr = a * rnd() ** 0.75, th = rnd() * 6.2832, b = rnd();
-      c.fillStyle = col(255, 80, 45, 0.55 + 0.45 * b); c.beginPath(); c.arc(cx + rr * Math.cos(th), cy + rr * Math.sin(th), (1.3 + 1.6 * b * b) * Math.max(0.85, u), 0, 7); c.fill();
+      star(cx + rr * Math.cos(th), cy + rr * Math.sin(th), 10.5 - 3.5 * b * b, plain);
     }
   };
   const t = o.planet ? 'PL' : o.key.startsWith('ds:') ? 'DS' : o.t;
-  let note = '', enlarged = 0;
+  let note = '', enlarged = 0, widened = false;
   if (t === 'GX') ell(o.maj || 3, o.min, o.pa, (a, b) => { glow(a, b, 0.55); c.scale(1, a / b); glow(a * 0.12, b * 0.12, 0.9); });
-  else if (t === 'GC') ell(o.maj || 5, o.maj || 5, 0, (a) => { glow(a, a, 0.85); c.globalAlpha = 1; /* member stars are points: they don't dim, so a globular resolves better at high power */ let sd = 12345; const rnd = () => ((sd = (sd * 16807) % 2147483647) / 2147483647); for (let i = 0; i < 90; i++) { const r = a * Math.sqrt(rnd()) * 0.9, th = rnd() * 7; c.fillStyle = col(255, 90, 50, 0.75); c.fillRect(Math.cos(th) * r, Math.sin(th) * r, 2, 2); } c.globalAlpha = shown; });
+  else if (t === 'GC') ell(o.maj || 5, o.maj || 5, 0, (a) => { glow(a, a, 0.85); c.globalAlpha = 1; /* member stars are points: they don't dim, so a globular resolves better at high power */ let sd = 12345; const rnd = () => ((sd = (sd * 16807) % 2147483647) / 2147483647); for (let i = 0; i < 90; i++) { const r = a * Math.sqrt(rnd()) * 0.9, th = rnd() * 7; star(Math.cos(th) * r, Math.sin(th) * r, 10.5, plain); } c.globalAlpha = shown; });
   else if (t === 'PN') ell(o.maj || 1, o.min, o.pa, (a, b) => { c.fillStyle = col(200, 60, 40, 0.75); c.beginPath(); c.ellipse(0, 0, a, b, 0, 0, 7); c.fill(); if (/^M57$|Ring/.test(o.label + o.name)) { c.fillStyle = col(10, 0, 0); c.beginPath(); c.ellipse(0, 0, a * 0.45, b * 0.45, 0, 0, 7); c.fill(); } });
   else if (t === 'NB' || t === 'CN') { ell(o.maj || 10, o.min, o.pa, (a, b) => glow(a, b, 0.35, 0.05)); if (t === 'CN') sprinkle((o.maj || 10) * 0.7, (o.mag ?? 7) + 1); }
   else if (t === 'DN') { ell(o.maj || 10, o.min, o.pa, (a, b) => { c.fillStyle = 'rgba(0,0,0,0.6)'; c.beginPath(); c.ellipse(0, 0, a, b, 0, 0, 7); c.fill(); }); note = 'A dark cloud: look for a patch with fewer stars, not a glow'; }
@@ -74,12 +88,16 @@ export function drawEyepiece(cv, sky, o, tgt, ep, scope, opts = {}) {
 
   c.globalAlpha = 1;
   // field stars — point sources: not dimmed by magnification
+  const isPair = t === 'DS' && o.pairs && o.pairs.length;
+  const pairFaint = isPair ? Math.max(...String(o.pairs[0].mags || '').split('/').map(Number).filter((x) => !Number.isNaN(x)), o.mag ?? 6) : 0;
   const field = sky.fieldNear(tgt.alt, tgt.az, rad * 1.3, 8, date);
   for (const [, v] of field) {
     if (v.mag > 8) continue;
     const off = tangentOffset(tgt, v); if (!off) continue;
-    const q = P(off.x, off.y), r = Math.max(1.4, (8.6 - v.mag) * 1.7);
-    c.fillStyle = col(255, 70, 40); c.beginPath(); c.arc(q.x, q.y, r, 0, 7); c.fill();
+    // The pair itself is drawn below. Catalogue positions are rounded, so its own stars can sit a few arcminutes off centre.
+    if (isPair && Math.hypot(off.x, off.y) < Math.max(0.07, (o.pairs[0].sep || 0) / 3600 * 1.5) && v.mag <= pairFaint + 0.8) continue;
+    const q = P(off.x, off.y);
+    star(q.x, q.y, v.mag, plain);
   }
 
   // planets / Moon / double stars at the centre
@@ -100,12 +118,19 @@ export function drawEyepiece(cv, sky, o, tgt, ep, scope, opts = {}) {
     const pr = o.pairs[0], sepDeg = pr.sep / 3600, mags = String(pr.mags).split('/').map(Number);
     let dx = 0, dy = sepDeg;
     if (ax) { dx = (Math.cos(pr.pa * D2R) * ax.n.x + Math.sin(pr.pa * D2R) * ax.e.x) * sepDeg; dy = (Math.cos(pr.pa * D2R) * ax.n.y + Math.sin(pr.pa * D2R) * ax.e.y) * sepDeg; }
-    const A = P(-dx / 2, -dy / 2), B = P(dx / 2, dy / 2), rA = Math.max(2.5, (9 - (mags[0] || 4)) * 1.8), rB = Math.max(2, (9 - (mags[1] || 6)) * 1.8);
     // Split: separation above the Dawes limit (116/D″) and magnified to at least 4′ apparent, a comfortable eye separation.
-    const dawes = 116 / scope.aperture, split = pr.sep >= dawes && mag * pr.sep >= 240;
-    const pc = PAIR_CLASS[o.label] || '', base = col(255, 120, 70);                 // real colours for the famous pairs, toward Day
-    c.fillStyle = starTint(pc[0], 1, k) || base; c.beginPath(); c.arc(A.x, A.y, rA, 0, 7); c.fill();
-    c.fillStyle = starTint(pc[1], 1, k) || base; c.beginPath(); c.arc(B.x, B.y, rB, 0, 7); c.fill();
+    const dawes = 116 / scope.aperture, resolved = pr.sep >= dawes, split = resolved && mag * pr.sep >= 240;
+    // The eye resolves far finer detail than this picture has pixels, so a pair drawn strictly to scale would merge even
+    // when the eyepiece splits it cleanly. Draw what the eye would make of it instead: clearly apart when split, just
+    // touching when tight, one star when below the telescope's limit. Wider pairs keep their true spacing.
+    const L = Math.hypot(dx, dy) || 1, truePx = L * s, app = mag * pr.sep / 60;                                   // how far apart the pair looks to the eye, arcminutes
+    const want = !resolved ? 0 : split ? Math.min(18, 7 + 3 * Math.log2(app / 4)) * u : 4.5 * u, px = Math.max(truePx, want);   // wider at higher power
+    const hx = (dx / L) * px / 2 / s, hy = (dy / L) * px / 2 / s;
+    const A = P(-hx, -hy), B = P(hx, hy);
+    const pc = PAIR_CLASS[o.label] || '';
+    const paintOf = (cls) => (starTint(cls, 1, k) ? (al) => starTint(cls, al, k) : (al) => col(255, 120, 70, al));
+    star(B.x, B.y, mags[1] || 6, paintOf(pc[1])); star(A.x, A.y, mags[0] || 4, paintOf(pc[0]));
+    if (px > truePx * 1.3 && resolved) widened = true;
     note = `${pr.c}: ${pr.sep}″ — ${pr.sep < dawes ? `below this scope's ${dawes.toFixed(2)}″ resolution limit` : split ? 'split at this power' : 'tight at this power; try a shorter eyepiece'}`;
   }
   c.restore();
@@ -120,7 +145,7 @@ export function drawEyepiece(cv, sky, o, tgt, ep, scope, opts = {}) {
   };
   if (ax) { mark(ax.n.x, ax.n.y, 'N'); mark(ax.e.x, ax.e.y, 'E'); }
   mark(0, 1, '↑Z', true);
-  return { mag, tfov, note, enlarged, exit, rel };
+  return { mag, tfov, note, enlarged, widened, exit, rel };
 }
 
 // ---------------------------------------------------------------- Newtonian image orientation
