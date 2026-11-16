@@ -3,7 +3,7 @@
    Sizes: every control is at least 44px tall (36px for secondary "mini" controls) — cold fingers, in the dark. */
 :root {
   --k: 1;
-  --bg: #000; --bgm: #000; --bg2: #000; --stars: 0; --starsimg: none;
+  --ghost: #4e4e4e; --bg: #000; --bgm: #000; --bg2: #000; --stars: 0; --starsimg: none;
   --panel: #0d0000;
   --line: rgb(calc(95 * var(--k)) 0 0);
   --dim: rgb(calc(145 * var(--k)) 0 0);
@@ -203,7 +203,9 @@ ol.how { margin: 6px 0; padding-left: 20px; font-size: 14px; }
 ol.how li { margin: 6px 0; }
 svg.umi { width: 100%; max-width: 300px; display: block; margin: 0 auto; background: var(--chart); border-radius: 10px; }
 svg.umi line { stroke: var(--line); stroke-width: 1.5; }
-svg.umi circle { fill: var(--hi); }
+svg.umi circle.on { fill: var(--hi); }
+svg.umi circle.off { fill: var(--ghost); }
+svg.umi text.off { fill: var(--ghost); }
 svg.umi text { fill: var(--fg); font-size: 12px; }
 svg.umi text.muted { fill: var(--dim); font-size: 10px; }
 
@@ -300,3 +302,12 @@ body::before, #gate::before { content: ""; position: fixed; inset: 0; z-index: -
 #gate > .card { margin: 0 0 auto; }
 .stop.na input { background: var(--line); transform: scale(.4); opacity: .6; pointer-events: none; }
 .stop.na > span b, .stop.na > span .muted { color: var(--dim); font-weight: 400; opacity: .75; }
+
+.sqnav { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.sqnav > button { flex: none; width: 52px; display: grid; place-items: center; padding: 0; }
+.sqnav > button:disabled { opacity: .3; }
+.sqmid { flex: 1; min-width: 0; text-align: center; display: flex; flex-direction: column; gap: 1px; }
+.sqmid b { color: var(--hi); font-size: 17px; }
+.sqdots { display: flex; justify-content: center; gap: 6px; margin-top: 4px; }
+.sqdots i { width: 7px; height: 7px; border-radius: 50%; background: var(--line); }
+.sqdots i.on { background: var(--hi); }

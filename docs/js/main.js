@@ -2117,9 +2117,13 @@ function renderFlowBar() {
 const UMI = [['Polaris', 37.95, 89.26, 1.98], ['Yildun', 263.05, 86.59, 4.35], ['ε', 251.49, 82.04, 4.21], ['ζ', 236.01, 77.79, 4.32],
   ['η', 244.38, 75.76, 4.95], ['Pherkad', 230.18, 71.83, 3.00], ['Kochab', 222.68, 74.16, 2.08]];
 const SKY_PICKS = [[3.5, 'City'], [4.5, 'Bright suburbs'], [5.0, 'Suburbs'], [5.6, 'Edge of town'], [6.2, 'Rural'], [6.7, 'Dark site']];
-const SKY_ANSWERS = [
-  [2.8, 'Only Polaris and Kochab (2)'], [3.5, 'Those plus Pherkad (3)'], [4.3, '4 to 6 of them'],
-  [5.0, 'All 7'], [5.7, 'All 7, plus faint stars inside the bowl'],
+// [naked-eye limit saved, faintest star drawn as visible, title, caption]
+const SKY_LEVELS = [
+  [2.8, 2.6, 'Two stars', 'Only Polaris and Kochab'],
+  [3.5, 3.2, 'Three stars', 'Polaris, Kochab and Pherkad'],
+  [4.3, 4.4, 'Most of the dipper', 'The handle and bowl, with a gap or two'],
+  [5.0, 5.0, 'The whole dipper', 'All seven stars'],
+  [5.7, 5.8, 'The dipper and more', 'All seven, with faint stars around them'],
 ];
 function skyLabel(m) {
   return m < 3.5 ? ['Bright city sky', 'Moon, planets, bright clusters and double stars. Galaxies will be very hard.']
@@ -2134,29 +2138,54 @@ function openSkyCheck() {
     card.innerHTML = `<h3 style="margin-top:0">Sky darkness check</h3><p>The Little Dipper isn't visible from the southern hemisphere, so this check isn't available here yet.</p><button id="sq-skip" class="primary" style="width:100%">Continue</button>`;
     $('#sq-skip').onclick = () => (flow ? flowNext() : box.classList.add('hidden')); return;
   }
+  // The Little Dipper as it hangs right now, plus the fainter stars around it (to mag 6) from the star field.
   const P = UMI.map(([n, ra, dec, m]) => ({ n, m, ...sky.altAzRaDec(ra, dec) }));
-  const a0 = P.reduce((s, p) => s + p.alt, 0) / P.length, z0 = P[0].az;
-  const xy = P.map((p) => ({ ...p, x: (((p.az - z0 + 540) % 360) - 180) * Math.cos(a0 * Math.PI / 180), y: -(p.alt - a0) }));
-  const xs = xy.map((p) => p.x), ys = xy.map((p) => p.y), cx = (Math.max(...xs) + Math.min(...xs)) / 2, cy = (Math.max(...ys) + Math.min(...ys)) / 2;
-  const span = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) || 1, sc = 220 / span;
+  const mid = { alt: (Math.max(...P.map((p) => p.alt)) + Math.min(...P.map((p) => p.alt))) / 2, az: P[5].az };
+  const flat = (p) => { const t = tangentOffset(mid, p); return t ? { ...p, x: t.x, y: -t.y } : null; };
+  const xy = P.map(flat), xs = xy.map((p) => p.x), ys = xy.map((p) => p.y), cx = (Math.max(...xs) + Math.min(...xs)) / 2, cy = (Math.max(...ys) + Math.min(...ys)) / 2;
+  const span = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) || 1, sc = 200 / span;
   const pt = (p) => [150 + (p.x - cx) * sc, 150 + (p.y - cy) * sc];
+  let extra = [];
+  try {
+    extra = [...sky.fieldNear(mid.alt, mid.az, span, 6.0)].map(([, v]) => (v.mag <= 6 ? flat({ m: v.mag, alt: v.alt, az: v.az }) : null)).filter(Boolean)
+      .filter((q) => { const [x, y] = pt(q); return x > 8 && x < 292 && y > 8 && y < 270 && !xy.some((p) => Math.hypot(p.x - q.x, p.y - q.y) < 0.4); });
+  } catch (e) { /* the dipper alone still works */ }
   const lines = [[0, 1], [1, 2], [2, 3], [3, 4], [4, 5], [5, 6], [6, 3]];
   const sun = sky.sunAlt();
+  let lv = Math.max(0, SKY_LEVELS.findIndex((L) => state.skyq && Math.abs(L[0] - state.skyq.nelm) < 0.05)); if (!state.skyq) lv = 2;
+  const rad = (m) => Math.max(1.6, (6.6 - m) * 1.35);
+  const chart = () => {
+    const lim = SKY_LEVELS[lv][1], dot = (p, named) => { const [x, y] = pt(p), on = p.m <= lim; return `<circle class="${on ? 'on' : 'off'}" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${rad(p.m).toFixed(1)}"/>${named && p.m < 3.2 ? `<text class="${on ? '' : 'off'}" x="${(x + 10).toFixed(1)}" y="${(y + 4).toFixed(1)}">${p.n}</text>` : ''}`; };
+    return `${lines.map(([i, j]) => { const [x1, y1] = pt(xy[i]), [x2, y2] = pt(xy[j]); return `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}"/>`; }).join('')}
+      ${extra.map((p) => dot(p, false)).join('')}${xy.map((p) => dot(p, true)).join('')}
+      <text x="150" y="292" text-anchor="middle" class="muted">as it hangs now · up is overhead · bright = you can see it</text>`;
+  };
   card.innerHTML = `<h3 style="margin-top:0">Sky darkness check</h3>
-    <p class="small">Face north. The Little Dipper hangs from <b>Polaris</b>, ${P[0].alt.toFixed(0)}° up — about where your latitude puts it. Give your eyes 10 minutes away from screens and lights first.${sun > -12 ? ' <b>It isn\'t fully dark yet</b>, so this will read brighter than your real sky.' : ''}</p>
-    <svg viewBox="0 0 300 300" class="umi">${lines.map(([i, j]) => { const [x1, y1] = pt(xy[i]), [x2, y2] = pt(xy[j]); return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"/>`; }).join('')}
-      ${xy.map((p) => { const [x, y] = pt(p); return `<circle cx="${x}" cy="${y}" r="${(7 - p.m) * 1.3}"/><text x="${x + 9}" y="${y + 4}">${p.n}</text>`; }).join('')}
-      <text x="150" y="294" text-anchor="middle" class="muted">as it looks now · up is overhead</text></svg>
-    <p class="small"><b>How many of these 7 stars can you see?</b></p>
-    ${SKY_ANSWERS.map(([m, t]) => `<button class="sq-a" data-m="${m}" style="width:100%;margin:3px 0;text-align:left">${t}</button>`).join('')}
+    <p class="small">Face north and find the Little Dipper hanging from <b>Polaris</b>, ${P[0].alt.toFixed(0)}° up. Give your eyes 10 minutes away from screens and lights. Then flip through the pictures until one matches what you see.${sun > -12 ? ' <b>It isn\'t fully dark yet</b>, so this will read brighter than your real sky.' : ''}</p>
+    <svg viewBox="0 0 300 300" class="umi" id="sq-svg"></svg>
+    <div class="sqnav"><button id="sq-less" aria-label="Fewer stars">${ICON.prev}</button>
+      <div class="sqmid"><b id="sq-title"></b><span id="sq-cap" class="muted small"></span><span class="sqdots" id="sq-dots"></span></div>
+      <button id="sq-more" aria-label="More stars">${ICON.next}</button></div>
+    <button id="sq-ok" class="primary" style="width:100%;margin-top:8px">That's my sky — OK</button>
     <button id="sq-skip" style="width:100%;margin-top:6px">Can't see it (cloud, trees, not dark) — skip</button>`;
-  card.querySelectorAll('[data-m]').forEach((b) => b.onclick = () => {
-    const m = +b.dataset.m, [label, means] = skyLabel(m);
+  const show = () => {
+    $('#sq-svg').innerHTML = chart(); $('#sq-title').textContent = SKY_LEVELS[lv][2]; $('#sq-cap').textContent = SKY_LEVELS[lv][3];
+    $('#sq-dots').innerHTML = SKY_LEVELS.map((_, i) => `<i class="${i === lv ? 'on' : ''}"></i>`).join('');
+    $('#sq-less').disabled = lv === 0; $('#sq-more').disabled = lv === SKY_LEVELS.length - 1;
+  };
+  $('#sq-less').onclick = () => { lv = Math.max(0, lv - 1); show(); };
+  $('#sq-more').onclick = () => { lv = Math.min(SKY_LEVELS.length - 1, lv + 1); show(); };
+  let sx = null; const svg = $('#sq-svg');                              // swipe the picture as well
+  svg.addEventListener('touchstart', (e) => { sx = e.touches[0].clientX; }, { passive: true });
+  svg.addEventListener('touchend', (e) => { if (sx == null) return; const d = e.changedTouches[0].clientX - sx; sx = null; if (Math.abs(d) > 30) { lv = Math.max(0, Math.min(SKY_LEVELS.length - 1, lv + (d < 0 ? 1 : -1))); show(); } });
+  show();
+  $('#sq-ok').onclick = () => {
+    const m = SKY_LEVELS[lv][0], [label, means] = skyLabel(m);
     state.skyq = { nelm: m, label, when: Date.now(), lat: state.site.lat, lon: state.site.lon, twilight: sun > -12 }; planRows = null; save(); if (tab === 'plan') renderPlan();
     card.innerHTML = `<h3 style="margin-top:0">${label}</h3><p>Faintest stars you can see: about magnitude ${m.toFixed(1)}.</p><p class="small">${means}</p>
       <button id="sq-done" class="primary" style="width:100%">${flow ? 'Continue' : 'Done'}</button>`;
     $('#sq-done').onclick = () => { if (flow) return flowNext(); box.classList.add('hidden'); rateCache.clear(); if (tab === 'more') renderMore(); if (tab === 'find') renderFind(); };
-  });
+  };
   $('#sq-skip').onclick = () => (flow ? flowNext() : box.classList.add('hidden'));
 }
 

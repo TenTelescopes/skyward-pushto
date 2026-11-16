@@ -1,6 +1,6 @@
 # Handoff notes for the next working session
 
-Read this first, then `README.md`. Written 2026-11-16 at Build 30.
+Read this first, then `README.md`. Written 2026-11-16 at Build 32.
 
 ## How the project is worked on
 
@@ -17,12 +17,13 @@ Read this first, then `README.md`. Written 2026-11-16 at Build 30.
 
 ## Testing
 
-- Unit tests: `npm test` (9 files in `test/`). All pass at Build 30.
+- Unit tests: `npm test` (9 files in `test/`). All pass at Build 32.
 - Browser walkthroughs: `tools/walk/` (Playwright, iPhone-sized). Serve `docs/` first: `python3 -m http.server 8765`
   from `docs/`, then `node tools/walk/<script>.js`. They load `http://localhost:8765/?sim`, which shows a
   "Simulate sensors" button on the start screen. In the page, `window.sim` is the simulated phone (`bend`, `noise`,
   `trueOffset`, `alpha`, `beta`) and `window.simGoto(label)` points the simulated scope at an object.
   - `walk2.js`, `walk3.js`, `walk4.js`: every screen, secondary flows, no-sensor paths (look for `errors: []`).
+  - `sky31.js`: the sky darkness check pictures.
   - `look28.js`: splash, start screen, Day/Night fader, in-app look (screenshots).
   - `guess27.js`: unaligned sky view with no compass, direction set by hand, no sensor data.
   - `corr.js`, `jump.js`, `domeshot.js`: sky correction end to end, heading jumps, the dome card (slow: allow 5–10 min).

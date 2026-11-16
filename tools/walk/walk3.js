@@ -17,7 +17,7 @@ const tabTo = async (pg, t, wait = 700) => { await pg.click(`nav#tabs button[dat
   console.log('flowbar 1:', await pg.textContent('#flowbar')); await shot(pg, 'f1-check');
   await pg.click('#fb-next'); await pg.waitForTimeout(700);
   console.log('skycheck visible:', await pg.isVisible('#skycheck')); await shot(pg, 'f2-skycheck');
-  await pg.click('.sq-a >> nth=3'); await pg.waitForTimeout(300); await shot(pg, 'f3-skyresult'); await pg.click('#sq-done'); await pg.waitForTimeout(700);
+  await pg.click('#sq-more'); await pg.click('#sq-ok'); await pg.waitForTimeout(300); await shot(pg, 'f3-skyresult'); await pg.click('#sq-done'); await pg.waitForTimeout(700);
   console.log('flowbar 3:', await pg.textContent('#flowbar'), '| align shown:', await pg.isVisible('#tab-align'));
   for (let i = 0; i < 2; i++) { const name = await pg.textContent('#tab-align .target-h .name'); await pg.evaluate((n) => window.simGoto(n), name); await pg.waitForTimeout(1700); await pg.click('#a-ok'); await pg.waitForTimeout(900); }
   console.log('after align -> find shown:', await pg.isVisible('#tab-find'), '| flowbar hidden:', !(await pg.isVisible('#flowbar')), '| pill:', await pg.textContent('#st-pill'));
