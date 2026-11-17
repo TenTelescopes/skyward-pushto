@@ -331,7 +331,7 @@ body::before, #gate::before { content: ""; position: fixed; inset: 0; z-index: -
 
 /* blocked sky: a compass ring you tap; horizon at the rim, overhead in the middle */
 .hzring { display: block; width: min(80vw, 300px, 40vh); margin: 6px auto; touch-action: manipulation; }
-.hz-w { cursor: pointer; } .hz-w path { fill: var(--panel); stroke: var(--line); stroke-width: 1.5; }
+.hz-w { cursor: default; } .hz-w path { fill: var(--panel); stroke: var(--line); stroke-width: 1.5; }
 .hz-w.lv1 path { fill: color-mix(in srgb, var(--hi) 22%, var(--panel)); } .hz-w.lv2 path { fill: color-mix(in srgb, var(--hi) 42%, var(--panel)); }
 .hz-w.lv3 path { fill: color-mix(in srgb, var(--hi) 62%, var(--panel)); } .hz-w.lv4 path { fill: color-mix(in srgb, var(--hi) 85%, var(--panel)); }
 .hz-l { font-size: 12px; fill: var(--dim); pointer-events: none; } .hz-v { font-size: 13px; font-weight: 600; fill: var(--fg); pointer-events: none; }

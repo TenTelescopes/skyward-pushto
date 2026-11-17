@@ -323,7 +323,7 @@ function renderPlan() {
         <div class="muted small">${esc(skyName)} · Moon ${moonTxt}</div>
         <div class="muted small">Sunset ${hm(n.set)} · fully dark ${hm(n.astro)} – ${hm(n.astroAm)}${n.set && start < n.set ? ' · <b>you start before sunset</b>' : ''}</div></div>
         <button id="pl-edit" class="mini">${planEdit ? 'Done' : 'Change'}</button></div>
-      <div class="sess hzrow"><div class="muted small">${placeLabel() ? hzLine() : `Blocked sky: ${hzLine()}`}</div><button id="pl-hz" class="mini">${horizonNow() ? 'Change' : 'Mark it'}</button></div>
+      <div class="sess hzrow"><div class="muted small">${placeLabel() ? hzLine() : `Blocked sky: ${hzLine()}`}</div><button id="pl-hz" class="mini">${horizonNow() ? 'Change' : 'Trace it'}</button></div>
       <div id="pl-form" class="${planEdit ? '' : 'hidden'}" style="margin-top:8px">
         <div class="btnrow"><button id="pl-dark" class="mini">Start at full dark (${hm(n.astro || n.naut)})</button><button id="pl-now" class="mini">Start now</button></div>
         <label class="row"><span>Date</span><input id="pl-date" type="date" value="${dateVal(start)}"></label>
@@ -1733,7 +1733,7 @@ function hzRingSVG(H, T) {
   const rad = (alt) => r1 - (r1 - r0) * Math.min(90, Math.max(0, alt)) / 90;       // horizon at the rim, overhead at the middle
   const outline = (h) => h.map((v, i) => pt(rad(v), (i + 0.5) * 360 / HZ_BINS).map((x) => x.toFixed(1)).join(',')).join(' ');
   const wedges = WEDGES.map((w, k) => { const lv = wedgeLevel(H, k), hgt = wedgeHeight(H, k), [tx, ty] = pt(r1 + 12, k * 45), [lx, ly] = pt((r0 + r1) / 2, k * 45);
-    return `<g data-wedge="${k}" class="hz-w lv${lv}" role="button" aria-label="${w}: ${HZ_LEVELS[lv].name}"><path d="${arc(k)}"/><text x="${lx.toFixed(1)}" y="${(ly + 4).toFixed(1)}" text-anchor="middle" class="hz-v">${hgt < 1 ? '' : hgt >= 89 ? '✕' : Math.round(hgt) + '°'}</text><text x="${tx.toFixed(1)}" y="${(ty + 4).toFixed(1)}" text-anchor="middle" class="hz-l">${w}</text></g>`; }).join('');
+    return `<g class="hz-w lv${lv}" aria-label="${w}: ${HZ_LEVELS[lv].name}"><path d="${arc(k)}"/><text x="${lx.toFixed(1)}" y="${(ly + 4).toFixed(1)}" text-anchor="middle" class="hz-v">${hgt < 1 ? '' : hgt >= 89 ? '✕' : Math.round(hgt) + '°'}</text><text x="${tx.toFixed(1)}" y="${(ty + 4).toFixed(1)}" text-anchor="middle" class="hz-l">${w}</text></g>`; }).join('');
   const traced = T ? T.n.map((n, i) => (n ? `<circle cx="${pt(rad(T.sum[i] / n), (i + 0.5) * 360 / HZ_BINS)[0].toFixed(1)}" cy="${pt(rad(T.sum[i] / n), (i + 0.5) * 360 / HZ_BINS)[1].toFixed(1)}" r="2.6" class="hz-dot"/>` : '')).join('') : '';
   return `<svg viewBox="0 0 260 260" class="hzring">${wedges}${H.how === 'trace' && !T ? `<polygon points="${outline(H.h)}" class="hz-line"/>` : ''}${traced}<circle cx="${C}" cy="${C}" r="${r0 - 4}" class="hz-me"/><text x="${C}" y="${C + 4}" text-anchor="middle" class="hz-l">you</text><g id="hz-ptr"></g></svg>`;
 }
@@ -1775,6 +1775,13 @@ function openHorizon(from = 'more') { hzFrom = from; $('#gate').classList.add('h
 function hzBindBack() { const b = $('#hz-back'); if (b) b.onclick = () => { hzTrace = null; if (hzFrom === 'start') { renderLaunch(); $('#gate').classList.remove('hidden'); } else showTab(hzFrom); }; }
 const hzLine = () => (placeLabel() ? `${esc(placeLabel())}: ` : '') + (horizonNow() ? esc(horizonSummary(state.horizon)).replace(/^B/, placeLabel() ? 'b' : 'B') : 'none marked');
 const SIM_URL = new URLSearchParams(location.search).has('sim');
+/** Where the phone's top edge points when it is held in the hand like a spyglass: height from gravity, direction from the compass. */
+function handPointing() {
+  if (!sensors || !sensors.fresh()) return null;
+  const co = sensors.compassOffset(); if (co == null) return null;
+  const R = avgR(state.smooth) || sensors.R, raw = altAzFromVec(mulMV(R, [0, 1, 0]));
+  return { alt: raw.alt, az: wrap360(raw.az + co + (state.compassCorr || 0)), ready: true };
+}
 /** Start a skyline trace, switching the motion sensors on first if they are off (the tap is the permission gesture iOS needs). */
 async function beginTrace() {
   if (!sensors || !sensors.fresh()) {
@@ -1784,10 +1791,11 @@ async function beginTrace() {
     const t0 = Date.now(); while (!sensors.fresh() && Date.now() - t0 < 2500) await new Promise((r) => setTimeout(r, 100));
     if (!sensors.fresh()) return;                                 // no data: startSensors puts the explanation up
   }
-  const p = pointing(), ok = p && p.ready;
-  if (!ok) { const t0 = Date.now(); while (!guessPointing() && Date.now() - t0 < 1500) await new Promise((r) => setTimeout(r, 100)); }
-  if (!ok && !guessPointing()) return toast('The phone has no compass reading and you are not star-aligned yet, so the app cannot tell directions. Align first, or use the taps.', 6000);
-  hzTrace = { T: newTrace(), rough: !ok, t: 0 };
+  const p = pointing(), aligned = !!(p && p.ready);
+  if (!aligned) { const t0 = Date.now(); while (!handPointing() && Date.now() - t0 < 1500) await new Promise((r) => setTimeout(r, 100)); }
+  if (!aligned && !handPointing()) return toast('The phone is not giving a compass reading, so the app cannot tell directions. Wave it in a figure of eight and try again, or star-align first and trace with the telescope.', 7000);
+  // In the hand is the default: it needs no telescope and no alignment. On the telescope is offered once star-aligned.
+  hzTrace = { T: newTrace(), mode: 'hand', canScope: aligned, t: 0 };
   if (tab !== 'horizon') showTab('horizon'); else renderHorizon();
 }
 /** Save the trace. `auto` = the sweep came full circle and the app is finishing it for the user. */
@@ -1795,22 +1803,30 @@ function hzSaveTrace(auto) {
   if (!hzTrace) return;
   if (traceCoverage(hzTrace.T) < 0.2) return toast('Sweep further round first — at least a fifth of the circle.');
   const part = traceCoverage(hzTrace.T) < 0.95;
-  setHorizon({ ...traceFinish(hzTrace.T, state.horizon), lat: state.site.lat, lon: state.site.lon, when: Date.now(), rough: hzTrace.rough });
+  setHorizon({ ...traceFinish(hzTrace.T, state.horizon), lat: state.site.lat, lon: state.site.lon, when: Date.now(), rough: hzTrace.mode === 'hand', by: hzTrace.mode });
   hzTrace = null; renderHorizon(); $('main').scrollTop = 0;
   if (auto) { cue.logged(); if (navigator.vibrate) navigator.vibrate([80, 60, 80]); }
-  toast(auto ? 'Full circle — skyline saved. Tap any direction to adjust it, or trace again.' : part ? 'Saved. Directions you did not sweep were filled in from their neighbours.' : 'Saved.', 5000);
+  toast(auto ? 'Full circle — skyline saved.' : part ? 'Saved. Directions you did not sweep were filled in from their neighbours.' : 'Saved.', 5000);
 }
 function renderHorizon() {
   const el = $('#tab-horizon'), H = state.horizon || emptyHorizon();
   if (hzTrace) {
+    const hand = hzTrace.mode === 'hand', waiting = hzTrace.recAt && !hzTrace.rec;
     el.innerHTML = `${HZ_BACK()}<h2>Trace the skyline</h2>
-      <p class="small">Put the scope on the top of the trees or roofs and tap Start. Then <b>sweep slowly all the way round</b>, keeping it on the line where the sky starts. Where the view is open, follow the true horizon. Went wrong somewhere? Sweep over that part again; the latest pass counts. When you come full circle it saves itself.</p>
-      ${hzTrace.rough ? '<p class="muted small"><b>Rough mode:</b> you are not star-aligned, so directions come from the phone\'s compass and can be 10° or more out. Heights are still good. For an accurate map, align first and trace again.</p>' : '<p class="muted small">Star-aligned: directions are as good as the pointing.</p>'}
+      ${hzTrace.canScope && !hzTrace.rec && !waiting ? `<div class="seg" id="hz-mode"><button data-mode="hand" class="${hand ? 'on' : ''}">Phone in my hand</button><button data-mode="scope" class="${hand ? '' : 'on'}">Phone on the telescope</button></div>` : ''}
+      ${hand ? `<ol class="how"><li><b>Hold the phone flat like a spyglass</b>: screen up, bottom edge near your eye, top edge pointing away from you.</li>
+          <li><b>Sight along it at the top of the trees and roofs.</b></li>
+          <li><b>Tap Start, then turn your whole body slowly once around</b>, keeping the phone on the line where the sky starts. Where the view is open, follow the true horizon.</li></ol>
+        <p class="muted small">It buzzes and saves itself when you come full circle. Heights are good to a degree or two. Directions come from the phone's compass, so stand clear of cars and metal; expect them within several degrees.</p>`
+    : `<p class="small">Put the scope on the top of the trees or roofs and tap Start. Then <b>sweep slowly all the way round</b>, keeping it on the line where the sky starts. Where the view is open, follow the true horizon. It saves itself when you come full circle.</p>
+        <p class="muted small">Star-aligned: directions are as good as the pointing.</p>`}
       <div id="hz-box">${hzRingSVG(H, hzTrace.T)}</div>
       <div class="infield" id="hz-live">Waiting for the sensors…</div>
       <div class="btnrow"><button id="hz-cancel">Cancel</button></div>
-      <div class="actionbar">${hzTrace.rec ? '<button id="hz-done" class="primary">Save</button>' : '<button id="hz-rec" class="primary">Scope is on the skyline — start</button>'}</div>`;
-    if ($('#hz-rec')) $('#hz-rec').onclick = () => { hzTrace.rec = true; hzTrace.T = newTrace(); renderHorizon(); };
+      <div class="actionbar">${hzTrace.rec ? '<button id="hz-done" class="primary">Save what I have</button>' : waiting ? '<button class="primary" disabled>Get ready…</button>' : `<button id="hz-rec" class="primary">${hand ? 'Start' : 'Scope is on the skyline — start'}</button>`}</div>`;
+    el.querySelectorAll('[data-mode]').forEach((b2) => b2.onclick = () => { hzTrace.mode = b2.dataset.mode; renderHorizon(); });
+    // In the hand you cannot see the screen while sighting, so give three seconds to raise the phone before recording.
+    if ($('#hz-rec')) $('#hz-rec').onclick = () => { if (hzTrace.mode === 'hand') { hzTrace.recAt = Date.now() + 3000; hzTrace.beep = 3; } else { hzTrace.rec = true; hzTrace.T = newTrace(); } renderHorizon(); };
     $('#hz-cancel').onclick = () => { hzTrace = null; renderHorizon(); };
     if ($('#hz-done')) $('#hz-done').onclick = () => hzSaveTrace(false);
     hzBindBack(); return;
@@ -1829,19 +1845,14 @@ function renderHorizon() {
     </div>
     ${moved && !PL ? '<div class="card"><b>This map was made somewhere else.</b> <span class="small">Clear it or redo it for where you are now.</span></div>' : ''}
     <label class="row"><span>Show on star maps <span class="muted small">(see-through hatching, so you can still see what is behind it)</span></span><input type="checkbox" id="hz-show" ${state.hzShow === false ? '' : 'checked'}></label>
-    <h3>Quick way: tap a direction</h3>
-    <p class="muted small">Each tap steps through: clear → low (15°) → tall (30°) → very tall (50°) → blocked. A fist held at arm's length is about 10° high.${H.how === 'trace' ? ' The white line is your traced skyline: the rim is the horizon, the middle is overhead.' : ''}</p>
-    <div id="hz-box">${hzRingSVG(H, null)}</div>
-    <p class="muted small" style="text-align:center">${hasHorizon(H) ? esc(horizonSummary(H)) + (H.how === 'trace' ? (H.rough ? ' · traced by compass (rough)' : ' · traced with the scope') : '') : 'Nothing marked — the whole sky counts as open.'}</p>
-    <h3>Accurate way: trace the skyline</h3>
-    <p class="muted small">Sweep the telescope once around, following the tops of the trees and roofs. Best done after star alignment.${sensors && sensors.fresh() ? '' : ' The motion sensors are off; this button switches them on.'}</p>
-    <div class="btnrow"><button id="hz-trace" ${hzInFlow() ? '' : 'class="primary"'}>Trace the skyline</button><button id="hz-clear" ${hasHorizon(H) ? '' : 'disabled'}>Clear all</button></div>
+    <h3>One slow turn</h3>
+    <p class="muted small">Hold the phone like a spyglass, sight along it at the tops of the trees and roofs, and turn once around. No telescope needed, so you can do it when you scout a spot. It saves itself when you come full circle.${sensors && sensors.fresh() ? '' : ' The button switches the motion sensors on.'}</p>
+    <div class="btnrow"><button id="hz-trace" class="primary big">${hasHorizon(H) ? 'Trace the skyline again' : 'Trace the skyline'}</button></div>
+    ${hasHorizon(H) ? `<h3>Your blocked sky</h3>
+      <div id="hz-box">${hzRingSVG(H, null)}</div>
+      <p class="muted small" style="text-align:center">${esc(horizonSummary(H))}${H.how === 'trace' ? (H.by === 'scope' || (!H.by && !H.rough) ? ' · traced with the telescope' : ' · traced by hand') : ''}. The rim is the horizon, the middle is overhead.</p>
+      <div class="btnrow"><button id="hz-clear">Clear it</button></div>` : '<p class="muted small" style="text-align:center">Nothing marked yet, so the whole sky counts as open.</p>'}
     ${hzInFlow() ? `<div class="actionbar"><button id="hz-next" class="primary">${hasHorizon(H) ? 'Done — carry on' : 'Nothing in the way — carry on'}</button></div>` : ''}`;
-  el.querySelectorAll('[data-wedge]').forEach((g) => g.onclick = () => {
-    const k = +g.dataset.wedge, base = state.horizon || emptyHorizon();
-    setHorizon({ ...setWedge(base, k, (wedgeLevel(base, k) + 1) % HZ_LEVELS.length), lat: state.site.lat, lon: state.site.lon, when: Date.now(), rough: base.rough });
-    renderHorizon();
-  });
   $('#hz-trace').onclick = beginTrace;
   if ($('#hz-next')) $('#hz-next').onclick = hzDone;
   $('#hz-show').onchange = (e) => { state.hzShow = e.target.checked; save(); };
@@ -1851,17 +1862,23 @@ function renderHorizon() {
     let name = b.dataset.idea;
     if (!name) { name = prompt('Name this place', uniqueName(places().map((p) => p.name), `Spot ${coordText(state.site.lat, state.site.lon)}`)); if (!name || !name.trim()) return; }
     const kept = !curPlace() && horizonNow(); const p = addPlace(name.trim().slice(0, 30)); plcAdding = false; renderHorizon();
-    toast(kept ? `Saved as ${p.name}, with the blocked sky you marked.` : `${p.name} saved. Mark its blocked sky below.`, 4000);
+    toast(kept ? `Saved as ${p.name}, with the blocked sky you marked.` : `${p.name} saved. Trace its skyline below.`, 4000);
   });
   if ($('#plc-rename')) $('#plc-rename').onclick = () => { const p = curPlace(), n = prompt('Rename this place', p.name); if (!n || !n.trim()) return; p.name = uniqueName(places().filter((x) => x !== p).map((x) => x.name), n.trim().slice(0, 30)); save(); renderHorizon(); };
   if ($('#plc-del')) $('#plc-del').onclick = () => { if (!confirmTwice('plc-del')) return; const p = curPlace(); state.places = places().filter((x) => x !== p); state.placeId = null; save(); renderHorizon(); toast(`${p.name} deleted. Its blocked sky is still shown until you clear it or pick another place.`, 5000); };
-  $('#hz-clear').onclick = () => { if (!confirmTwice('hz-clear')) return; setHorizon(null); renderHorizon(); };
+  if ($('#hz-clear')) $('#hz-clear').onclick = () => { if (!confirmTwice('hz-clear')) return; setHorizon(null); renderHorizon(); };
   hzBindBack();
 }
 function updateHorizon() {
   if (!hzTrace) return;
-  let p = pointing(); if (!p || !p.ready) p = hzTrace.rough ? guessPointing() : null;
+  let p = hzTrace.mode === 'hand' ? handPointing() : pointing(); if (p && !p.ready) p = null;
   const live = $('#hz-live'); if (!live) return;
+  if (hzTrace.recAt && !hzTrace.rec) {
+    const left = Math.ceil((hzTrace.recAt - Date.now()) / 1000);
+    if (left <= 0) { hzTrace.rec = true; hzTrace.T = newTrace(); cue.go(); if (navigator.vibrate) navigator.vibrate(120); renderHorizon(); return; }
+    if (left < hzTrace.beep + 1 && left <= hzTrace.beep) { hzTrace.beep = left - 1; cue.tick(); }
+    live.textContent = `Raise the phone to the skyline… ${left}`; return;
+  }
   if (!p) { live.textContent = 'Waiting for the sensors…'; return; }
   if (hzTrace.rec && p.alt > -8 && p.alt < 88) {
     traceAdd(hzTrace.T, p.alt, p.az); if (hzTrace.az0 == null) { hzTrace.az0 = p.az; hzTrace.turn = 0; }
@@ -2595,7 +2612,7 @@ const ACTIVITIES = [
 const STEP_INFO = {
   check: ['Phone check-up', '4 min, once per phone — how far to trust the arrows'],
   sky: ['Sky darkness check', '30 s — count Little Dipper stars'],
-  horizon: ['Blocked sky', '1 min, once per place — mark trees and buildings'],
+  horizon: ['Blocked sky', 'one slow turn with the phone, once per place'],
   align: ['Star alignment', '2 min — point at two bright stars'],
 };
 /** The stops that make sense on the way to each activity. Planning and exploring need no phone check-up. */
