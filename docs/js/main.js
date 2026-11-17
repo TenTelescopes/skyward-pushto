@@ -243,14 +243,14 @@ function guessUncertainty() { const ph = state.phonePerf; return ph && ph.compas
 
 // ---------------------------------------------------------------- tabs
 // Five tabs; Align, Log, Tests and Setup live under More.
-const PARENT = { align: 'more', log: 'more', test: 'more', setup: 'more', horizon: 'more' };
+const PARENT = { align: 'more', log: 'more', test: 'more', setup: 'more', horizon: 'more', route: 'plan' };
 const scrollPos = {}; let pendingScroll = null;
 function showTab(t) {
   const m = $('main'); if (tab && m) scrollPos[tab] = m.scrollTop;
   tab = t; const top = PARENT[t] || t;
   document.querySelectorAll('nav#tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === top));
   document.querySelectorAll('.tab').forEach((s) => s.classList.toggle('on', s.id === 'tab-' + t));
-  ({ plan: renderPlan, find: renderFind, push: renderPush, align: renderAlign, game: renderGame, test: renderTest, setup: renderSetup, more: renderMore, log: renderLog, horizon: renderHorizon })[t]();
+  ({ plan: renderPlan, find: renderFind, push: renderPush, align: renderAlign, game: renderGame, test: renderTest, setup: renderSetup, more: renderMore, log: renderLog, horizon: renderHorizon, route: renderRoute })[t]();
   // Lists reopen where you left them; every other screen starts at the top.
   pendingScroll = (t === 'find' || t === 'plan') && scrollPos[t] ? { t, y: scrollPos[t] } : null;
   m.scrollTop = pendingScroll ? pendingScroll.y : 0;
@@ -344,6 +344,7 @@ function renderPlan() {
       ${openStar ? `<div class="planbar" id="pl-open">Start with a sync star: <b>★ ${esc(openStar.o.label)}</b>, ${openStar.dist.toFixed(0)}° from ${esc((objByKey(P.items[0].key) || {}).label || 'your first target')}. Centring it first makes the arrows accurate from the start. <button id="pl-openadd" class="mini primary">Add it</button></div>` : ''}
       <ul class="list" id="pl-list">${P.items.map((it, i) => planItemHTML(it, i)).join('')}</ul>
       <div class="btnrow"><button id="pl-go" class="primary">Start observing</button><button id="pl-route">Best order + sync stars</button></div>
+      <div class="btnrow"><button id="pl-prev">▶ Preview the route</button></div>
       <div class="chips wrap"><button id="pl-bytime">Order by time</button><button id="pl-nosync" ${nSync ? '' : 'disabled'}>Remove sync stars</button><button id="pl-auto">Rebuild for me</button><button id="pl-clear">Clear</button></div>
       <p class="muted small">"Best order" keeps pushes short and adds a bright star before each long jump. Centre that star and tap Sync, so the pointing is freshly corrected right where you're about to look.</p>`
     : `<div class="card" style="text-align:center"><b>No plan yet</b><p class="muted small" style="margin:4px 0 10px">Let the app pick a varied tour for this session, or add your own from the suggestions below with <b>+</b>.</p><button id="pl-auto" class="primary big">Build a plan for me</button></div>`}
@@ -388,6 +389,7 @@ function renderPlan() {
   if ($('#pl-openadd')) $('#pl-openadd').onclick = () => keepScroll(() => { P.items.unshift({ key: openStar.o.key, sync: true }); save(); renderPlan(); toast(`${openStar.o.label} added as your opening sync star`, 2500); });
   if ($('#pl-reorder')) $('#pl-reorder').onclick = () => keepScroll(() => { planReorder = !planReorder; renderPlan(); });
   if ($('#pl-route')) {
+    $('#pl-prev').onclick = () => { route = null; showTab('route'); };
     $('#pl-go').onclick = () => {
       const pp = planProgress(), next = (pp && pp.next) || P.items[0];
       if (!sensors || !sensors.fresh()) return launch('resume');     // start the sensors (and any ticked tune-up steps) first
@@ -1597,6 +1599,131 @@ function updateMar() {
   drawReticle(cur, tgt, o, { canvas: $('#g-chart') });
 }
 
+// ---------------------------------------------------------------- ROUTE PREVIEW
+// A run-through of the plan before going out: alignment stars, then each stop in order, traced across a whole-sky map
+// with the blocked sky hatched, and what each stop looks like in the finding eyepiece and the recommended one.
+let route = null;   // { stops: [{ o, kind: 'align'|'sync'|'target', t: Date, alt, az, hop, blocked, ep }], i, f, playing, t0 }
+function routeStops() {
+  const P = planState(), start = new Date(P.start), end = new Date(start.getTime() + P.hours * 3600000), HZ = horizonNow(), stops = [];
+  const at = (o, t, kind, extra = {}) => { const p = sky.altAz(o, t); stops.push({ o, kind, t, alt: p.alt, az: p.az, blocked: p.alt <= 0 || blocked(HZ, p.alt, p.az), ...extra }); };
+  // the stars the Align screen would offer at the start of the session
+  try {
+    const cands = sky.objects.filter((o) => (o.key.startsWith('st:') || (o.planet && o.id !== 'Moon')) && (o.mag ?? 9) < 2.6)
+      .map((o) => { const p = sky.altAz(o, start); return { ...o, alt: p.alt, az: p.az, src: o }; }).filter((s) => !blocked(HZ, s.alt, s.az, 2));
+    const a1 = pickStars(cands)[0], a2 = a1 && alignNeeded() > 1 ? pickStars(cands, a1)[0] : null;
+    for (const a of [a1, a2]) if (a) at(a.src, start, 'align');
+  } catch (e) { console.error(e); }
+  const items = P.items.map((it) => ({ it, o: objByKey(it.key) })).filter((x) => x.o), n = items.filter((x) => !x.it.sync).length || 1;
+  let k = 0;
+  for (const { it, o } of items) {
+    const t = new Date(start.getTime() + (end - start) * Math.min(1, (k + 0.5) / n));        // targets spread evenly through the session
+    if (it.sync) at(o, t, 'sync'); else { const r = rowFor(it.key); at(o, t, 'target', { ep: r && r.ep ? r.ep : null, row: r }); k++; }
+  }
+  stops.forEach((s, i) => { s.hop = i ? sepDeg(stops[i - 1].alt, stops[i - 1].az, s.alt, s.az) : null; });
+  return stops;
+}
+const ROUTE_HOLD = 3600, ROUTE_MOVE = 1100;     // ms looking at a stop, ms travelling to the next
+function renderRoute() {
+  const el = $('#tab-route'), P = planState();
+  if (!route) route = { stops: routeStops(), i: 0, f: 1, playing: true, t0: performance.now() };
+  const S = route.stops;
+  if (!S.length) { el.innerHTML = `<button class="back" id="rt-back">‹ Plan</button><h2>Route preview</h2><p>Add some targets to the plan first.</p>`; $('#rt-back').onclick = () => showTab('plan'); return; }
+  const bad = S.filter((s) => s.blocked && s.kind === 'target');
+  el.innerHTML = `<button class="back" id="rt-back">‹ Plan</button><h2>Route preview</h2>
+    <p class="muted small" style="margin:-6px 0 4px">${esc(planTitle(P))} · whole sky: rim = horizon, middle = overhead${horizonNow() ? ', hatched = blocked' : ''}</p>
+    <div class="rtgrid"><canvas id="rt-map" class="chart rtmap" width="800" height="800"></canvas><div id="rt-views" class="rtviews"></div></div>
+    <p class="small" style="text-align:center;margin:4px 0">${bad.length ? `<b>${bad.length} stop${bad.length === 1 ? ' is' : 's are'} hidden at the planned time:</b> ${bad.map((s) => esc(s.o.label)).join(', ')}` : horizonNow() ? 'The route stays clear of your blocked sky.' : 'No blocked sky marked for this spot.'}</p>
+    <div class="card" id="rt-card"></div>
+    <div class="actionbar"><button id="rt-prevb" class="nav" aria-label="Previous stop">‹</button><button id="rt-play" class="primary wide"></button><button id="rt-nextb" class="nav" aria-label="Next stop">›</button></div>`;
+  $('#rt-back').onclick = () => showTab('plan');
+  const go = (i) => { route.i = Math.max(0, Math.min(S.length - 1, i)); route.f = 0; route.t0 = performance.now(); routeCard(); };
+  $('#rt-prevb').onclick = () => { route.playing = false; go(route.i - 1); route.f = 1; routeCard(); };
+  $('#rt-nextb').onclick = () => { route.playing = false; go(route.i + 1); };
+  $('#rt-play').onclick = () => { if (!route.playing && route.i >= S.length - 1) go(0); route.playing = !route.playing; route.t0 = performance.now() - (route.f >= 1 ? ROUTE_MOVE : 0); routeCard(); };
+  routeCard(); drawRouteMap();
+}
+/** The card under the map: what this stop is and what it looks like in the eyepiece. */
+function routeCard() {
+  const box = $('#rt-card'); if (!box || !route) return;
+  const S = route.stops, s = S[route.i], o = s.o, p = profile();
+  const eps = p.eyepieces.slice().sort((a, b) => b.fl - a.fl), wide = eps[0], best = s.kind === 'target' && s.ep ? (p.eyepieces.find((e) => e.fl === s.ep.fl) || s.ep) : null;
+  const views = s.kind !== 'target' ? [[wide, 'Centre it']] : best && best.fl !== wide.fl ? [[wide, 'Find it'], [best, 'Then look']] : [[wide, 'Find it and look']];
+  const what = s.kind === 'align' ? 'Alignment star' : s.kind === 'sync' ? 'Sync star' : esc(typeLabel(o.t));
+  const mag = (e) => Math.round(p.fl / e.fl);
+  box.innerHTML = `<div class="muted small">Stop ${route.i + 1} of ${S.length} · ${what} · about ${hm(s.t)}</div>
+    <div class="target-h" style="margin:2px 0"><span class="name">${s.kind === 'target' ? '' : '★ '}${esc(o.label)}</span>${o.name && o.name !== o.label ? `<span class="muted">${esc(o.name)}</span>` : ''}</div>
+    <div class="small">${s.alt.toFixed(0)}° up in the ${compassName(s.az)}${s.hop != null ? ` · a ${s.hop.toFixed(0)}° push from ${esc(S[route.i - 1].o.label)}` : ' · the first thing you point at'}${s.blocked ? ' · <b>behind your blocked sky at this time</b>' : ''}</div>
+    ${s.kind === 'align' ? '<div class="muted small">Centre it and confirm. Two stars teach the app how the phone sits on the tube.</div>' : s.kind === 'sync' ? '<div class="muted small">Centre it and tap Sync, so the next pushes land closer.</div>' : s.row && s.row.desc ? `<div class="muted small">${esc(s.row.desc)}</div>` : ''}`;
+  const vb = $('#rt-views');
+  vb.innerHTML = views.map(([e, cap], j) => `<figure><canvas width="240" height="240" data-j="${j}"></canvas><figcaption><b>${cap}</b><br>${esc(e.name)} · ${mag(e)}×</figcaption></figure>`).join('<div class="rtarrow" aria-hidden="true">↓</div>');
+  vb.querySelectorAll('canvas').forEach((cv) => {
+    try {
+      const e = views[+cv.dataset.j][0], tg = sky.altAz(o, s.t);
+      drawEyepiece(cv, sky, o.pairs && o.key.startsWith('st:') ? { ...o, t: 'DS' } : o, tg, e, p, { matrix: state.rot180 ? newtonianMatrix(tg, p.focuser ?? 90) : null, bright: vis(), refExit: p.aperture / (p.fl / wide.fl), thumb: true, date: s.t });
+    } catch (err) { console.error(err); }
+  });
+  const b = $('#rt-play'); if (b) b.textContent = route.playing ? 'Pause' : route.i >= S.length - 1 ? 'Play again' : 'Play';
+  $('#rt-prevb').disabled = route.i === 0; $('#rt-nextb').disabled = route.i >= S.length - 1;
+}
+function updateRoute() {
+  if (!route || !route.stops.length || !$('#rt-map')) return;
+  const now = performance.now(), dt = now - route.t0;
+  if (route.i === 0) route.f = 1; else route.f = Math.min(1, dt / ROUTE_MOVE);
+  if (route.playing && dt > (route.i === 0 ? 0 : ROUTE_MOVE) + ROUTE_HOLD) {
+    if (route.i < route.stops.length - 1) { route.i++; route.f = 0; route.t0 = now; routeCard(); }
+    else { route.playing = false; routeCard(); }
+  }
+  drawRouteMap();
+}
+function drawRouteMap() {
+  const cv = $('#rt-map'); if (!cv || !route) return;
+  const c = cv.getContext('2d'), W = cv.width, C = W / 2, R = W * 0.44, k = vis(), col = (r, g, b, a = 1) => tint(r, g, b, a, k);
+  const S = route.stops, cur = S[route.i], HZ = horizonNow();
+  const xy = (alt, az) => { const r = R * (90 - Math.max(0, alt)) / 90; return [C + r * Math.sin(az * D2R), C - r * Math.cos(az * D2R)]; };
+  c.clearRect(0, 0, W, W);
+  c.beginPath(); c.arc(C, C, R, 0, 7); c.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--chart').trim() || '#05060f'; c.fill(); c.strokeStyle = col(170, 180, 230, 0.7); c.lineWidth = 2; c.stroke();
+  c.strokeStyle = col(120, 130, 190, 0.22); c.lineWidth = 1; for (const a of [30, 60]) { c.beginPath(); c.arc(C, C, R * (90 - a) / 90, 0, 7); c.stroke(); }
+  c.fillStyle = col(170, 180, 230, 0.85); c.font = `${W / 28}px system-ui, sans-serif`; c.textAlign = 'center'; c.textBaseline = 'middle';
+  for (const [t, az] of [['N', 0], ['E', 90], ['S', 180], ['W', 270]]) { const r = R + W * 0.035; c.fillText(t, C + r * Math.sin(az * D2R), C - r * Math.cos(az * D2R)); }
+  // blocked sky: the band between the rim and how high things reach in each direction
+  if (HZ) {
+    c.save(); c.beginPath(); c.arc(C, C, R, 0, 7);
+    for (let az = 360; az >= 0; az -= 2) { const [x, y] = xy(Math.min(89, limitAt(HZ, az)), az); if (az === 360) c.moveTo(x, y); else c.lineTo(x, y); }
+    c.closePath(); c.clip('evenodd');
+    c.fillStyle = col(150, 80, 50, 0.10); c.fillRect(0, 0, W, W);
+    c.beginPath(); for (let x = -W; x < W; x += W / 46) { c.moveTo(x, W); c.lineTo(x + W, 0); } c.strokeStyle = col(175, 95, 60, 0.5); c.lineWidth = 2; c.stroke();
+    c.restore();
+    c.beginPath(); for (let az = 0; az <= 360; az += 2) { const [x, y] = xy(Math.min(89, limitAt(HZ, az)), az); if (!az) c.moveTo(x, y); else c.lineTo(x, y); } c.strokeStyle = col(175, 95, 60, 0.8); c.lineWidth = 2; c.stroke();
+  }
+  // the bright stars, placed for the moment of this stop, so the sky turns as the session goes on
+  for (const o of sky.objects) {
+    if (!o.key.startsWith('st:') || (o.mag ?? 9) > 2.9) continue;
+    const p = sky.altAz(o, cur.t); if (p.alt < 1) continue; const [x, y] = xy(p.alt, p.az);
+    c.beginPath(); c.arc(x, y, Math.max(1.6, 5.2 - o.mag * 1.25), 0, 7); c.fillStyle = col(215, 222, 255, 0.5); c.fill();
+  }
+  const pts = S.map((s) => xy(s.alt, s.az));
+  // the path: still to come (faint, dashed), then already travelled (bright)
+  c.lineJoin = 'round'; c.setLineDash([8, 9]); c.strokeStyle = col(200, 205, 240, 0.35); c.lineWidth = 2;
+  c.beginPath(); pts.forEach(([x, y], i) => (i ? c.lineTo(x, y) : c.moveTo(x, y))); c.stroke(); c.setLineDash([]);
+  const here = route.i === 0 ? pts[0] : [pts[route.i - 1][0] + (pts[route.i][0] - pts[route.i - 1][0]) * ease(route.f), pts[route.i - 1][1] + (pts[route.i][1] - pts[route.i - 1][1]) * ease(route.f)];
+  c.strokeStyle = col(255, 205, 110, 0.95); c.lineWidth = 4; c.beginPath();
+  for (let i = 0; i < route.i; i++) { const [x, y] = pts[i]; if (i) c.lineTo(x, y); else c.moveTo(x, y); }
+  if (route.i > 0) c.lineTo(here[0], here[1]); c.stroke();
+  // the stops
+  c.font = `600 ${W / 36}px system-ui, sans-serif`;
+  S.forEach((s, i) => {
+    const [x, y] = pts[i], done = i < route.i || (i === route.i && route.f >= 1), r = s.kind === 'target' ? W / 62 : W / 80;
+    c.beginPath(); c.arc(x, y, r, 0, 7);
+    c.fillStyle = s.blocked ? col(230, 90, 70, done ? 1 : 0.6) : done ? col(255, 205, 110, 1) : col(200, 205, 240, 0.55); c.fill();
+    if (s.kind !== 'target') { c.strokeStyle = col(255, 255, 255, 0.9); c.lineWidth = 2; c.stroke(); }
+    if (i === route.i && route.f >= 1) { c.beginPath(); c.arc(x, y, r + W / 70, 0, 7); c.strokeStyle = col(255, 205, 110, 0.9); c.lineWidth = 3; c.stroke(); }
+    if (i === route.i || i === route.i - 1) { c.fillStyle = col(240, 242, 255, 0.95); c.textAlign = x > C ? 'right' : 'left'; c.fillText((s.kind === 'target' ? '' : '★ ') + s.o.label, x + (x > C ? -1 : 1) * (r + W / 80), y - W / 60); }
+  });
+  // the telescope on its way
+  if (route.f < 1 && route.i > 0) { c.beginPath(); c.arc(here[0], here[1], W / 55, 0, 7); c.fillStyle = col(255, 230, 160, 1); c.fill(); }
+}
+const ease = (t) => (t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2);
+
 // ---------------------------------------------------------------- BLOCKED SKY
 let hzTrace = null;   // { T, rough, t }
 function hzRingSVG(H, T) {
@@ -1663,11 +1790,21 @@ async function beginTrace() {
   hzTrace = { T: newTrace(), rough: !ok, t: 0 };
   if (tab !== 'horizon') showTab('horizon'); else renderHorizon();
 }
+/** Save the trace. `auto` = the sweep came full circle and the app is finishing it for the user. */
+function hzSaveTrace(auto) {
+  if (!hzTrace) return;
+  if (traceCoverage(hzTrace.T) < 0.2) return toast('Sweep further round first — at least a fifth of the circle.');
+  const part = traceCoverage(hzTrace.T) < 0.95;
+  setHorizon({ ...traceFinish(hzTrace.T, state.horizon), lat: state.site.lat, lon: state.site.lon, when: Date.now(), rough: hzTrace.rough });
+  hzTrace = null; renderHorizon(); $('main').scrollTop = 0;
+  if (auto) { cue.logged(); if (navigator.vibrate) navigator.vibrate([80, 60, 80]); }
+  toast(auto ? 'Full circle — skyline saved. Tap any direction to adjust it, or trace again.' : part ? 'Saved. Directions you did not sweep were filled in from their neighbours.' : 'Saved.', 5000);
+}
 function renderHorizon() {
   const el = $('#tab-horizon'), H = state.horizon || emptyHorizon();
   if (hzTrace) {
     el.innerHTML = `${HZ_BACK()}<h2>Trace the skyline</h2>
-      <p class="small">Put the scope on the top of the trees or roofs and tap Start. Then <b>sweep slowly all the way round</b>, keeping it on the line where the sky starts. Where the view is open, follow the true horizon. Went wrong somewhere? Sweep over that part again; the latest pass counts.</p>
+      <p class="small">Put the scope on the top of the trees or roofs and tap Start. Then <b>sweep slowly all the way round</b>, keeping it on the line where the sky starts. Where the view is open, follow the true horizon. Went wrong somewhere? Sweep over that part again; the latest pass counts. When you come full circle it saves itself.</p>
       ${hzTrace.rough ? '<p class="muted small"><b>Rough mode:</b> you are not star-aligned, so directions come from the phone\'s compass and can be 10° or more out. Heights are still good. For an accurate map, align first and trace again.</p>' : '<p class="muted small">Star-aligned: directions are as good as the pointing.</p>'}
       <div id="hz-box">${hzRingSVG(H, hzTrace.T)}</div>
       <div class="infield" id="hz-live">Waiting for the sensors…</div>
@@ -1675,13 +1812,7 @@ function renderHorizon() {
       <div class="actionbar">${hzTrace.rec ? '<button id="hz-done" class="primary">Save</button>' : '<button id="hz-rec" class="primary">Scope is on the skyline — start</button>'}</div>`;
     if ($('#hz-rec')) $('#hz-rec').onclick = () => { hzTrace.rec = true; hzTrace.T = newTrace(); renderHorizon(); };
     $('#hz-cancel').onclick = () => { hzTrace = null; renderHorizon(); };
-    if ($('#hz-done')) $('#hz-done').onclick = () => {
-      if (traceCoverage(hzTrace.T) < 0.2) return toast('Sweep further round first — at least a fifth of the circle.');
-      const part = traceCoverage(hzTrace.T) < 0.95;
-      setHorizon({ ...traceFinish(hzTrace.T, state.horizon), lat: state.site.lat, lon: state.site.lon, when: Date.now(), rough: hzTrace.rough });
-      hzTrace = null; renderHorizon();
-      toast(part ? 'Saved. Directions you did not sweep were filled in from their neighbours.' : 'Saved.', 4000);
-    };
+    if ($('#hz-done')) $('#hz-done').onclick = () => hzSaveTrace(false);
     hzBindBack(); return;
   }
   const PL = curPlace();
@@ -1732,10 +1863,19 @@ function updateHorizon() {
   let p = pointing(); if (!p || !p.ready) p = hzTrace.rough ? guessPointing() : null;
   const live = $('#hz-live'); if (!live) return;
   if (!p) { live.textContent = 'Waiting for the sensors…'; return; }
-  if (hzTrace.rec && p.alt > -8 && p.alt < 88) traceAdd(hzTrace.T, p.alt, p.az);
+  if (hzTrace.rec && p.alt > -8 && p.alt < 88) {
+    traceAdd(hzTrace.T, p.alt, p.az); if (hzTrace.az0 == null) { hzTrace.az0 = p.az; hzTrace.turn = 0; }
+    else hzTrace.turn += ((p.az - hzTrace.azL + 540) % 360) - 180;          // how far round they have actually turned
+    hzTrace.azL = p.az;
+  }
   const now = Date.now(); if (now - hzTrace.t < 300) return; hzTrace.t = now;
   const cov = traceCoverage(hzTrace.T);
-  live.textContent = `${Math.max(0, p.alt).toFixed(0)}° up, facing ${compassName(p.az)}` + (hzTrace.rec ? ` · ${Math.round(cov * 100)}% of the way round${cov >= 0.95 ? ' — done, tap Save' : ''}` : ' · not recording yet');
+  // Come full circle (every direction swept, or all but a sliver and back at the starting direction): finish it for them.
+  if (hzTrace.rec && (cov >= 1 || (cov >= 0.97 && Math.abs(((p.az - hzTrace.az0 + 540) % 360) - 180) < 8) || (cov >= 0.6 && Math.abs(hzTrace.turn || 0) >= 355))) {
+    if (!hzTrace.full) hzTrace.full = now;                         // a short beat, so the last direction gets more than one reading
+    else if (now - hzTrace.full >= 600) return hzSaveTrace(true);
+  } else hzTrace.full = 0;
+  live.textContent = `${Math.max(0, p.alt).toFixed(0)}° up, facing ${compassName(p.az)}` + (hzTrace.rec ? ` · ${Math.round(cov * 100)}% of the way round${cov >= 0.9 ? ' — nearly there, it saves itself when you close the circle' : ''}` : ' · not recording yet');
   $('#hz-box').innerHTML = hzRingSVG(state.horizon || emptyHorizon(), hzTrace.T);
   const C = 130, r = 112 - 78 * Math.min(90, Math.max(0, p.alt)) / 90;
   $('#hz-ptr').innerHTML = `<circle cx="${(C + r * Math.sin(p.az * D2R)).toFixed(1)}" cy="${(C - r * Math.cos(p.az * D2R)).toFixed(1)}" r="6" class="hz-now"/>`;
@@ -2440,7 +2580,7 @@ let lastFrame = 0;
 function loop(ts) {
   if (ts - lastFrame > 66) {
     lastFrame = ts; refreshSky(false);
-    try { updateStatus(); if (tab === 'push') updatePush(); if (tab === 'align') updateAlign(); if (tab === 'game') updateGame(); if (tab === 'horizon') updateHorizon(); updateTest(); } catch (e) { console.error(e); }
+    try { updateStatus(); if (tab === 'push') updatePush(); if (tab === 'align') updateAlign(); if (tab === 'game') updateGame(); if (tab === 'horizon') updateHorizon(); if (tab === 'route') updateRoute(ts); updateTest(); } catch (e) { console.error(e); }
   }
   requestAnimationFrame(loop);
 }

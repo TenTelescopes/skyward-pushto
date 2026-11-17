@@ -353,3 +353,12 @@ body::before, #gate::before { content: ""; position: fixed; inset: 0; z-index: -
 .plancard textarea { width: 100%; margin-top: 8px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg2); color: var(--fg); font: inherit; font-size: 15px; resize: vertical; min-height: 44px; }
 .plancard .list { margin-top: 8px; } .plancard .list li { display: flex; align-items: center; gap: 6px; } .plancard .list .grow { flex: 1; min-width: 0; }
 .stop > button.mini { flex: none; margin-left: auto; }
+/* route preview: whole-sky map on the left, what the stop looks like in the eyepiece on the right */
+.rtgrid { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr); gap: 10px; align-items: center; }
+canvas.rtmap { width: 100%; display: block; }
+.rtviews { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.rtviews figure { margin: 0; text-align: center; width: 100%; max-width: 116px; }
+.rtviews canvas { width: 100%; aspect-ratio: 1; display: block; background: #000; border-radius: 50%; border: 1px solid var(--line); }
+.rtviews figcaption { font-size: 11.5px; color: var(--dim); margin-top: 3px; line-height: 1.25; }
+.rtarrow { font-size: 16px; color: var(--dim); line-height: 1; }
+#rt-card { padding: 10px 12px; } #rt-card .target-h .name { font-size: 22px; } #tab-route h2 { margin-bottom: 8px; }
