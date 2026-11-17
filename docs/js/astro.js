@@ -35,6 +35,9 @@ export function buildObjects() {
     // kept for the catalogue listing but not suggested again (twin: true).
     if (d && BLURBS[label]) { const t = out.find((x) => x.key === 'ds:' + d.id); if (t) t.twin = true; }
   }
+  // Two catalogue entries that share a number and a name (the two halves of the Double Cluster) are one stop at the
+  // eyepiece: the second stays in catalogue lists but is not suggested again.
+  { const seen = new Set(); for (const o of out) { if (!o.name || o.key.startsWith('st:') || o.key.startsWith('ds:')) continue; const k = o.label + '|' + o.name; if (seen.has(k)) o.twin = true; else seen.add(k); } }
   for (const p of PLANETS) out.push({ id: p, key: 'pl:' + p, label: p, sub: p === 'Moon' ? 'Moon' : 'Planet', t: 'PL', type: 'Planet', cats: ['Planets'], planet: true });
   return out;
 }

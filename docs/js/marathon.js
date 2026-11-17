@@ -83,7 +83,7 @@ export function pick(sky, rows, { now = new Date(), done = new Set(), later = ne
   return res;
 }
 
-export const SYNC_DIST = 40;     // offer a sync star when the next object is farther than this from the last thing you synced on
+export const SYNC_DIST = 50;     // offer a sync star when the next object is farther than this from the last thing you synced on
 export const SYNC_NEAR = 25;     // and only a star within this of the object: a short, accurate final push
 /**
  * A bright star to centre and Sync on before a long hop to `target`, or null when none is needed or none is suitable.

@@ -41,8 +41,8 @@
   <nav id="tabs">
     <button data-tab="find"><svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 21 21"/></svg><span>Find</span></button>
     <button data-tab="plan"><svg viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><path d="m3.5 6 1.2 1.2L6.8 5M3.5 12l1.2 1.2L6.8 11M3.5 18l1.2 1.2L6.8 17"/></svg><span>Plan</span></button>
-    <button data-tab="push"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/><path d="M12 2v5M12 17v5M2 12h5M17 12h5"/></svg><span>Push</span></button>
-    <button data-tab="game"><svg viewBox="0 0 24 24"><circle cx="12" cy="14" r="7"/><path d="M12 14v-4M10 3h4M12 3v4M18.5 7.5 20 6"/></svg><span>Game</span></button>
+    <button data-tab="push"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/><path d="M12 2v5M12 17v5M2 12h5M17 12h5"/></svg><span>Observe</span></button>
+    <button data-tab="game"><svg viewBox="0 0 24 24"><circle cx="12" cy="14" r="7"/><path d="M12 14v-4M10 3h4M12 3v4M18.5 7.5 20 6"/></svg><span>Play</span></button>
     <button data-tab="more"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/></svg><span>More</span></button>
   </nav>
 
@@ -60,11 +60,12 @@
       <p id="gate-msg" class="muted"></p>
       <button id="gate-skip" class="hidden" style="width:100%;margin-top:8px">Continue without sensors</button>
       <button id="gate-sim" class="hidden" style="width:100%;margin-top:8px">Simulate sensors (desktop testing)</button>
-      <p class="muted small" style="text-align:center;margin:10px 0 0">Build 73 · Nov 17</p>
+      <p class="muted small" id="build" style="text-align:center;margin:10px 0 0">Build 74 · Nov 17</p>
     </div>
   </div>
   <div id="skycheck" class="overlay hidden"><div class="card" id="skycheck-card"></div></div>
   <div id="dockq" class="overlay hidden"><div class="card" id="dockq-card"></div></div>
+  <div id="dlg" class="overlay hidden"><div class="card" id="dlg-card"></div></div>
   <div id="sheet" class="overlay sheet hidden"><div class="card" id="sheet-card"></div></div>
   <div id="fs-help" class="overlay hidden"><div class="card">
     <h3 style="margin-top:0">Full screen</h3>

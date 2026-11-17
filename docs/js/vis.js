@@ -122,7 +122,7 @@ export function tooWide(o, scope) {
 export function rate(o, cond, scope) {
   const { alt, sunAlt = -30, moonAlt = -90, moonFrac = 0, moonSep = 180, nelm = DEFAULT_NELM } = cond;
   if (alt <= 0) return { level: 3, margin: -9, ep: null, cause: 'below' };
-  const key = o.key || '', isStar = key.startsWith('st:'), isDouble = key.startsWith('ds:') || (isStar && !!o.pairs);
+  const key = o.key || '', isStar = key.startsWith('st:'), isDouble = key.startsWith('ds:') || (isStar && !!o.pairs) || o.t === 'DS';       // M40 is a double filed among the deep-sky objects
   if (isStar && !o.show) return null;                                // alignment stars aren't targets
   // Star patterns far bigger than the widest eyepiece field are naked-eye or binocular sights, not telescope targets.
   if (o.t === 'AS' && o.maj && tooWide(o, scope)) return null;
@@ -149,6 +149,7 @@ export function rate(o, cond, scope) {
       let lv = levelOf(one.margin);
       if (split < 1 || needM > maxM * 1.3) lv = 3;
       else { if (split < 1.5 || needM > maxM) lv = Math.max(lv, 2); else if (split < 3) lv = Math.max(lv, 1); if (dm >= 3 && sep < 6) lv = Math.min(3, lv + 1); }
+      if (lv === 0 && ms.length && Math.min(...ms) > 8.5) lv = 1;          // a pair of faint stars is easy to see but nothing jumps out: never "Obvious"
       const epSplit = mags(scope).filter((x) => x.M >= needM).sort((a, b) => a.M - b.M)[0] || mags(scope).sort((a, b) => b.M - a.M)[0];
       return { level: lv, margin: one.margin, ep: epSplit.ep, cause: split < 3 ? 'close' : cause(o, cond, scope, lv) };
     }

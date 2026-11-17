@@ -56,7 +56,7 @@ const DEFAULTS = {
   site: { lat: 43.65, lon: -79.38, elev: 100, source: 'default (Toronto) — set your location' },
   smooth: 0.6, minAlt: 10, bright: 1, ep: 0, useRate: false, catFilter: 'M', upOnly: true, sort: 'best',
   history: [], target: null, log: [], sound: 'chime', skyCorr: true,
-  launch: { check: true, sky: false, align: true },
+  launch: { check: false, sky: false, align: true },
 };
 let state;
 
@@ -72,7 +72,7 @@ const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<
 const profile = () => state.profiles[state.active];
 const eyepiece = () => profile().eyepieces[Math.min(state.ep, profile().eyepieces.length - 1)];
 const tfov = (ep = eyepiece(), p = profile()) => ep.afov * ep.fl / p.fl; // degrees
-function toast(msg, ms = 2600) { const t = $('#toast'); t.textContent = msg; t.classList.remove('hidden'); clearTimeout(toast.h); toast.h = setTimeout(() => t.classList.add('hidden'), ms); }
+function toast(msg, ms = 2600) { const t = $('#toast'); t.textContent = msg; t.classList.remove('hidden'); t.onclick = () => t.classList.add('hidden'); clearTimeout(toast.h); toast.h = setTimeout(() => t.classList.add('hidden'), ms); }
 // Icons are drawn, not typed: several arrow and sun characters turn into colour emoji on iPhones, which ruins a red screen.
 const svg = (d) => `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">${d}</svg>`;
 const ICON = {
@@ -247,6 +247,7 @@ const PARENT = { align: 'more', log: 'more', test: 'more', setup: 'more', horizo
 const scrollPos = {}; let pendingScroll = null;
 function showTab(t) {
   const m = $('main'); if (tab && m) scrollPos[tab] = m.scrollTop;
+  if (PARENT[t] && tab && !PARENT[tab]) backTo = tab;       // remember where a sub-screen was opened from
   tab = t; const top = PARENT[t] || t;
   document.querySelectorAll('nav#tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === top));
   document.querySelectorAll('.tab').forEach((s) => s.classList.toggle('on', s.id === 'tab-' + t));
@@ -256,8 +257,79 @@ function showTab(t) {
   m.scrollTop = pendingScroll ? pendingScroll.y : 0;
 }
 function restoreScroll() { if (pendingScroll && pendingScroll.t === tab) { $('main').scrollTop = pendingScroll.y; pendingScroll = null; } }
-const BACK = '<button class="back" data-back>‹ More</button>';
-function bindBack(el) { const b = $('[data-back]', el); if (b) b.onclick = () => showTab('more'); }
+let backTo = 'more';                               // the main tab a sub-screen was opened from
+const BACK = '<button class="back" data-back>‹ Back</button>';
+function bindBack(el) { const b = $('[data-back]', el); if (!b) return; if (flow && flow.i >= 0 && flow.i < flow.steps.length) { b.remove(); return; } b.onclick = () => showTab(backTo); }
+const dlg = () => $('#dlg'), dlgCard = () => $('#dlg-card');
+function closeDlg() { dlg().classList.add('hidden'); dlgCard().innerHTML = ''; }
+/** Ask for a line of text in the app's own style. Resolves to the text, or null if cancelled. */
+function askText(title, value = '', { hint = '', ok = 'OK', placeholder = '', max = 60 } = {}) {
+  return new Promise((resolve) => {
+    dlgCard().innerHTML = `<h3 style="margin-top:0">${esc(title)}</h3>${hint ? `<p class="muted small">${esc(hint)}</p>` : ''}
+      <input id="dlg-in" class="dlgin" value="${esc(value)}" placeholder="${esc(placeholder)}" maxlength="${max}" autocomplete="off" autocapitalize="sentences">
+      <div class="btnrow"><button id="dlg-ok" class="primary">${esc(ok)}</button><button id="dlg-no">Cancel</button></div>`;
+    dlg().classList.remove('hidden');
+    const inp = $('#dlg-in'), done = (v) => { closeDlg(); resolve(v); };
+    setTimeout(() => { try { inp.focus(); inp.select(); } catch (e) { /* not focusable yet */ } }, 50);
+    $('#dlg-ok').onclick = () => done(inp.value); $('#dlg-no').onclick = () => done(null);
+    inp.onkeydown = (e) => { if (e.key === 'Enter') done(inp.value); };
+  });
+}
+/** Everything the app has saved on this phone, as one file the user can keep. */
+function backupText() { return JSON.stringify({ app: 'skyward-pushto', v: 1, saved: new Date().toISOString(), state }); }
+async function backupData() {
+  const text = backupText(), d = new Date(), name = `skyward-backup-${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}.json`;
+  try { const f = new File([text], name, { type: 'application/json' }); if (navigator.canShare && navigator.canShare({ files: [f] })) { await navigator.share({ files: [f], title: 'Skyward Push-To backup' }); state.backedUp = Date.now(); save(); return true; } } catch (e) { if (e && e.name === 'AbortError') return false; }
+  try { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type: 'application/json' })); a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); state.backedUp = Date.now(); save(); toast(`Saved as ${name}`, 4000); return true; } catch (e) { toast('Could not save a file here. Use Copy instead.', 4000); return false; }
+}
+function restoreData(text) {
+  let d; try { d = JSON.parse(text); } catch (e) { toast('That is not a Skyward backup (it could not be read).', 4500); return false; }
+  if (!d || d.app !== 'skyward-pushto' || !d.state || typeof d.state !== 'object') { toast('That is not a Skyward backup.', 4000); return false; }
+  try { localStorage.setItem(KEY, JSON.stringify(d.state)); } catch (e) { toast('This phone would not store it.', 4000); return false; }
+  location.reload(); return true;
+}
+function openBackup() {
+  const n = { log: (state.log || []).length, plans: (state.plans || []).length + (state.plan && state.plan.items && state.plan.items.length ? 1 : 0), places: (state.places || []).length };
+  dlgCard().innerHTML = `<h3 style="margin-top:0">Back up or restore</h3>
+    <p class="small">Your log, plans, places and settings live only on this phone. A backup is one small file you keep somewhere safe.</p>
+    <p class="muted small">On this phone now: ${n.log} log entr${n.log === 1 ? 'y' : 'ies'}, ${n.plans} plan${n.plans === 1 ? '' : 's'}, ${n.places} saved place${n.places === 1 ? '' : 's'}.${state.backedUp ? ` Last backup: ${shortDate(state.backedUp)}.` : ' Never backed up.'}</p>
+    <div class="btnrow"><button id="bk-save" class="primary">Save a backup file</button><button id="bk-copy">Copy as text</button></div>
+    <h3>Restore</h3>
+    <p class="muted small">Restoring replaces everything on this phone with what is in the backup.</p>
+    <div class="btnrow"><label class="btnlike">Choose a backup file<input id="bk-file" type="file" accept="application/json,.json,text/plain" hidden></label></div>
+    <textarea id="bk-paste" class="dlgin" rows="2" placeholder="…or paste backup text here"></textarea>
+    <div class="btnrow"><button id="bk-restore">Restore from the pasted text</button><button id="bk-close">Close</button></div>`;
+  dlg().classList.remove('hidden');
+  $('#bk-save').onclick = async () => { if (await backupData()) openBackup(); };
+  $('#bk-copy').onclick = async () => { try { await navigator.clipboard.writeText(backupText()); state.backedUp = Date.now(); save(); toast('Backup copied. Paste it into a note or an email to yourself.', 4500); } catch (e) { $('#bk-paste').value = backupText(); toast('Copy was blocked. The text is in the box: select it all and copy.', 5000); } };
+  $('#bk-file').onchange = async (e) => { const f = e.target.files && e.target.files[0]; if (!f) return; const t = await f.text(); $('#bk-paste').value = t; toast('File loaded. Tap Restore to replace what is on this phone.', 4500); };
+  $('#bk-restore').onclick = () => { const t = $('#bk-paste').value.trim(); if (!t) return toast('Choose a file or paste the text first.'); if (!confirmTwice('bk-restore')) return; restoreData(t); };
+  $('#bk-close').onclick = closeDlg;
+}
+/** The app cannot work without knowing where you are: every position in the sky depends on it. Asked before the first activity. */
+let locAsked = false;
+function askLocation(dest) {
+  const show = () => {
+    const ok = siteKnown();
+    dlgCard().innerHTML = ok ? `<h3 style="margin-top:0">✓ Location set</h3><p>${coordText(state.site.lat, state.site.lon)}</p><div class="btnrow"><button id="loc-go" class="primary">Carry on</button></div>`
+      : `<h3 style="margin-top:0">Where are you observing from?</h3>
+        <p class="small">The app works out where everything is in the sky from your location. Without it, it assumes Toronto, and stars can be shown in the wrong place.</p>
+        <div class="btnrow"><button id="loc-gps" class="primary big">Use this phone's location</button></div>
+        <details class="more"><summary>Type it in instead</summary>
+          <label class="row"><span>Latitude (°N)</span><input id="loc-lat" inputmode="decimal" placeholder="43.55"></label>
+          <label class="row"><span>Longitude (°E, west is −)</span><input id="loc-lon" inputmode="decimal" placeholder="-80.25"></label>
+          <div class="btnrow"><button id="loc-set">Use these</button></div></details>
+        <div class="btnrow"><button id="loc-skip">Not now (use Toronto)</button></div>
+        <p class="muted small" style="margin-bottom:0">It stays on this phone. GPS works with no cell signal.</p>`;
+    dlg().classList.remove('hidden');
+    if (ok) { $('#loc-go').onclick = () => { closeDlg(); launch(dest); }; return; }
+    $('#loc-gps').onclick = async () => { $('#loc-gps').textContent = 'Finding you…'; getGPS(); const t0 = Date.now(); while (!siteKnown() && Date.now() - t0 < 32000 && !dlg().classList.contains('hidden')) await new Promise((r) => setTimeout(r, 250)); if (!dlg().classList.contains('hidden')) show(); };
+    $('#loc-set').onclick = () => { const la = parseFloat($('#loc-lat').value), lo = parseFloat($('#loc-lon').value); if (!(Math.abs(la) <= 90) || !(Math.abs(lo) <= 180)) return toast('Latitude is between −90 and 90, longitude between −180 and 180.', 4000);
+      state.site = { lat: la, lon: lo, elev: state.site.elev || 0, source: 'entered manually' }; sky.setSite(la, lo, state.site.elev); planRows = null; rateCache.clear(); siteMoved(); save(); renderLaunch(); show(); };
+    $('#loc-skip').onclick = () => { locAsked = true; closeDlg(); launch(dest); };
+  };
+  show();
+}
 
 // ---------------------------------------------------------------- PLAN
 // state.plan = { id, start: ISO, hours, items: [{ key, sync? }], done: { key: true }, notes, name, nameSet, placeName }  (the one being worked on)
@@ -277,7 +349,7 @@ function openSavedPlan(id) {
   const i = plansList().findIndex((p) => p.id === id); if (i < 0) return;
   const [P] = plansList().splice(i, 1); stashPlan(); state.plan = P; planRows = null; save();
 }
-let planRows = null, planLevel = 'all', planSort = 'top', planLimit = 40, planEdit = false, planReorder = false, planMine = false;
+let planRows = null, planLevel = 'all', planSort = 'top', planLimit = 15, planEdit = false, planReorder = false, planMine = false;
 const hm = (d) => (d ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '—');
 const pad = (n) => String(n).padStart(2, '0');
 const dateVal = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -333,10 +405,11 @@ function renderPlan() {
         <div class="btnrow"><button id="pl-skyq" class="mini">Measure it: Little Dipper check (30 s)</button></div>
       </div>
     </div>
-    <div class="card plancard">
-      <div class="sess"><div><b id="pl-name">${esc(planTitle(P))}</b><div class="muted small">${planWorthKeeping(P) ? 'Kept automatically' : 'Nothing in it yet'}${P.nameSet ? '' : ' · named from the date and place'}</div></div><button id="pl-rename" class="mini">Rename</button></div>
-      <textarea id="pl-notes" rows="2" placeholder="Notes: the sky, who came, what to try next time…">${esc(P.notes || '')}</textarea>
-      <div class="btnrow"><button id="pl-new" class="mini" ${planWorthKeeping(P) ? '' : 'disabled'}>New plan</button><button id="pl-mine" class="mini" ${plansList().length ? '' : 'disabled'}>${planMine ? 'Hide' : 'My plans'} (${plansList().length})</button></div>
+    ${planWorthKeeping(P) ? '' : plansList().length ? `<div class="btnrow"><button id="pl-mine" class="mini">${planMine ? 'Hide my plans' : 'My plans'} (${plansList().length})</button></div>` : ''}
+    <div class="card plancard ${planWorthKeeping(P) || planMine ? '' : 'hidden'}">
+      <div class="sess ${planWorthKeeping(P) ? '' : 'hidden'}"><div><b id="pl-name">${esc(planTitle(P))}</b><div class="muted small">${planWorthKeeping(P) ? 'Kept automatically' : 'Nothing in it yet'}${P.nameSet ? '' : ' · named from the date and place'}</div></div><button id="pl-rename" class="mini">Rename</button></div>
+      <textarea id="pl-notes" class="${planWorthKeeping(P) ? '' : 'hidden'}" rows="2" placeholder="Notes: the sky, who came, what to try next time…">${esc(P.notes || '')}</textarea>
+      ${planWorthKeeping(P) ? `<div class="btnrow"><button id="pl-new" class="mini">New plan</button><button id="pl-mine" class="mini" ${plansList().length ? '' : 'disabled'}>${planMine ? 'Hide' : 'My plans'} (${plansList().length})</button></div>` : ''}
       ${planMine && plansList().length ? `<ul class="list" id="pl-saved">${plansList().map((S) => { const t = S.items.filter((x) => !x.sync), d = t.filter((x) => S.done && S.done[x.key]).length, note = (S.notes || '').trim().split('\n')[0];
         return `<li><div class="grow"><b>${esc(planTitle(S))}</b><div class="muted small">${t.length} target${t.length === 1 ? '' : 's'}${d ? ` · ${d} done` : ''}${note ? ` · ${esc(note.slice(0, 60))}${note.length > 60 ? '…' : ''}` : ''}</div></div><button class="mini" data-open="${S.id}">Open</button><button class="mini" data-del="${S.id}" id="pl-del-${S.id}">Delete</button></li>`; }).join('')}</ul>` : ''}
     </div>
@@ -355,10 +428,10 @@ function renderPlan() {
   $('#pl-hz').onclick = () => openHorizon('plan');
   $('#pl-notes').oninput = (e) => { P.notes = e.target.value; save(); };
   $('#pl-notes').onchange = () => { const y = $('main').scrollTop; renderPlan(); $('main').scrollTop = y; };
-  $('#pl-rename').onclick = () => { const auto = planAutoName(new Date(P.start), planWhere(P)), n = prompt('Name this plan (leave it as is to keep the automatic name)', planTitle(P)); if (n == null) return;
+  $('#pl-rename').onclick = async () => { const auto = planAutoName(new Date(P.start), planWhere(P)), n = await askText('Name this plan', planTitle(P), { hint: 'Leave it as it is to keep the automatic name.' }); if (n == null) return;
     if (!n.trim() || n.trim() === auto) { P.nameSet = false; delete P.name; } else { P.name = n.trim().slice(0, 60); P.nameSet = true; } save(); renderPlan(); };
-  $('#pl-new').onclick = () => { const name = planTitle(P); startNewPlan(); planMine = false; renderPlan(); $('main').scrollTop = 0; toast(`"${name}" is kept under My plans. Fresh plan started.`, 4000); };
-  $('#pl-mine').onclick = () => { planMine = !planMine; const y = $('main').scrollTop; renderPlan(); $('main').scrollTop = y; };
+  if ($('#pl-new')) $('#pl-new').onclick = () => { const name = planTitle(P); startNewPlan(); planMine = false; renderPlan(); $('main').scrollTop = 0; toast(`"${name}" is kept under My plans. Fresh plan started.`, 4000); };
+  if ($('#pl-mine')) $('#pl-mine').onclick = () => { planMine = !planMine; const y = $('main').scrollTop; renderPlan(); $('main').scrollTop = y; };
   el.querySelectorAll('[data-open]').forEach((b) => b.onclick = () => { openSavedPlan(b.dataset.open); planMine = false; renderPlan(); $('main').scrollTop = 0; toast(`Opened "${planTitle(state.plan)}"`); });
   el.querySelectorAll('[data-del]').forEach((b) => b.onclick = () => { if (!confirmTwice(b.id)) return; state.plans = plansList().filter((p) => p.id !== b.dataset.del); save(); const y = $('main').scrollTop; renderPlan(); $('main').scrollTop = y; });
   const keepScroll = (f) => { const y = $('main').scrollTop; f(); $('main').scrollTop = y; };
@@ -371,7 +444,7 @@ function renderPlan() {
   $('#pl-hours').onchange = (e) => { P.hours = +e.target.value; planRows = null; save(); renderPlan(); };
   $('#pl-dark').onclick = () => setStart(n.astro || n.naut || start);
   $('#pl-now').onclick = () => setStart(new Date(Math.ceil(Date.now() / 900000) * 900000));
-  el.querySelectorAll('#pl-lv [data-lv]').forEach((b) => b.onclick = () => keepScroll(() => { planLevel = b.dataset.lv; planLimit = 40; renderPlan(); }));
+  el.querySelectorAll('#pl-lv [data-lv]').forEach((b) => b.onclick = () => keepScroll(() => { planLevel = b.dataset.lv; planLimit = 15; renderPlan(); }));
   el.querySelectorAll('#pl-sort [data-s]').forEach((b) => b.onclick = () => keepScroll(() => { planSort = b.dataset.s; renderPlan(); }));
   const applyRoute = (rows) => {
     const { steps, notUp } = routePlan(sky, rows, { start, hours: P.hours, minAlt: 20 });
@@ -421,11 +494,20 @@ const hzSig = () => (state.horizon ? state.horizon.when || 1 : 0);
 function skyNelm() { return state.skyq ? state.skyq.nelm : DEFAULT_NELM; }
 let planDarkNight = null, planSig = '';
 const rowFor = (key) => computePlanRows().find((r) => r.key === key) || null;
+/** When each plan item will be reached: targets spread evenly through the session, a sync star just before its target. */
+function planSchedule() {
+  const P = planState(), start = new Date(P.start).getTime(), span = P.hours * 3600000, n = P.items.filter((x) => !x.sync).length || 1, out = new Map(); let k = 0;
+  for (const it of P.items) { out.set(it.key + (it.sync ? '|s' : ''), new Date(start + span * Math.min(1, (k + 0.5) / n))); if (!it.sync) k++; }
+  return out;
+}
+let planWhen = null;
 function planItemHTML(it, i) {
   const o = objByKey(it.key); if (!o) return '';
+  if (i === 0 || !planWhen) planWhen = planSchedule();
+  const tAt = planWhen.get(it.key + (it.sync ? '|s' : '')) || new Date(state.plan.start), pAt = sky.altAz(o, tAt);
   const r = it.sync ? null : rowFor(it.key), done = state.plan.done && state.plan.done[it.key], last = i === state.plan.items.length - 1;
   const info = it.sync ? '<div class="t2">Sync star — centre it, tap Sync, carry on</div>'
-    : r ? `<div class="t2"><span class="dots lv${r.level}">${DOTS[r.level]}</span> ${hm(r.best)} · ${r.alt.toFixed(0)}° ${compassName(r.az)}${r.ep ? ' · ' + esc(r.ep.name) : ''}</div>${planReorder ? '' : `<div class="t2">${esc(r.desc)}</div>`}`
+    : r ? `<div class="t2"><span class="dots lv${r.level}">${DOTS[r.level]}</span> about ${hm(tAt)} · ${pAt.alt.toFixed(0)}° ${compassName(pAt.az)}${r.ep ? ' · ' + esc(r.ep.name) : ''}</div>${planReorder ? '' : `<div class="t2">${esc(r.desc)}</div>`}`
     : '<div class="t2">Not well placed in this session</div>';
   return `<li class="${done ? 'done' : ''}"><span class="muted small" style="width:16px;text-align:right">${i + 1}</span>
     <div class="main" data-goplan="${esc(it.key)}"><div class="t1">${it.sync ? '★ ' : ''}${nameHTML(o)}${kindTag(o)}${done ? ' <span class="seen">✓</span>' : ''}</div>${info}</div>
@@ -527,8 +609,8 @@ function readinessHTML() {
   if (st === 'off' || st === 'nodata') rows.push(`<div class="strip warn"><span><b>Motion sensors are off.</b></span><button id="qs-start" class="mini primary">Start</button></div>`);
   else if (st === 'unaligned') rows.push(`<div class="strip warn"><span><b>Not aligned</b> — arrows are a rough guess.</span><button id="qs-align" class="mini primary">Align</button></div>`);
   else if (st === 'resync') rows.push(`<div class="strip warn"><span><b>Sync recommended.</b> Centre a bright star and tap Sync.</span><button id="qs-align" class="mini">Align</button></div>`);
-  if (!siteKnown()) rows.push(`<div class="strip"><span>Location not set.</span><button id="qs-gps" class="mini primary">Use GPS</button></div>`);
-  if (!lastCheck() && !state.skipCheck) rows.push(`<div class="strip"><span>Phone not tested yet (4 min).</span><button id="qs-check" class="mini">Test</button><button id="qs-skip" class="mini" aria-label="Dismiss">✕</button></div>`);
+  if (!siteKnown()) rows.push(`<div class="strip"><span>Location not set — using Toronto.</span><button id="qs-gps" class="mini primary">Use GPS</button></div>`);
+  if (!lastCheck() && !state.skipCheck) rows.push(`<div class="strip"><span>Phone check-up not done yet (4 min, optional).</span><button id="qs-check" class="mini">Run it</button><button id="qs-skip" class="mini" aria-label="Dismiss">✕</button></div>`);
   return rows.join('');
 }
 /** The best things up right now for this scope and sky: famous, well above the visibility limit, comfortably high, and varied. */
@@ -568,6 +650,9 @@ function renderFind() {
       <button data-up class="${state.upOnly ? 'on' : ''}">Up now</button>
       <button data-unseen class="${state.unseenOnly ? 'on' : ''}">Not seen yet</button>
     </div>
+    <details class="more keybox"><summary>What the dots and numbers mean</summary>
+      <p class="muted small"><span class="dots lv0">●●●</span> obvious · <span class="dots lv1">●●○</span> visible · <span class="dots lv2">●○○</span> challenging · <span class="dots lv3">○○○</span> not tonight. That is for your telescope, your sky and right now.</p>
+      <p class="muted small"><b>mag</b> is brightness: smaller is brighter, and each step of 1 is about 2.5 times. <b>′</b> is an arcminute, a sixtieth of a degree (the Moon is 30′ wide). <b>″</b> is an arcsecond, a sixtieth of that. The last figure is how high it is now and in which direction.</p></details>
     <div id="sunwarn" class="muted small"></div>
     <ul class="list" id="flist"></ul>`;
   bindQuickStart(el);
@@ -691,6 +776,7 @@ function renderPush() {
     <details class="more"><summary>Numbers</summary>
       <p class="muted small">${esc(o.sub || '')}${o.con ? ' · ' + esc(fullCon(o.con)) : ''}${o.mag != null ? ' · mag ' + (+o.mag).toFixed(1) : ''}${o.mnote ? ' · ' + esc(o.mnote) : ''}</p>
       ${o.pairs ? `<p class="muted small">${o.pairs.map((p) => `${p.c}: ${p.sep}″ apart, PA ${p.pa}° (mags ${p.mags})`).join(' · ')}</p>` : ''}
+      ${o.ra != null && o.dec != null ? `<p class="muted small">RA ${raText(o.ra)} · Dec ${decText(o.dec)} (J2000)${o.maj ? ` · size ${o.maj >= 60 ? (o.maj / 60).toFixed(1) + '°' : o.maj + '′'}` : ''}</p>` : ''}
       <div class="kv" id="pinfo"></div>
     </details>
     <div class="btnrow"><button id="b-info">About ${esc(o.label)}</button><button id="b-free">Sky view</button><button id="p-hz">Blocked sky</button></div>
@@ -750,7 +836,7 @@ function onTargetHTML(o, wide, U, loggable) {
   if (!loggable) return `<div class="ontarget"><b>✓ In the eyepiece</b><div class="small">Centre it, then tap <b>It’s centred — sync</b>.</div></div>`;
   if (recent) return `<div class="ontarget"><b>✓ In the eyepiece</b><div class="small">Logged ✓ — tap the arrow for the next one.</div></div>`;
   return `<div class="ontarget"><b>✓ In the eyepiece</b> — take a look
-    <div class="seenrow"><span>See it?</span><button data-seen="yes" class="primary">Yes</button><button data-seen="maybe">Not sure</button><button data-seen="no">No</button></div></div>`;
+    <div class="seenrow"><span>See it?</span><button data-seen="yes" class="primary">Saw it ✓</button><button data-seen="maybe">Not sure</button><button data-seen="no">No</button></div></div>`;
 }
 let wpT = 0, wpDismissed = null, eyeT = 0;
 function updateEyeview(o, tgt) {
@@ -978,6 +1064,10 @@ function bindChartControls() {
 }
 
 /** Sky hidden from this spot: a see-through hatched band, so what is behind the trees can still be seen on the chart. */
+const raText = (deg) => { const h = ((deg % 360) + 360) % 360 / 15, hh = Math.floor(h), mm = (h - hh) * 60; return `${hh}h ${mm.toFixed(1)}m`; };
+const decText = (deg) => { const s = deg < 0 ? '−' : '+', a = Math.abs(deg), d = Math.floor(a), mi = Math.round((a - d) * 60); return `${s}${mi === 60 ? d + 1 : d}° ${String(mi === 60 ? 0 : mi).padStart(2, '0')}′`; };
+/** "87° away", "4.2° away": whole degrees until it gets close. */
+const degAway = (d) => (d >= 10 ? d.toFixed(0) : d.toFixed(1)) + '°';
 function hzFill(c, top, bot, col) {
   const path = () => { c.beginPath(); c.moveTo(top[0].x, top[0].y); for (const p of top) c.lineTo(p.x, p.y); for (let i = bot.length - 1; i >= 0; i--) c.lineTo(bot[i].x, bot[i].y); c.closePath(); };
   let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
@@ -1227,21 +1317,22 @@ function renderAlign() {
       <div class="btnrow"><button id="a-retry" class="primary">Try again</button><button id="a-force">It is — use it</button></div></div>`;
   } else if (s) {
     assistHTML = `<div class="muted small">Step ${done + 1} of ${need}${need === 2 && done === 0 ? ' · two stars teach the app how the phone sits on the tube' : ''}</div>
-      <div class="target-h" style="margin:2px 0"><span class="name">${esc(s.label)}</span><span class="muted">${s.planet ? 'planet' : 'star'} · mag ${(+s.mag).toFixed(1)}</span></div>
+      <div class="target-h" style="margin:2px 0"><span class="name">${esc(s.label)}</span><span class="muted">${s.planet ? 'a planet' : 'a bright star'}</span></div>
       <p style="margin:2px 0">${esc(cap1(starHelp(s)))}. Look ${esc(whereWords(s.alt, s.az))}.</p>
       <p class="infield" id="a-live"></p>
       <canvas id="a-chart" class="chart" width="600" height="600"></canvas>
       <p class="muted small">Get it in the red-dot finder first, then centre it in the eyepiece and tap <b>It's centred</b>. Not sure it's the right star? Tap <b>Different star</b>.</p>`;
   } else if (done >= need) {
-    assistHTML = `<div class="card"><b>✓ Aligned on ${align.obs.map((o) => esc(o.label)).join(' and ')}.</b> <span class="muted small">Fit ${fmt.am(f.rms * 60)}.</span>
+    assistHTML = `<div class="card"><b>✓ Aligned on ${align.obs.map((o) => esc(o.label)).join(' and ')}.</b>
       ${f.solvedAxis && !c ? '<div class="btnrow"><button id="savecal2">Remember how the phone sits — next time one star is enough</button></div>' : ''}<p class="muted small">Tap Sync on anything you centre to keep it accurate. Before a long push, the app suggests a star to check on the way.</p>
       <div class="btnrow"><button id="a-find" class="primary">Pick a target</button></div></div>`;
   } else assistHTML = '<p class="muted">No bright stars above 15° right now.</p>';
   el.innerHTML = `${BACK}
-    <h2>Alignment</h2>
+    <h2>Star alignment</h2>
     ${state.mode === 'compass' ? `<p class="muted">Compass mode is on: azimuth comes from the magnetometer. Star alignment below uses the gyro instead and is usually more accurate — switch in Setup.</p>` : ''}
     ${assistHTML}
-    ${done ? `<table class="res"><tr><th>Star</th><th>Alt</th><th>Residual</th><th></th></tr>${align.obs.map((o, i) => `<tr><td>${esc(o.label)}</td><td>${o.alt.toFixed(0)}°</td><td>${f ? fmt.am(f.resid[i] * 60) : ''}</td><td><button data-del="${i}">✕</button></td></tr>`).join('')}</table>` : ''}
+    <details class="more" id="a-tools" ${state.alignTools ? 'open' : ''}><summary>Details and tools</summary>
+    ${done ? `<p class="muted small">How well each star fits the alignment${f ? ` (overall ${fmt.am(f.rms * 60)}; ′ is a sixtieth of a degree)` : ''}. Tap ✕ to drop one.</p><table class="res"><tr><th>Star</th><th>Height</th><th>Off by</th><th></th></tr>${align.obs.map((o, i) => `<tr><td>${esc(o.label)}</td><td>${o.alt.toFixed(0)}°</td><td>${f ? fmt.am(f.resid[i] * 60) : ''}</td><td><button data-del="${i}">✕</button></td></tr>`).join('')}</table>` : ''}
     ${align.confirm.length ? `<div class="card"><h3 style="margin-top:0">Sky consistency</h3>
       <canvas id="dome" width="700" height="720" style="width:100%;max-width:360px;display:block;margin:0 auto;background:var(--chart);border-radius:10px"></canvas>
       <div class="chips" style="justify-content:center">${[1, 10, 30].map((m) => `<button data-mag="${m}" class="${domeMag === m ? 'on' : ''}">errors ×${m}</button>`).join('')}<button id="dome-red" class="${state.domeRed ? 'on' : ''}">Red only</button></div>
@@ -1257,8 +1348,10 @@ function renderAlign() {
     </details>
     <details class="more"><summary>Choose any star yourself</summary>
     <ul class="list">${alignCands().sort((a, b) => (a.mag ?? 9) - (b.mag ?? 9)).map((o) => `<li data-k="${esc(o.key)}"><div class="main"><div class="t1">${esc(o.label)}</div><div class="t2">${esc(o.sub || '')}</div></div><div class="r num">mag ${(+o.mag).toFixed(1)}</div><div class="r num" style="min-width:64px">${o.alt.toFixed(0)}° ${compassName(o.az)}</div></li>`).join('')}</ul></details>
+    </details>
     ${s && !assist.pending ? '<div class="actionbar"><button id="a-ok" class="primary wide">It\'s centred</button><button id="a-skip">Different star</button></div>' : ''}`;
   bindBack(el);
+  $('#a-tools').ontoggle = (e) => { state.alignTools = e.target.open; save(); };
   if ($('#a-find')) $('#a-find').onclick = () => showTab('find');
   const addStar = (o, force) => {
     const ob = makeObs(o); if (!ob) return toast('No sensor data yet');
@@ -1335,7 +1428,7 @@ function renderDome() {
       <span>Worst pair-distance mismatch</span><span>${pc.worst != null ? fmt.am(pc.worst) : '—'}</span>
       <span>Removed as expected</span><span>${fit ? `offset${fit.epochs > 1 ? `, ${fit.epochs - 1} heading jump${fit.epochs > 2 ? 's' : ''}` : ''}${fit.useAxis ? ', phone tilt' : ''}${fit.useRate ? `, drift ${fmt.rate(fit.rate)}` : ''}` : '—'}</span></div>
     ${out.map((i) => `<p class="small"><b>${esc(P[i].label)}</b> disagrees with the others by ${fmt.am(fit.resid[i].err)} — probably the wrong star or a bumped scope. <button data-drop="${i}">Remove it</button></p>`).join('')}
-    <p class="muted small">Looking up: north at top, east on the left. White is the true sky; the coloured mesh is how the sensors see it after removing the offset, phone tilt and drift — green perfect, blue good, yellow fair, red poor (compared with your eyepiece field). Dots are confirmed objects, arrows point to where the sensors put them. With Sky correction in use, the arrows on the Push screen are shifted to cancel this map. Colours cost some night vision; use Red only at the eyepiece.</p>`;
+    <p class="muted small">Looking up: north at top, east on the left. White is the true sky; the coloured mesh is how the sensors see it after removing the offset, phone tilt and drift — green perfect, blue good, yellow fair, red poor (compared with your eyepiece field). Dots are confirmed objects, arrows point to where the sensors put them. With Sky correction in use, the arrows on the Observe screen are shifted to cancel this map. Colours cost some night vision; use Red only at the eyepiece.</p>`;
   $('#dome-corr').onchange = (e) => { state.skyCorr = e.target.checked; save(); renderDome(); toast(state.skyCorr ? 'Sky correction on' : 'Sky correction off'); };
   box.querySelectorAll('[data-drop]').forEach((b) => b.onclick = () => {
     const pt = P[+b.dataset.drop]; align.confirm.splice(+b.dataset.drop, 1);
@@ -1380,7 +1473,7 @@ async function scanCode() {
   const finish = (v) => { done = true; if (stream) stream.getTracks().forEach((t) => t.stop()); ov.classList.add('hidden'); return v; };
   return new Promise(async (resolve) => {
     $('#scan-cancel').onclick = () => resolve(finish(null));
-    $('#scan-paste').onclick = () => { const v = prompt('Paste the Skyward code'); resolve(finish(v && v.trim() ? v.trim() : null)); };
+    $('#scan-paste').onclick = async () => { const v = await askText('Paste the Skyward code', '', { max: 4000, ok: 'Join' }); resolve(finish(v && v.trim() ? v.trim() : null)); };
     try {
       await loadScript('vendor/jsQR.js');
       stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
@@ -1501,7 +1594,7 @@ function renderLobby(el) {
   };
   $('#g-new').onclick = () => newGame(state.gameStyle || 'push');
   $('#g-scan').onclick = async () => { const c = await scanCode(); if (c) (c.startsWith('SKYR') ? addFriendResult(c) : loadChallenge(c)); };
-  $('#g-paste').onclick = () => { const c = prompt('Paste a Skyward challenge code'); if (c) loadChallenge(c.trim()); };
+  $('#g-paste').onclick = async () => { const c = await askText('Paste a Skyward race code', '', { max: 4000, ok: 'Join' }); if (c && c.trim()) loadChallenge(c.trim()); };
   $('#g-board').onclick = () => showBoard($('#g-boardbox'), { style: state.gameStyle || 'push' });
 }
 
@@ -1518,7 +1611,7 @@ function marRows() {
 function startMarathon(fresh) {
   if (fresh || !state.marathon) state.marathon = { night: nightOf(sky).id, start: Date.now(), found: {}, tap: [], later: {}, over: false };
   game = null; mar = { rows: null, sig: '', cur: null, dw: {} };
-  save(); marPick(); renderGame();
+  save(); marPick(); renderGame(); $('main').scrollTop = 0;
 }
 function marPick() {
   const M = state.marathon, rows = marRows(), c = pointing();
@@ -1547,7 +1640,7 @@ function finishMarathon() {
   M.over = true; M.ended = Date.now();
   const found = Object.keys(M.found).length, possible = marRows().length;
   if (found && (!state.marathonBest || found > state.marathonBest.found)) state.marathonBest = { found, possible, when: Date.now() };
-  save(); mar.done = true; renderGame();
+  save(); mar.done = true; renderGame(); $('main').scrollTop = 0;
 }
 function renderMar(el) {
   const M = state.marathon, rows = marRows(), found = Object.keys(M.found).length;
@@ -1557,7 +1650,7 @@ function renderMar(el) {
     el.innerHTML = `<h2>${found} of ${rows.length} possible tonight</h2>
       <p class="muted small">Messier Marathon · ${shortDate(M.start)}${M.tap.length ? ` · ${M.tap.length} counted on your word (the sensors disagreed)` : found ? ' · every find agreed with the sensors' : ''}${state.marathonBest && state.marathonBest.found === found && found ? ' · your best night so far' : ''}</p>
       ${got.length ? `<table class="res"><tr><th>#</th><th>Found</th><th>At</th></tr>${got.map(([k, t], i) => `<tr><td>${i + 1}</td><td>${esc((byKey.get(k) || { o: objByKey(k) || { label: k } }).o.label)}</td><td>${hm(new Date(t))}</td></tr>`).join('')}</table>` : '<p>Nothing found this time. Clouds happen.</p>'}
-      ${missed.length ? `<p class="muted small">Not found: ${missed.map((r) => esc(r.o.label)).join(', ')}</p>` : ''}
+      ${missed.length && found ? `<details class="more"><summary>${missed.length} not found</summary><p class="muted small">${missed.map((r) => esc(r.o.label)).join(', ')}</p></details>` : missed.length ? `<p class="muted small">${missed.length} were in reach tonight. They will be back.</p>` : ''}
       <div class="btnrow"><button id="mm-back" class="primary">Done</button></div>`;
     $('#mm-back').onclick = () => { mar = null; renderGame(); };
     return;
@@ -1603,7 +1696,7 @@ function renderMar(el) {
         const t = sky.altAz(o), d = sepDeg(cur.alt, cur.az, t.alt, t.az), R = foundRadius(o);
         if (d <= 3 * R) return marFound('auto');
         if (Date.now() < mar.armed) return marFound('tap');
-        mar.armed = Date.now() + 6000; cue.miss(); return toast(`The sensors put you ${d.toFixed(1)}° away. If you really can see it, tap Got it again.`, 5000);
+        mar.armed = Date.now() + 6000; cue.miss(); return toast(`The sensors put you ${degAway(d)} away. If you really can see it, tap Got it again.`, 5000);
       }
       if (Date.now() < mar.armed) return marFound('tap');
       mar.armed = Date.now() + 6000; toast('No pointing data. Tap Got it again to count it anyway.', 5000);
@@ -1627,7 +1720,7 @@ function updateMar() {
   const on = dwell(mar.dw, gd.sep, R, now, 1500);
   if (on && !mar.pinged) { mar.pinged = true; cue.onTarget(); if (navigator.vibrate) navigator.vibrate(80); }
   if (gd.sep > 3 * R) mar.pinged = false;
-  st.textContent = gd.sep <= R ? (mar.sync ? 'On the star — centre it in the eyepiece, then tap Sync' : 'On target — look in the eyepiece, then tap Got it') : `${gd.sep.toFixed(1)}° away`;
+  st.textContent = gd.sep <= R ? (mar.sync ? 'On the star — centre it in the eyepiece, then tap Sync' : 'On target — look in the eyepiece, then tap Got it') : `${degAway(gd.sep)} away`;
   drawReticle(cur, tgt, o, { canvas: $('#g-chart') });
 }
 
@@ -1638,18 +1731,17 @@ let route = null;   // { stops: [{ o, kind: 'align'|'sync'|'target', t: Date, al
 function routeStops() {
   const P = planState(), start = new Date(P.start), end = new Date(start.getTime() + P.hours * 3600000), HZ = horizonNow(), stops = [];
   const at = (o, t, kind, extra = {}) => { const p = sky.altAz(o, t); stops.push({ o, kind, t, alt: p.alt, az: p.az, blocked: p.alt <= 0 || blocked(HZ, p.alt, p.az), ...extra }); };
-  // the stars the Align screen would offer at the start of the session
-  try {
+  // the stars the Align screen would offer at the start of the session (not shown once you are aligned)
+  if (!alignedNow()) try {
     const cands = sky.objects.filter((o) => (o.key.startsWith('st:') || (o.planet && o.id !== 'Moon')) && (o.mag ?? 9) < 2.6)
       .map((o) => { const p = sky.altAz(o, start); return { ...o, alt: p.alt, az: p.az, src: o }; }).filter((s) => !blocked(HZ, s.alt, s.az, 2));
     const a1 = pickStars(cands)[0], a2 = a1 && alignNeeded() > 1 ? pickStars(cands, a1)[0] : null;
     for (const a of [a1, a2]) if (a) at(a.src, start, 'align');
   } catch (e) { console.error(e); }
-  const items = P.items.map((it) => ({ it, o: objByKey(it.key) })).filter((x) => x.o), n = items.filter((x) => !x.it.sync).length || 1;
-  let k = 0;
-  for (const { it, o } of items) {
-    const t = new Date(start.getTime() + (end - start) * Math.min(1, (k + 0.5) / n));        // targets spread evenly through the session
-    if (it.sync) at(o, t, 'sync'); else { const r = rowFor(it.key); at(o, t, 'target', { ep: r && r.ep ? r.ep : null, row: r }); k++; }
+  const when = planSchedule();
+  for (const it of P.items) {
+    const o = objByKey(it.key); if (!o) continue; const t = when.get(it.key + (it.sync ? '|s' : '')) || start;
+    if (it.sync) at(o, t, 'sync'); else { const r = rowFor(it.key); at(o, t, 'target', { ep: r && r.ep ? r.ep : null, row: r }); }
   }
   stops.forEach((s, i) => { s.hop = i ? sepDeg(stops[i - 1].alt, stops[i - 1].az, s.alt, s.az) : null; });
   return stops;
@@ -1800,7 +1892,7 @@ function siteMoved() {
 }
 let hzFrom = 'more', plcAdding = false;
 const hzInFlow = () => hzFrom === 'flow' && flow && flow.steps[flow.i] === 'horizon';
-const HZ_BACK = () => (hzInFlow() ? '' : `<button class="back" id="hz-back">‹ ${{ more: 'More', plan: 'Plan', push: 'Push', start: 'Start screen' }[hzFrom] || 'More'}</button>`);
+const HZ_BACK = () => (hzInFlow() ? '' : `<button class="back" id="hz-back">‹ ${{ more: 'More', plan: 'Plan', push: 'Observe', start: 'Start screen' }[hzFrom] || 'More'}</button>`);
 const hzDone = () => { state.launch.horizon = false; save(); flowStepDone('horizon'); };
 /** Open Blocked sky from anywhere; its back button returns to where you came from. */
 function openHorizon(from = 'more') { hzFrom = from; $('#gate').classList.add('hidden'); showTab('horizon'); }
@@ -1867,6 +1959,14 @@ function renderHorizon() {
   const moved = hasHorizon(H) && H.lat != null && (Math.abs(H.lat - state.site.lat) > 0.02 || Math.abs(H.lon - state.site.lon) > 0.03);
   el.innerHTML = `${HZ_BACK()}<h2>Blocked sky</h2>
     <p class="small">Tell the app where trees, buildings or hills hide the sky. It shades those parts on the chart and stops suggesting targets behind them.</p>
+    <h3>One slow turn</h3>
+    <p class="muted small">Hold the phone like a spyglass, sight along it at the tops of the trees and roofs, and turn once around. No telescope needed, so you can do it when you scout a spot. It saves itself when you come full circle.${sensors && sensors.fresh() ? '' : ' The button switches the motion sensors on.'}</p>
+    <div class="btnrow"><button id="hz-trace" class="primary big">${hasHorizon(H) ? 'Trace the skyline again' : 'Trace the skyline'}</button></div>
+    ${hasHorizon(H) ? `<h3>Your blocked sky</h3>
+      <div id="hz-box">${hzRingSVG(H, null)}</div>
+      <p class="muted small" style="text-align:center">${esc(horizonSummary(H))}${H.how === 'trace' ? (H.by === 'scope' || (!H.by && !H.rough) ? ' · traced with the telescope' : ' · traced by hand') : ''}. The rim is the horizon, the middle is overhead.</p>
+      <div class="btnrow"><button id="hz-clear">Clear it</button></div>` : '<p class="muted small" style="text-align:center">Nothing marked yet, so the whole sky counts as open.</p>'}
+    <h3>This place</h3>
     <div class="card placecard">
       ${PL ? `<div class="sess"><div><b>${esc(PL.name)}</b><div class="muted small">${coordText(PL.lat, PL.lon)} · changes here are saved to this place</div></div><button id="plc-rename" class="mini">Rename</button></div>`
         : `<b>${places().length ? 'No saved place selected' : 'Save this spot'}</b><div class="muted small">${places().length ? 'Pick one below, or save where you are now as a new place.' : 'Give it a name and its blocked sky is remembered. Add more later: front yard, cottage, park.'}</div>`}
@@ -1877,26 +1977,19 @@ function renderHorizon() {
     </div>
     ${moved && !PL ? '<div class="card"><b>This map was made somewhere else.</b> <span class="small">Clear it or redo it for where you are now.</span></div>' : ''}
     <label class="row"><span>Show on star maps <span class="muted small">(see-through hatching, so you can still see what is behind it)</span></span><input type="checkbox" id="hz-show" ${state.hzShow === false ? '' : 'checked'}></label>
-    <h3>One slow turn</h3>
-    <p class="muted small">Hold the phone like a spyglass, sight along it at the tops of the trees and roofs, and turn once around. No telescope needed, so you can do it when you scout a spot. It saves itself when you come full circle.${sensors && sensors.fresh() ? '' : ' The button switches the motion sensors on.'}</p>
-    <div class="btnrow"><button id="hz-trace" class="primary big">${hasHorizon(H) ? 'Trace the skyline again' : 'Trace the skyline'}</button></div>
-    ${hasHorizon(H) ? `<h3>Your blocked sky</h3>
-      <div id="hz-box">${hzRingSVG(H, null)}</div>
-      <p class="muted small" style="text-align:center">${esc(horizonSummary(H))}${H.how === 'trace' ? (H.by === 'scope' || (!H.by && !H.rough) ? ' · traced with the telescope' : ' · traced by hand') : ''}. The rim is the horizon, the middle is overhead.</p>
-      <div class="btnrow"><button id="hz-clear">Clear it</button></div>` : '<p class="muted small" style="text-align:center">Nothing marked yet, so the whole sky counts as open.</p>'}
     ${hzInFlow() ? `<div class="actionbar"><button id="hz-next" class="primary">${hasHorizon(H) ? 'Done — carry on' : 'Nothing in the way — carry on'}</button></div>` : ''}`;
   $('#hz-trace').onclick = beginTrace;
   if ($('#hz-next')) $('#hz-next').onclick = hzDone;
   $('#hz-show').onchange = (e) => { state.hzShow = e.target.checked; save(); };
   el.querySelectorAll('[data-place]').forEach((b) => b.onclick = () => { plcAdding = false; usePlace(b.dataset.place); renderHorizon(); toast(`Now at ${curPlace().name}`); });
   if ($('#plc-add')) $('#plc-add').onclick = () => { plcAdding = !plcAdding; renderHorizon(); };
-  el.querySelectorAll('[data-idea]').forEach((b) => b.onclick = () => {
+  el.querySelectorAll('[data-idea]').forEach((b) => b.onclick = async () => {
     let name = b.dataset.idea;
-    if (!name) { name = prompt('Name this place', uniqueName(places().map((p) => p.name), `Spot ${coordText(state.site.lat, state.site.lon)}`)); if (!name || !name.trim()) return; }
+    if (!name) { name = await askText('Name this place', '', { placeholder: 'e.g. Grandma\'s farm', max: 30, ok: 'Save' }); if (!name || !name.trim()) return; }
     const kept = !curPlace() && horizonNow(); const p = addPlace(name.trim().slice(0, 30)); plcAdding = false; renderHorizon();
     toast(kept ? `Saved as ${p.name}, with the blocked sky you marked.` : `${p.name} saved. Trace its skyline below.`, 4000);
   });
-  if ($('#plc-rename')) $('#plc-rename').onclick = () => { const p = curPlace(), n = prompt('Rename this place', p.name); if (!n || !n.trim()) return; p.name = uniqueName(places().filter((x) => x !== p).map((x) => x.name), n.trim().slice(0, 30)); save(); renderHorizon(); };
+  if ($('#plc-rename')) $('#plc-rename').onclick = async () => { const p = curPlace(), n = await askText('Rename this place', p.name, { max: 30 }); if (!n || !n.trim()) return; p.name = uniqueName(places().filter((x) => x !== p).map((x) => x.name), n.trim().slice(0, 30)); save(); renderHorizon(); };
   if ($('#plc-del')) $('#plc-del').onclick = () => { if (!confirmTwice('plc-del')) return; const p = curPlace(); state.places = places().filter((x) => x !== p); state.placeId = null; save(); renderHorizon(); toast(`${p.name} deleted. Its blocked sky is still shown until you clear it or pick another place.`, 5000); };
   if ($('#hz-clear')) $('#hz-clear').onclick = () => { if (!confirmTwice('hz-clear')) return; setHorizon(null); renderHorizon(); };
   hzBindBack();
@@ -1932,8 +2025,8 @@ function updateHorizon() {
 
 function renderReady(el) {
   const g = game, len = pathLength(g.targets);
-  el.innerHTML = `<h2>${esc(STYLES[g.style].name)} · challenge ${esc(g.ch.id)}</h2>
-    <p class="muted small">${g.ch.host ? 'Set by ' + esc(g.ch.host) + ' · ' : ''}${new Date(g.ch.created).toLocaleString()} · route ${len.toFixed(0)}° of slewing${g.missing ? ` · ${g.missing} target(s) not in this app version` : ''}</p>
+  el.innerHTML = `<h2>${esc(STYLES[g.style].name)} <span class="muted" style="font-size:15px;font-weight:400">· code ${esc(g.ch.id)}</span></h2>
+    <p class="muted small">${g.ch.host ? 'Set by ' + esc(g.ch.host) + ' · ' : ''}set up ${shortDate(g.ch.created)} · about ${len.toFixed(0)}° of pushing in all${g.missing ? ` · ${g.missing} target(s) not in this app version` : ''}</p>
     <ol class="small">${g.targets.map((o) => `<li>${esc(o.label)} <span class="muted">${esc(typeLabel(o.t))}${o.mag != null ? ', mag ' + (+o.mag).toFixed(1) : ''} · ${o.alt.toFixed(0)}° ${compassName(o.az)}</span>${o.alt < 20 ? ' <b>— not up here, will be left out</b>' : ''}</li>`).join('')}</ol>
     <div class="card" style="text-align:center"><b>Same site? Others scan this to play the same 10.</b>
       <canvas id="g-qr" width="520" height="520" style="width:70%;max-width:260px;display:block;margin:8px auto;border-radius:8px"></canvas>
@@ -1963,7 +2056,7 @@ function renderPlay(el) {
   $('#g-found').onclick = () => {
     const cur = pointing(); if (!cur || !cur.ready) return toast('No pointing data');
     const t = sky.altAz(o), d = sepDeg(cur.alt, cur.az, t.alt, t.az), R = foundRadius(o);
-    if (d <= 3 * R) nextTarget(true, d <= R ? 'auto' : 'manual'); else { cue.miss(); toast(`The sensors put you ${d.toFixed(1)}° away — keep looking`); }
+    if (d <= 3 * R) nextTarget(true, d <= R ? 'auto' : 'manual'); else { cue.miss(); toast(`The sensors put you ${degAway(d)} away — keep looking`); }
   };
   $('#g-quit').onclick = () => { if (confirmTwice('g-quit')) { game = null; renderGame(); } };
 }
@@ -1990,7 +2083,7 @@ function updateGame() {
     setDelta($('#gd-az'), gd.dAz, 'az', Math.abs(gd.dAz * Math.cos(tgt.alt * D2R)) < half); setDelta($('#gd-alt'), gd.dAlt, 'alt', Math.abs(gd.dAlt) < half);
   }
   const done = dwell(g.dw, gd.sep, R, Date.now(), 2000);
-  st.textContent = g.dw.since != null ? `On target — hold steady ${Math.max(0, 2 - (Date.now() - g.dw.since) / 1000).toFixed(1)} s` : (showArrows ? `${gd.sep.toFixed(1)}° away` : 'Find it from the chart');
+  st.textContent = g.dw.since != null ? `On target — hold steady ${Math.max(0, 2 - (Date.now() - g.dw.since) / 1000).toFixed(1)} s` : (showArrows ? `${degAway(gd.sep)} away` : 'Find it from the chart');
   // Push race: chart follows the scope. Star-hop: chart is a finder chart around the target with no scope marker.
   if (g.style === 'push' || showArrows) drawReticle(cur, tgt, o, { canvas: $('#g-chart') });
   else drawReticle(null, tgt, o, { canvas: $('#g-chart'), view: Math.max(4, tfov() * 3), centre: 'target' });
@@ -2193,11 +2286,13 @@ function renderCheckStep(el, head, back) {
   if (test.step === 'info') {
     const gy = sensors.hasGyro();
     el.innerHTML = head + `<p>Four short steps, no stars needed — do it outdoors in daylight or at dusk. You'll need a table, the scope set up with the phone in its dock, and a distant landmark low on the horizon.</p>
-      <label class="row"><span>Phone make & model</span><input id="c-phone" value="${esc(test.phone)}" placeholder="e.g. Pixel 8, iPhone 13"></label>
-      <label class="row"><span>Grade against eyepiece</span><select id="c-ep">${profile().eyepieces.map((e, i) => `<option value="${i}" ${i === test.epIdx ? 'selected' : ''}>${esc(e.name)} — ${(tfov(e) * 60).toFixed(0)}′ field</option>`).join('')}</select></label>
+      <p class="muted small">At the end you get a plain verdict: how far to trust the arrows on this phone.</p>
+      <details class="more"><summary>Options and sensor details</summary>
+      <label class="row"><span>Phone make and model <span class="muted small">(for your records)</span></span><input id="c-phone" value="${esc(test.phone)}" placeholder="e.g. Pixel 8, iPhone 13"></label>
+      <label class="row"><span>Judge it against this eyepiece</span><select id="c-ep">${profile().eyepieces.map((e, i) => `<option value="${i}" ${i === test.epIdx ? 'selected' : ''}>${esc(e.name)} — ${(tfov(e) * 60).toFixed(0)}′ field</option>`).join('')}</select></label>
       <div class="card kv"><span>Gyroscope</span><span id="c-gyro">${gy === true ? 'present' : gy === false ? '<span class="bad">not found</span>' : 'checking…'}</span>
         <span>Update rate</span><span id="c-rate">${sensors.rateHz ? sensors.rateHz.toFixed(0) + ' Hz' : '…'}</span>
-        <span>Compass</span><span id="c-comp">${sensors.hasCompass ? (sensors.compassSource || 'present') : 'checking…'}</span></div>
+        <span>Compass</span><span id="c-comp">${sensors.hasCompass ? (sensors.compassSource || 'present') : 'checking…'}</span></div></details>
       <div class="btnrow"><button id="c-go" class="primary">Start</button></div>` + back;
     $('#c-phone').onchange = (e) => { test.phone = e.target.value.trim(); state.phone = test.phone; save(); };
     $('#c-ep').onchange = (e) => { test.epIdx = +e.target.value; };
@@ -2359,14 +2454,17 @@ function renderSetup() {
       ${FOC.map(([v, l]) => { const s = Math.sin(v * D2R), c = Math.cos(v * D2R); return `<g data-foc="${v}" class="fp-opt${(p.focuser ?? 90) === v ? ' on' : ''}" role="button" aria-label="${l}"><line x1="${(80 + 30 * s).toFixed(1)}" y1="${(70 - 30 * c).toFixed(1)}" x2="${(80 + 44 * s).toFixed(1)}" y2="${(70 - 44 * c).toFixed(1)}"/><circle cx="${(80 + 52 * s).toFixed(1)}" cy="${(70 - 52 * c).toFixed(1)}" r="11"/></g>`; }).join('')}</svg></div>
     <p class="muted small">${esc(p.source || '')}</p>
     <h3>Eyepieces</h3>
-    <table class="res"><tr><th>Name</th><th>mm</th><th>AFOV°</th><th>Field</th><th>Cycle</th><th></th></tr>
+    <p class="muted small">Focal length is printed on the eyepiece. Apparent field is the maker's figure for how wide the view looks (often 50°–70°). The app works out how much sky each one shows.</p>
+    <table class="res"><tr><th>Name</th><th>Focal mm</th><th>Apparent field °</th><th>Shows</th><th>In use</th><th></th></tr>
       ${p.eyepieces.map((e, i) => `<tr><td><input data-epn="${i}" value="${esc(e.name)}"></td><td><input data-epf="${i}" type="number" value="${e.fl}" style="width:60px"></td><td><input data-epa="${i}" type="number" value="${e.afov}" style="width:60px"></td><td>${(tfov(e) * 60).toFixed(0)}′</td><td style="text-align:center"><input type="checkbox" data-epc="${i}" ${e.cycle !== false ? 'checked' : ''}></td><td><button data-epd="${i}">✕</button></td></tr>`).join('')}
     </table>
     <div class="btnrow"><button id="ep-add">Add eyepiece</button></div>
-    <p class="muted small">The Eyepiece button on Push cycles through the ticked eyepieces in this order. Add your own, untick ones you don't carry, or delete them. To check any eyepiece's true field, time a star near the celestial equator drifting across it (scope still).</p>
+    <p class="muted small">The eyepiece button on the Observe screen cycles through the ticked eyepieces in this order. Add your own, untick ones you don't carry, or delete them. </p>
+    <details class="more"><summary>Measure an eyepiece's field yourself (advanced)</summary>
+    <p class="muted small">Time a star near the celestial equator drifting right across the field with the scope still.</p>
     <label class="row"><span>Drift time (s)</span><input id="drift-s" type="number" inputmode="decimal" placeholder="e.g. 140"></label>
     <label class="row"><span>Star declination (°)</span><input id="drift-d" type="number" inputmode="decimal" placeholder="e.g. 0"></label>
-    <div class="btnrow"><button id="drift-go">Set AFOV for selected eyepiece from drift</button></div>
+    <div class="btnrow"><button id="drift-go">Set the apparent field of the selected eyepiece</button></div></details>
 
     <details class="more"><summary>Phone mount and sensors (advanced)</summary>
     <label class="row"><span>Phone dock</span><select id="s-dock"><option value="yes" ${state.dock !== 'no' ? 'selected' : ''}>Yes, on a bridge mount</option><option value="no" ${state.dock === 'no' ? 'selected' : ''}>No, strapped to the tube</option></select></label>
@@ -2507,7 +2605,7 @@ function renderLog() {
   const entries = log.map((e, i) => ({ e, i })).reverse();
   const pct = (a, b) => (b ? Math.min(100, 100 * a / b) : 0);
   el.innerHTML = `${BACK}<h2>Observing log</h2>
-    ${log.length ? '' : '<p class="muted">Nothing logged yet. When a target is in the eyepiece, tap <b>Log</b> on the Push screen. Your Messier count and milestones build up here.</p>'}
+    ${log.length ? '' : '<p class="muted">Nothing logged yet. When a target is in the eyepiece, tap <b>Log</b> on the Observe screen. Your Messier count and milestones build up here.</p>'}
     <div class="stats"><div><b>${st.total}</b>object${st.total === 1 ? '' : 's'} seen</div><div><b>${st.messier}</b>of ${st.messierTotal} Messier</div><div><b>${st.nights}</b>night${st.nights === 1 ? '' : 's'} out</div></div>
     <div class="prog"><div class="lab"><span>Messier catalogue</span><span>${st.messier} / ${st.messierTotal}</span></div><div class="bar"><div style="width:${pct(st.messier, st.messierTotal)}%"></div></div></div>
     <div class="prog"><div class="lab"><span>Planets</span><span>${st.types.PL} / ${st.planetTotal}</span></div><div class="bar"><div style="width:${pct(st.types.PL, st.planetTotal)}%"></div></div></div>
@@ -2602,23 +2700,25 @@ function renderMore() {
   const V = { solid: 'Solid', usable: 'Usable', poor: 'Poor', unsuitable: 'Not suitable', incomplete: 'Incomplete' };
   const item = (id, title, sub) => `<button class="act" data-go="${id}"><b>${title}</b><span class="muted small">${sub}</span></button>`;
   el.innerHTML = `<h2>More</h2>
-    ${item('align', 'Alignment', state.mode === 'compass' ? 'Compass mode — no alignment needed' : alignedNow() ? `Aligned on ${align.obs.map((o) => esc(o.label)).join(' and ')} · ${syncAgo()}` : 'Not aligned yet — two minutes, and the app shows you which stars')}
+    ${item('align', 'Star alignment', state.mode === 'compass' ? 'Compass mode — no alignment needed' : alignedNow() ? `Aligned on ${align.obs.map((o) => esc(o.label)).join(' and ')} · ${syncAgo()}` : 'Not aligned yet — two minutes, and the app shows you which stars')}
     ${item('log', 'Observing log', st.total ? `${st.total} object${st.total === 1 ? '' : 's'} seen · Messier ${st.messier} of ${st.messierTotal}` : 'Nothing logged yet — your Messier count and milestones live here')}
     ${item('sky', 'Sky darkness check', state.skyq ? `${esc(state.skyq.label)} · ${shortDate(state.skyq.when)}` : '30 seconds — tunes the visibility ratings to your sky')}
     ${item('horizon', 'Blocked sky', horizonNow() ? esc(horizonSummary(state.horizon)) : 'Mark trees and buildings so the app never sends you behind them')}
     ${item('test', 'Phone check-up and sensor tests', chk ? `This phone: ${V[chk.result.verdict] || esc(chk.result.verdict)} · ${shortDate(chk.when)}` : 'Find out how accurate this phone can be — 4 minutes')}
     ${item('setup', 'Setup', `${esc(profile().name)} · eyepieces, location, phone mount`)}
-    ${item('start', 'Start screen', 'Choose what to do and how it works')}
+    ${item('backup', 'Back up or restore', state.backedUp ? `Last backup ${shortDate(state.backedUp)} · your log, plans and places` : 'Keep a copy of your log, plans and places — they live only on this phone')}
+    ${item('start', 'Start screen', 'Choose what to do, and how it works')}
     <h3>Quick settings</h3>
     <label class="row"><span>Screen brightness</span><input id="m-br" type="range" min="0.25" max="1" step="0.05" value="${state.bright}" ${state.day ? 'disabled' : ''}></label>
-    <label class="row"><span>Day look <span class="muted small">(off = Night, red only; the sun/moon button fades between them)</span></span><input id="m-day" type="checkbox" ${state.day ? 'checked' : ''}></label>
+    <label class="row"><span>Day look <span class="muted small">(switch off for the red Night look; the sun button at the top fades between the two)</span></span><input id="m-day" type="checkbox" ${state.day ? 'checked' : ''}></label>
     <div style="padding:10px 0 4px">Sounds</div>
     <div class="seg" id="m-snd">${[['off', 'Off'], ['chime', 'Chime'], ['guide', 'Chime + ticks']].map(([k, l]) => `<button data-snd="${k}" class="${state.sound === k ? 'on' : ''}">${l}</button>`).join('')}</div>
     <p class="muted small">Chime: a tone when the target enters your eyepiece's field. Ticks get faster as you close in, so you can watch the sky instead of the phone. On an iPhone the silent switch may mute both.</p>
-    <p class="muted small">Keep screen awake: ${awakeText()}.</p>`;
+    <p class="muted small">Keep screen awake: ${awakeText()}.</p>
+    <p class="muted small" style="text-align:center;margin-top:14px">Skyward Push-To · ${esc(($('#build') || {}).textContent || '')} · credits are in Setup</p>`;
   el.querySelectorAll('[data-go]').forEach((b) => b.onclick = () => {
     const k = b.dataset.go;
-    if (k === 'sky') openSkyCheck(); else if (k === 'horizon') openHorizon('more'); else if (k === 'start') { renderLaunch(); $('#gate').classList.remove('hidden'); } else showTab(k);
+    if (k === 'sky') openSkyCheck(); else if (k === 'backup') openBackup(); else if (k === 'horizon') openHorizon('more'); else if (k === 'start') { renderLaunch(); $('#gate').classList.remove('hidden'); } else showTab(k);
   });
   $('#m-br').oninput = (e) => { state.bright = parseFloat(e.target.value); applyTheme(); save(); };
   $('#m-day').onchange = (e) => setShade(e.target.checked ? 0 : 1);
@@ -2642,7 +2742,7 @@ const ACTIVITIES = [
   ['plan', 'Plan', 'Pick targets for a night out', '<path d="M9 6h11M9 12h11M9 18h11"/><path d="m3.5 6 1.2 1.2L6.8 5M3.5 12l1.2 1.2L6.8 11M3.5 18l1.2 1.2L6.8 17"/>'],
 ];
 const STEP_INFO = {
-  check: ['Phone check-up', '4 min, once per phone — how far to trust the arrows'],
+  check: ['Phone check-up', 'optional, 4 min, once per phone — how far to trust the arrows'],
   sky: ['Sky darkness check', '30 s — count Little Dipper stars'],
   horizon: ['Blocked sky', 'one slow turn with the phone, once per place'],
   align: ['Star alignment', '2 min — point at two bright stars'],
@@ -2664,7 +2764,7 @@ function tonightLine() {
     const moon = `Moon ${Math.round(m.frac * 100)}% lit${m.alt > 0 ? (n.moonSet && n.moonSet > now ? ', sets ' + hm(n.moonSet) : ', up') : (n.moonRise && n.moonRise > now ? ', rises ' + hm(n.moonRise) : ', down')}`;
     const at = dark && now < dark ? dark : now;
     const up = ['Venus', 'Jupiter', 'Saturn', 'Mars'].filter((p) => { const o = sky.objects.find((x) => x.key === 'pl:' + p); return o && sky.altAz(o, at).alt > 15; });
-    return [when, moon, up.length ? `${up.join(' and ')} ${up.length > 1 ? 'are' : 'is'} up` : ''].filter(Boolean).join(' · ');
+    return [when, moon, up.length ? `${up.join(' and ')} ${up.length > 1 ? 'are' : 'is'} up` : ''].filter(Boolean).join(' · ') + (siteKnown() ? '' : ' · worked out for Toronto until you set your location');
   } catch (e) { return ''; }
 }
 function planProgress() {
@@ -2692,7 +2792,7 @@ function renderLaunch() {
     <div class="path">
       <div class="pnote">Your path — tap a star to skip a stop</div>
       ${['check', 'sky', 'horizon', 'align'].map((k) => (stops.includes(k)
-    ? `<label class="stop"><input type="checkbox" data-step="${k}" ${stepOn(k) ? 'checked' : ''}><span><b>${STEP_INFO[k][0]}</b><span class="muted">${k === 'horizon' ? (stepOn(k) || horizonNow() || placeLabel() ? status[k] : 'skipped') : esc(stepOn(k) ? status[k] : 'skipped')}</span></span>${k === 'horizon' ? '<button id="l-hz" class="mini" type="button">Open</button>' : ''}</label>`
+    ? `<label class="stop"><input type="checkbox" data-step="${k}" ${stepOn(k) ? 'checked' : ''}><span><b>${STEP_INFO[k][0]}</b><span class="muted">${k === 'horizon' ? (stepOn(k) || horizonNow() || placeLabel() ? status[k] : 'skipped') : esc(stepOn(k) ? status[k] : k === 'check' && !chk ? 'optional — 4 min, shows how far to trust the arrows' : 'skipped')}</span></span>${k === 'horizon' ? '<button id="l-hz" class="mini" type="button">Open</button>' : ''}</label>`
     : `<div class="stop na"><input type="checkbox" disabled aria-hidden="true"><span><b>${STEP_INFO[k][0]}</b><span class="muted">not needed for this</span></span></div>`)).join('')}
       <div class="stop end"><span class="dest"></span><button id="l-go" class="primary">${GO[act]}</button></div>
     </div>
@@ -2736,6 +2836,7 @@ function askDock(dest) {
   ask(); el.classList.remove('hidden');
 }
 function launch(dest) {
+  if (!siteKnown() && !locAsked) { askLocation(dest); return; }
   if (dest !== 'plan' && dest !== 'explore' && !state.dock) { askDock(dest); return; }
   initSound();                                    // audio can only start from a tap
   state.seenIntro = true;
@@ -2905,9 +3006,10 @@ function gateProblem(kind, detail = '') {
     nodata: `<b>The phone isn't sending motion data.</b> ${IS_IOS ? 'Close the app completely (swipe it away) and open it again, then tap Start sensors and choose Allow.' : 'This device may not have motion sensors (a desktop computer doesn\'t).'}`,
     error: `<b>Couldn't start the sensors.</b> ${detail}`,
   }[kind];
-  $('#gate-msg').innerHTML = `<div class="gate-err">${fix}</div>`;
+  const wipes = kind === 'denied' && IS_IOS;
+  $('#gate-msg').innerHTML = `<div class="gate-err">${fix}${wipes ? `<p><b>Deleting website data also erases what this app has saved on the phone</b> (your log, plans and places). Back up first, then restore afterwards from More.</p><button id="gp-backup" class="primary">Back up my data first</button>` : ''}</div>`;
+  if ($('#gp-backup')) $('#gp-backup').onclick = openBackup;
   $('#gate-skip').classList.remove('hidden');
-  if (!IS_IOS) $('#gate-sim').classList.remove('hidden');
 }
 
 async function init() {

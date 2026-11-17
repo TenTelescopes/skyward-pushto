@@ -53,7 +53,7 @@ export const byBestTime = (rows) => rows.slice().sort((a, b) => a.best - b.best)
 // ---------------------------------------------------------------- hop order with sync stars
 const D2R_ = Math.PI / 180;
 const sep_ = (a, b) => Math.acos(Math.max(-1, Math.min(1, Math.sin(a.alt * D2R_) * Math.sin(b.alt * D2R_) + Math.cos(a.alt * D2R_) * Math.cos(b.alt * D2R_) * Math.cos((a.az - b.az) * D2R_)))) / D2R_;
-export const SYNC_DIST = 40;     // add a sync star when the next target is farther than this from the last thing you synced on
+export const SYNC_DIST = 50;     // add a sync star when the next target is farther than this from the last thing you synced on
 export const SYNC_NEAR = 20;     // a sync star must be within this of the target it serves
 
 /**
