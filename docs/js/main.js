@@ -1,4 +1,6 @@
 import { PointingModel, MOUNTINGS, fitAlignment, guidance, tangentOffset, mulMV, altAzFromVec, norm, wrap180, wrap360, sepDeg, D2R, R2D } from './model.js';
+import { emptyHorizon, hasHorizon, limitAt, blocked, setWedge, wedgeLevel, wedgeHeight, newTrace, traceAdd, traceFinish, traceCoverage, summary as horizonSummary, WEDGES, LEVELS as HZ_LEVELS, BINS as HZ_BINS } from './horizon.js';
+import { marathonList, pick as marathonPick, nightOf } from './marathon.js';
 import { Sky, typeLabel, compassName, LINES } from './astro.js';
 import { Sensors, SimSensors } from './sensors.js';
 import { Recorder, analyzeStillness, analyzeRepeat, analyzeReversal, analyzeAccuracy, fmt, toCSV } from './tests.js';
@@ -240,14 +242,14 @@ function guessUncertainty() { const ph = state.phonePerf; return ph && ph.compas
 
 // ---------------------------------------------------------------- tabs
 // Five tabs; Align, Log, Tests and Setup live under More.
-const PARENT = { align: 'more', log: 'more', test: 'more', setup: 'more' };
+const PARENT = { align: 'more', log: 'more', test: 'more', setup: 'more', horizon: 'more' };
 const scrollPos = {}; let pendingScroll = null;
 function showTab(t) {
   const m = $('main'); if (tab && m) scrollPos[tab] = m.scrollTop;
   tab = t; const top = PARENT[t] || t;
   document.querySelectorAll('nav#tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === top));
   document.querySelectorAll('.tab').forEach((s) => s.classList.toggle('on', s.id === 'tab-' + t));
-  ({ plan: renderPlan, find: renderFind, push: renderPush, align: renderAlign, game: renderGame, test: renderTest, setup: renderSetup, more: renderMore, log: renderLog })[t]();
+  ({ plan: renderPlan, find: renderFind, push: renderPush, align: renderAlign, game: renderGame, test: renderTest, setup: renderSetup, more: renderMore, log: renderLog, horizon: renderHorizon })[t]();
   // Lists reopen where you left them; every other screen starts at the top.
   pendingScroll = (t === 'find' || t === 'plan') && scrollPos[t] ? { t, y: scrollPos[t] } : null;
   m.scrollTop = pendingScroll ? pendingScroll.y : 0;
@@ -370,12 +372,15 @@ function renderPlan() {
 }
 function computePlanRows() {
   const P = planState();
-  const sig = [P.start, P.hours, profile().name, profile().aperture, profile().eyepieces.map((e) => e.fl).join(), skyNelm()].join('|');
+  const sig = [P.start, P.hours, profile().name, profile().aperture, profile().eyepieces.map((e) => e.fl).join(), skyNelm(), hzSig()].join('|');
   if (sig !== planSig) { planRows = null; planSig = sig; }
   if (!planRows) { planDarkNight = (() => { try { return nextDarkNight(sky, new Date(P.start)); } catch (e) { return null; } })(); }
-  if (!planRows) planRows = planTargets(sky, { start: new Date(P.start), hours: +P.hours, scope: profile(), nelm: skyNelm(), minAlt: 20 });
+  if (!planRows) planRows = planTargets(sky, { start: new Date(P.start), hours: +P.hours, scope: profile(), nelm: skyNelm(), minAlt: 20, horizon: horizonNow() });
   return planRows;
 }
+/** The blocked-sky map for this spot (null when nothing is marked). */
+function horizonNow() { return hasHorizon(state.horizon) ? state.horizon : null; }
+const hzSig = () => (state.horizon ? state.horizon.when || 1 : 0);
 function skyNelm() { return state.skyq ? state.skyq.nelm : DEFAULT_NELM; }
 let planDarkNight = null, planSig = '';
 const rowFor = (key) => computePlanRows().find((r) => r.key === key) || null;
@@ -526,10 +531,11 @@ function filtered() {
 let nowCond = { t: 0 }, rateSig = '';
 const rateCache = new Map();
 function rateNow(o) {
-  const p = profile(), sig = `${state.active}|${p.aperture}|${p.fl}|${p.eyepieces.map((e) => e.fl).join()}|${skyNelm()}`;
+  const p = profile(), sig = `${state.active}|${p.aperture}|${p.fl}|${p.eyepieces.map((e) => e.fl).join()}|${skyNelm()}|${hzSig()}`;
   if (Date.now() - nowCond.t > 30000 || sig !== rateSig) { nowCond = { t: Date.now(), sun: sky.sunAlt(), m: sky.moonInfo() }; rateSig = sig; rateCache.clear(); }
   if (rateCache.has(o.key)) return rateCache.get(o.key);
   const c = nowCond, sepM = c.m.alt > 0 ? sepDeg(o.alt, o.az, c.m.alt, c.m.az) : 180;
+  if (o.alt > 0 && blocked(horizonNow(), o.alt, o.az)) { const b = { level: 3, margin: -9, ep: null, cause: 'blocked' }; rateCache.set(o.key, b); return b; }
   const r = rate(o, { alt: o.alt, sunAlt: c.sun, moonAlt: c.m.alt, moonFrac: c.m.frac, moonSep: sepM, nelm: skyNelm() }, p);
   rateCache.set(o.key, r); return r;
 }
@@ -897,6 +903,11 @@ function bindChartControls() {
   cv.addEventListener('wheel', (e) => { setZoom((zoom ?? cv._lastView) * Math.exp(e.deltaY * 0.002)); e.preventDefault(); }, { passive: false });
 }
 
+function hzFill(c, top, bot, col) {
+  c.beginPath(); c.moveTo(top[0].x, top[0].y); for (const p of top) c.lineTo(p.x, p.y); for (let i = bot.length - 1; i >= 0; i--) c.lineTo(bot[i].x, bot[i].y); c.closePath();
+  c.fillStyle = col(120, 60, 40, 0.22); c.fill();
+  c.beginPath(); c.moveTo(top[0].x, top[0].y); for (const p of top) c.lineTo(p.x, p.y); c.strokeStyle = col(150, 70, 40, 0.7); c.lineWidth = 2; c.stroke();
+}
 function drawReticle(cur, tgt, o, opt = {}) {
   const cv = opt.canvas || $('#reticle'); if (!cv) return; const c = cv.getContext('2d'); const W = cv.width, H = cv.height, cx = W / 2, cy = H / 2, Rpx = W * 0.46;
   const k = vis(); const col = (r, g = 0, b = 0, a = 1) => tint(r, g, b, a, k);
@@ -927,6 +938,18 @@ function drawReticle(cur, tgt, o, opt = {}) {
     if (pen) c.lineTo(q.x, q.y); else { c.moveTo(q.x, q.y); pen = true; }
   }
   c.stroke(); c.setLineDash([]);
+  // blocked sky (trees, roofs) as marked by the observer
+  const HZ = horizonNow();
+  if (HZ) {
+    const top = [], bot = [], span = Math.min(179, view * 2.5), stepD = Math.max(0.5, view / 30);
+    for (let d = -span; d <= span; d += stepD) {
+      const az = wrap360(centre.az + d), lim = Math.min(88, limitAt(HZ, az));
+      const a = proj({ alt: lim, az }), b = proj({ alt: 0, az });
+      if (!a || !b || (a.r > view * 2.2 && b.r > view * 2.2)) { if (top.length > 1) hzFill(c, top, bot, col); top.length = 0; bot.length = 0; continue; }
+      top.push(a); bot.push(b);
+    }
+    if (top.length > 1) hzFill(c, top, bot, col);
+  }
 
   // star field + constellation figures
   const magLim = view <= 2 ? 8 : Math.max(4, 8 - 3.06 * Math.log10(view / 2)); // ~8 at eyepiece/finder scale, ~4.4 at 30°
@@ -1016,7 +1039,7 @@ function drawReticle(cur, tgt, o, opt = {}) {
   if (scope && U) { c.strokeStyle = col(200, 40, 15); c.lineWidth = 2; c.setLineDash([8, 8]); c.beginPath(); c.arc(scope.x, scope.y, U / 60 * s, 0, 7); c.stroke(); c.setLineDash([]); }
   if (scope) {
     c.strokeStyle = col(230, 50, 25); c.lineWidth = 3; if (guess) c.setLineDash([10, 8]); c.beginPath(); c.arc(scope.x, scope.y, Math.max(5, half * s), 0, 7); c.stroke(); c.setLineDash([]);
-    if (guess) { c.fillStyle = col(230, 50, 25); c.font = 'bold 22px system-ui'; c.textAlign = 'center'; c.fillText(opt.noBanner ? 'scope (compass guess)' : 'scope? (guess)', scope.x, scope.y + Math.max(28, half * s + 26)); c.textAlign = 'left'; }
+    if (guess) { c.fillStyle = col(230, 50, 25); c.font = 'bold 22px system-ui'; c.textAlign = 'center'; c.fillText(opt.noBanner ? 'Best guess (compass)' : 'Best guess', scope.x, scope.y + Math.max(28, half * s + 26)); c.textAlign = 'left'; }
     const L = Math.max(14, half * s * 0.35); c.beginPath(); c.moveTo(scope.x - L, scope.y); c.lineTo(scope.x + L, scope.y); c.moveTo(scope.x, scope.y - L); c.lineTo(scope.x, scope.y + L); c.stroke();
   }
 
@@ -1334,6 +1357,7 @@ function scoreRow(r) {
 
 function renderGame() {
   const el = $('#tab-game');
+  if (mar) return renderMar(el);
   if (!game || game.phase === 'lobby') return renderLobby(el);
   if (game.phase === 'ready') return renderReady(el);
   if (game.phase === 'count' || game.phase === 'play') return renderPlay(el);
@@ -1342,26 +1366,214 @@ function renderGame() {
 function renderLobby(el) {
   const aligned = state.mode === 'gyro' ? !!align.fit : true;
   const sel = state.gameStyle || 'push';
-  el.innerHTML = `<h2>Game</h2>
-    <p class="muted small">The app picks the 10 best targets for your sky and scope right now, plots a short route, and times you. Each find is confirmed by the phone's sensors.</p>
-    <label class="field"><span>Your name on the leaderboard</span><input id="g-name" value="${esc(state.player || '')}" placeholder="e.g. Bryan" maxlength="24"></label>
-    <label class="field"><span>Observing site <span class="muted small">(optional)</span></span><input id="g-site" value="${esc(state.siteName || '')}" placeholder="e.g. Torrance Barrens" maxlength="40"></label>
-    <h3>Style</h3>
-    ${Object.entries(STYLES).map(([k, v]) => `<button class="act pick ${k === sel ? 'on' : ''}" data-style="${k}"><b>${k === sel ? '● ' : '○ '}${v.name}</b><span class="muted small">${v.desc}</span></button>`).join('')}
-    ${aligned ? '' : `<div class="card"><b>Align first.</b> <span class="small">Alignment isn't timed — do it before you start.</span><div class="btnrow"><button id="g-align">Go to Align</button></div></div>`}
-    <div class="btnrow"><button id="g-new" class="primary big" ${aligned ? '' : 'disabled'}>New game — best 10 for here, now</button></div>
-    <div class="btnrow"><button id="g-scan">Join: scan code</button><button id="g-paste">Join: paste code</button></div>
-    <div class="btnrow"><button id="g-board">Leaderboard</button></div>
-    <div id="g-boardbox"></div>`;
+  const M = state.marathon, tonight = nightOf(sky).id, mine = M && M.night === tonight ? M : null, nFound = mine ? Object.keys(mine.found).length : 0;
+  const best = state.marathonBest;
+  el.innerHTML = `<h2>Play</h2>
+    ${aligned ? '' : `<div class="card"><b>Align first.</b> <span class="small">Both games use the arrows, so the app needs to know where the scope points.</span><div class="btnrow"><button id="g-align">Go to Align</button></div></div>`}
+    <div class="card gamecard"><h3>Messier Marathon</h3>
+      <p class="small">How many Messier objects can you bag tonight? The app picks the order: whatever is about to set comes first, then the shortest hop. No clock, one point each.</p>
+      ${mine ? `<p class="small"><b>${mine.over ? 'Tonight' : 'In progress'}: ${nFound} found.</b></p>` : ''}
+      ${best ? `<p class="muted small">Your best night: ${best.found} of ${best.possible} possible · ${shortDate(best.when)}</p>` : ''}
+      <div class="btnrow"><button id="mm-go" class="primary big" ${aligned ? '' : 'disabled'}>${mine && !mine.over ? 'Carry on' : mine ? 'Start again tonight' : 'Start the marathon'}</button></div></div>
+    <div class="card gamecard"><h3>Race</h3>
+      <p class="small">The 10 best targets for your sky right now, a short route, and a stopwatch. Friends at the same site can scan your code and race the same 10.</p>
+      <label class="row"><span>How you find them</span><select id="g-style">${Object.entries(STYLES).map(([k, v]) => `<option value="${k}" ${k === sel ? 'selected' : ''}>${v.name}</option>`).join('')}</select></label>
+      <p class="muted small" id="g-styledesc">${esc(STYLES[sel].desc)}</p>
+      <div class="btnrow"><button id="g-new" class="primary" ${aligned ? '' : 'disabled'}>New race</button><button id="g-scan">Join: scan</button><button id="g-paste">Join: paste</button></div>
+      <details class="more"><summary>Leaderboard and your name</summary>
+        <label class="field"><span>Your name on the leaderboard</span><input id="g-name" value="${esc(state.player || '')}" placeholder="e.g. Bryan" maxlength="24"></label>
+        <label class="field"><span>Observing site <span class="muted small">(optional)</span></span><input id="g-site" value="${esc(state.siteName || '')}" placeholder="e.g. Torrance Barrens" maxlength="40"></label>
+        <div class="btnrow"><button id="g-board">Show leaderboard</button></div>
+        <div id="g-boardbox"></div></details></div>`;
   $('#g-name').onchange = (e) => { state.player = e.target.value.trim(); save(); };
   $('#g-site').onchange = (e) => { state.siteName = e.target.value.trim(); save(); };
-  el.querySelectorAll('[data-style]').forEach((b) => b.onclick = () => { state.gameStyle = b.dataset.style; save(); renderLobby(el); });
+  $('#g-style').onchange = (e) => { state.gameStyle = e.target.value; save(); $('#g-styledesc').textContent = STYLES[state.gameStyle].desc; };
   if ($('#g-align')) $('#g-align').onclick = () => showTab('align');
+  $('#mm-go').onclick = () => {
+    if (mine && mine.over && !confirmTwice('mm-go')) return;
+    startMarathon(!(mine && !mine.over));
+  };
   $('#g-new').onclick = () => newGame(state.gameStyle || 'push');
   $('#g-scan').onclick = async () => { const c = await scanCode(); if (c) (c.startsWith('SKYR') ? addFriendResult(c) : loadChallenge(c)); };
   $('#g-paste').onclick = () => { const c = prompt('Paste a Skyward challenge code'); if (c) loadChallenge(c.trim()); };
   $('#g-board').onclick = () => showBoard($('#g-boardbox'), { style: state.gameStyle || 'push' });
 }
+
+// ---------------------------------------------------------------- MESSIER MARATHON
+// state.marathon = { night, start, found: {key: ms}, tap: [keys counted without the sensors agreeing], later: {key: ms}, over }
+let mar = null;   // { rows, sig, cur: row, why, upNext, dw, armed }
+function marRows() {
+  const M = state.marathon, N = nightOf(sky, new Date(M.start));
+  const end = N.nautAm || N.rise || new Date(M.start + 10 * 3600000);
+  const sig = [M.start, state.active, profile().aperture, skyNelm(), hzSig(), state.site.lat, state.site.lon].join('|');
+  if (!mar.rows || mar.sig !== sig) { mar.rows = marathonList(sky, { start: new Date(M.start), end, scope: profile(), nelm: skyNelm(), horizon: horizonNow() }); mar.sig = sig; }
+  return mar.rows;
+}
+function startMarathon(fresh) {
+  if (fresh || !state.marathon) state.marathon = { night: nightOf(sky).id, start: Date.now(), found: {}, tap: [], later: {}, over: false };
+  game = null; mar = { rows: null, sig: '', cur: null, dw: {} };
+  save(); marPick(); renderGame();
+}
+function marPick() {
+  const M = state.marathon, rows = marRows(), c = pointing();
+  const p = marathonPick(sky, rows, { now: new Date(), done: new Set(Object.keys(M.found)), later: new Map(Object.entries(M.later)), cur: c && c.ready ? c : null, horizon: horizonNow() });
+  mar.p = p; mar.cur = p.next; mar.dw = {}; mar.armed = 0; mar.pinged = false;
+  mar.hop = p.next && c && c.ready ? (() => { const t = sky.altAz(p.next.o); return sepDeg(c.alt, c.az, t.alt, t.az); })() : null;
+  if (!p.next && !p.waiting) finishMarathon();
+  return p;
+}
+function marFound(how) {
+  const M = state.marathon, r = mar.cur; if (!r) return;
+  M.found[r.key] = Date.now(); if (how === 'tap') M.tap.push(r.key);
+  if (navigator.vibrate) navigator.vibrate([80, 60, 80]);
+  logObservation(r.o, 'yes');
+  marPick(); renderGame();
+}
+function finishMarathon() {
+  const M = state.marathon; if (!M) return;
+  M.over = true; M.ended = Date.now();
+  const found = Object.keys(M.found).length, possible = marRows().length;
+  if (found && (!state.marathonBest || found > state.marathonBest.found)) state.marathonBest = { found, possible, when: Date.now() };
+  save(); mar.done = true; renderGame();
+}
+function renderMar(el) {
+  const M = state.marathon, rows = marRows(), found = Object.keys(M.found).length;
+  if (mar.done) {
+    const byKey = new Map(rows.map((r) => [r.key, r])), got = Object.entries(M.found).sort((a, b) => a[1] - b[1]);
+    const missed = rows.filter((r) => !M.found[r.key]);
+    el.innerHTML = `<h2>${found} of ${rows.length} possible tonight</h2>
+      <p class="muted small">Messier Marathon · ${shortDate(M.start)}${M.tap.length ? ` · ${M.tap.length} counted on your word (the sensors disagreed)` : found ? ' · every find agreed with the sensors' : ''}${state.marathonBest && state.marathonBest.found === found && found ? ' · your best night so far' : ''}</p>
+      ${got.length ? `<table class="res"><tr><th>#</th><th>Found</th><th>At</th></tr>${got.map(([k, t], i) => `<tr><td>${i + 1}</td><td>${esc((byKey.get(k) || { o: objByKey(k) || { label: k } }).o.label)}</td><td>${hm(new Date(t))}</td></tr>`).join('')}</table>` : '<p>Nothing found this time. Clouds happen.</p>'}
+      ${missed.length ? `<p class="muted small">Not found: ${missed.map((r) => esc(r.o.label)).join(', ')}</p>` : ''}
+      <div class="btnrow"><button id="mm-back" class="primary">Done</button></div>`;
+    $('#mm-back').onclick = () => { mar = null; renderGame(); };
+    return;
+  }
+  const p = mar.p, r = mar.cur;
+  const score = `<div class="mscore"><b>${found}</b> found<span class="muted"> · ${p.left} still possible${p.missed ? ` · ${p.missed} missed` : ''}</span></div>`;
+  const foot = `<div class="btnrow"><button id="mm-pause">Pause</button><button id="mm-end">Finish the night</button></div>`;
+  if (!r) {
+    const w = p.waiting;
+    el.innerHTML = `<h2>Messier Marathon</h2>${score}
+      <div class="card"><b>Nothing in reach right now.</b><p class="small">${w ? `Next up: <b>${esc(w.o.label)}</b>, from about ${hm(w.from)}${sky.sunAlt() > -6 ? ' — once the sky is dark enough' : ''}.` : ''}</p></div>${foot}`;
+  } else {
+    const o = r.o, why = mar.p.why === 'setting' ? `Going soon — about ${p.minsLeft} min left` : mar.p.why === 'skipped' ? 'One you skipped — try again?' : mar.hop != null && mar.hop < 30 ? 'Shortest hop from here' : 'Next on the route';
+    el.innerHTML = `${score}
+      <div class="target-h" style="justify-content:center;margin-top:6px"><span class="name">${esc(o.label)}</span><span class="muted">${esc(typeLabel(o.t))}${o.mag != null ? ' · mag ' + (+o.mag).toFixed(1) : ''}</span></div>
+      <div class="muted small" style="text-align:center">${o.name ? esc(o.name) + ' · ' : ''}${esc(why)}</div>
+      <div class="guide" id="g-deltas">
+        <div class="delta" id="gd-az"><div class="lab">Turn</div><div class="val">—</div><div class="dir"></div></div>
+        <div class="delta" id="gd-alt"><div class="lab">Tilt</div><div class="val">—</div><div class="dir"></div></div></div>
+      <div class="infield" id="g-status"></div>
+      <canvas id="g-chart" class="chart" width="800" height="800"></canvas>
+      ${p.upNext.length ? `<p class="muted small" style="text-align:center">Up next: ${p.upNext.slice(0, 4).map((x) => esc(x.o.label)).join(' · ')}</p>` : ''}
+      ${foot}
+      <div class="actionbar"><button id="mm-got" class="primary">Got it</button><button id="mm-skip">Skip for now</button></div>`;
+    $('#mm-skip').onclick = () => { M.later[r.key] = Date.now() + 20 * 60000; save(); cue.miss(); marPick(); renderGame(); };
+    $('#mm-got').onclick = () => {
+      const cur = pointing();
+      if (cur && cur.ready) {
+        const t = sky.altAz(o), d = sepDeg(cur.alt, cur.az, t.alt, t.az), R = foundRadius(o);
+        if (d <= 3 * R) return marFound('auto');
+        if (Date.now() < mar.armed) return marFound('tap');
+        mar.armed = Date.now() + 6000; cue.miss(); return toast(`The sensors put you ${d.toFixed(1)}° away. If you really can see it, tap Got it again.`, 5000);
+      }
+      if (Date.now() < mar.armed) return marFound('tap');
+      mar.armed = Date.now() + 6000; toast('No pointing data. Tap Got it again to count it anyway.', 5000);
+    };
+  }
+  $('#mm-pause').onclick = () => { mar = null; renderGame(); };
+  $('#mm-end').onclick = () => { if (confirmTwice('mm-end')) finishMarathon(); };
+}
+let marT = 0;
+function updateMar() {
+  if (!mar || mar.done) return;
+  const now = Date.now(), r = mar.cur;
+  if (!r) { if (now - marT > 20000) { marT = now; const p = marPick(); if (mar && (p.next || !p.waiting)) renderGame(); } return; }
+  if (r.to.getTime() <= now) { toast(`${r.o.label} has gone — on to the next`, 3000); marPick(); renderGame(); return; }
+  const o = r.o, tgt = sky.altAz(o), cur = pointing(), st = $('#g-status'); if (!st) return;
+  if (blocked(horizonNow(), tgt.alt, tgt.az)) { toast(`${o.label} has slipped behind your blocked sky`, 3000); state.marathon.later[r.key] = now + 20 * 60000; marPick(); renderGame(); return; }
+  if (!cur || !cur.ready) { st.textContent = 'Waiting for sensors / alignment…'; drawReticle(null, tgt, o, { canvas: $('#g-chart'), view: 6, centre: 'target' }); return; }
+  const gd = guidance(cur, tgt), R = foundRadius(o), half = tfov() / 2;
+  setDelta($('#gd-az'), gd.dAz, 'az', Math.abs(gd.dAz * Math.cos(tgt.alt * D2R)) < half); setDelta($('#gd-alt'), gd.dAlt, 'alt', Math.abs(gd.dAlt) < half);
+  const on = dwell(mar.dw, gd.sep, R, now, 1500);
+  if (on && !mar.pinged) { mar.pinged = true; cue.onTarget(); if (navigator.vibrate) navigator.vibrate(80); }
+  if (gd.sep > 3 * R) mar.pinged = false;
+  st.textContent = gd.sep <= R ? 'On target — look in the eyepiece, then tap Got it' : `${gd.sep.toFixed(1)}° away`;
+  drawReticle(cur, tgt, o, { canvas: $('#g-chart') });
+}
+
+// ---------------------------------------------------------------- BLOCKED SKY
+let hzTrace = null;   // { T, rough, t }
+function hzRingSVG(H, T) {
+  const C = 130, r0 = 34, r1 = 112, pt = (r, az) => [C + r * Math.sin(az * D2R), C - r * Math.cos(az * D2R)];
+  const arc = (k) => { const a0 = k * 45 - 22.5, a1 = k * 45 + 22.5, [x0, y0] = pt(r1, a0), [x1, y1] = pt(r1, a1), [x2, y2] = pt(r0, a1), [x3, y3] = pt(r0, a0);
+    return `M${x0.toFixed(1)} ${y0.toFixed(1)}A${r1} ${r1} 0 0 1 ${x1.toFixed(1)} ${y1.toFixed(1)}L${x2.toFixed(1)} ${y2.toFixed(1)}A${r0} ${r0} 0 0 0 ${x3.toFixed(1)} ${y3.toFixed(1)}Z`; };
+  const rad = (alt) => r1 - (r1 - r0) * Math.min(90, Math.max(0, alt)) / 90;       // horizon at the rim, overhead at the middle
+  const outline = (h) => h.map((v, i) => pt(rad(v), (i + 0.5) * 360 / HZ_BINS).map((x) => x.toFixed(1)).join(',')).join(' ');
+  const wedges = WEDGES.map((w, k) => { const lv = wedgeLevel(H, k), hgt = wedgeHeight(H, k), [tx, ty] = pt(r1 + 12, k * 45), [lx, ly] = pt((r0 + r1) / 2, k * 45);
+    return `<g data-wedge="${k}" class="hz-w lv${lv}" role="button" aria-label="${w}: ${HZ_LEVELS[lv].name}"><path d="${arc(k)}"/><text x="${lx.toFixed(1)}" y="${(ly + 4).toFixed(1)}" text-anchor="middle" class="hz-v">${hgt < 1 ? '' : hgt >= 89 ? '✕' : Math.round(hgt) + '°'}</text><text x="${tx.toFixed(1)}" y="${(ty + 4).toFixed(1)}" text-anchor="middle" class="hz-l">${w}</text></g>`; }).join('');
+  const traced = T ? T.n.map((n, i) => (n ? `<circle cx="${pt(rad(T.sum[i] / n), (i + 0.5) * 360 / HZ_BINS)[0].toFixed(1)}" cy="${pt(rad(T.sum[i] / n), (i + 0.5) * 360 / HZ_BINS)[1].toFixed(1)}" r="2.6" class="hz-dot"/>` : '')).join('') : '';
+  return `<svg viewBox="0 0 260 260" class="hzring">${wedges}${H.how === 'trace' && !T ? `<polygon points="${outline(H.h)}" class="hz-line"/>` : ''}${traced}<circle cx="${C}" cy="${C}" r="${r0 - 4}" class="hz-me"/><text x="${C}" y="${C + 4}" text-anchor="middle" class="hz-l">you</text><g id="hz-ptr"></g></svg>`;
+}
+function renderHorizon() {
+  const el = $('#tab-horizon'), H = state.horizon || emptyHorizon();
+  if (hzTrace) {
+    el.innerHTML = `${BACK}<h2>Trace the skyline</h2>
+      <p class="small">Put the scope on the top of the trees or roofs, then <b>sweep slowly all the way round</b>, keeping it on the line where the sky starts. Where the view is open, follow the true horizon.</p>
+      ${hzTrace.rough ? '<p class="muted small"><b>Rough mode:</b> you are not star-aligned, so directions come from the phone\'s compass and can be 10° or more out. Heights are still good. For an accurate map, align first and trace again.</p>' : '<p class="muted small">Star-aligned: directions are as good as the pointing.</p>'}
+      <div id="hz-box">${hzRingSVG(H, hzTrace.T)}</div>
+      <div class="infield" id="hz-live">Waiting for the sensors…</div>
+      <div class="btnrow"><button id="hz-cancel">Cancel</button></div>
+      <div class="actionbar"><button id="hz-done" class="primary">Save</button></div>`;
+    $('#hz-cancel').onclick = () => { hzTrace = null; renderHorizon(); };
+    $('#hz-done').onclick = () => {
+      if (traceCoverage(hzTrace.T) < 0.2) return toast('Sweep further round first — at least a fifth of the circle.');
+      const part = traceCoverage(hzTrace.T) < 0.95;
+      state.horizon = { ...traceFinish(hzTrace.T, state.horizon), lat: state.site.lat, lon: state.site.lon, when: Date.now(), rough: hzTrace.rough };
+      hzTrace = null; save(); planRows = null; renderHorizon();
+      toast(part ? 'Saved. Directions you did not sweep were filled in from their neighbours.' : 'Saved.', 4000);
+    };
+    bindBack(el); return;
+  }
+  const moved = hasHorizon(H) && H.lat != null && (Math.abs(H.lat - state.site.lat) > 0.02 || Math.abs(H.lon - state.site.lon) > 0.03);
+  el.innerHTML = `${BACK}<h2>Blocked sky</h2>
+    <p class="small">Tell the app where trees, buildings or hills hide the sky. It shades those parts on the chart and stops suggesting targets behind them.</p>
+    ${moved ? '<div class="card"><b>This map was made somewhere else.</b> <span class="small">Clear it or redo it for where you are now.</span></div>' : ''}
+    <h3>Quick way: tap a direction</h3>
+    <p class="muted small">Each tap steps through: clear → low (15°) → tall (30°) → very tall (50°) → blocked. A fist held at arm's length is about 10° high.${H.how === 'trace' ? ' The white line is your traced skyline: the rim is the horizon, the middle is overhead.' : ''}</p>
+    <div id="hz-box">${hzRingSVG(H, null)}</div>
+    <p class="muted small" style="text-align:center">${hasHorizon(H) ? esc(horizonSummary(H)) + (H.how === 'trace' ? (H.rough ? ' · traced by compass (rough)' : ' · traced with the scope') : '') : 'Nothing marked — the whole sky counts as open.'}</p>
+    <h3>Accurate way: trace the skyline</h3>
+    <p class="muted small">Sweep the telescope once around, following the tops of the trees and roofs. Best done after star alignment.</p>
+    <div class="btnrow"><button id="hz-trace" class="primary">Trace the skyline</button><button id="hz-clear" ${hasHorizon(H) ? '' : 'disabled'}>Clear all</button></div>`;
+  el.querySelectorAll('[data-wedge]').forEach((g) => g.onclick = () => {
+    const k = +g.dataset.wedge, base = state.horizon || emptyHorizon();
+    state.horizon = { ...setWedge(base, k, (wedgeLevel(base, k) + 1) % HZ_LEVELS.length), lat: state.site.lat, lon: state.site.lon, when: Date.now(), rough: base.rough };
+    save(); planRows = null; renderHorizon();
+  });
+  $('#hz-trace').onclick = () => {
+    const p = pointing(), ok = p && p.ready, g = ok ? null : guessPointing();
+    if (!ok && !g) return toast(sensors && sensors.fresh() ? 'No compass reading and no alignment yet — align first, or use the taps.' : 'This needs the phone\'s motion sensors. Start them from the start screen, or use the taps.', 5000);
+    hzTrace = { T: newTrace(), rough: !ok, t: 0 }; renderHorizon();
+  };
+  $('#hz-clear').onclick = () => { if (!confirmTwice('hz-clear')) return; state.horizon = null; save(); planRows = null; renderHorizon(); };
+  bindBack(el);
+}
+function updateHorizon() {
+  if (!hzTrace) return;
+  let p = pointing(); if (!p || !p.ready) p = hzTrace.rough ? guessPointing() : null;
+  const live = $('#hz-live'); if (!live) return;
+  if (!p) { live.textContent = 'Waiting for the sensors…'; return; }
+  if (p.alt > -8 && p.alt < 88) traceAdd(hzTrace.T, p.alt, p.az);
+  const now = Date.now(); if (now - hzTrace.t < 300) return; hzTrace.t = now;
+  const cov = traceCoverage(hzTrace.T);
+  live.textContent = `${Math.max(0, p.alt).toFixed(0)}° up, facing ${compassName(p.az)} · ${Math.round(cov * 100)}% of the way round${cov >= 0.95 ? ' — done, tap Save' : ''}`;
+  $('#hz-box').innerHTML = hzRingSVG(state.horizon || emptyHorizon(), hzTrace.T);
+  const C = 130, r = 112 - 78 * Math.min(90, Math.max(0, p.alt)) / 90;
+  $('#hz-ptr').innerHTML = `<circle cx="${(C + r * Math.sin(p.az * D2R)).toFixed(1)}" cy="${(C - r * Math.cos(p.az * D2R)).toFixed(1)}" r="6" class="hz-now"/>`;
+}
+
 function renderReady(el) {
   const g = game, len = pathLength(g.targets);
   el.innerHTML = `<h2>${esc(STYLES[g.style].name)} · challenge ${esc(g.ch.id)}</h2>
@@ -1400,6 +1612,7 @@ function renderPlay(el) {
   $('#g-quit').onclick = () => { if (confirmTwice('g-quit')) { game = null; renderGame(); } };
 }
 function updateGame() {
+  if (mar) return updateMar();
   const g = game; if (!g) return;
   if (g.phase === 'count') {
     const left = Math.ceil((g.countEnd - Date.now()) / 1000);
@@ -1777,6 +1990,7 @@ function resultHTML(kind, r) {
 }
 
 // ---------------------------------------------------------------- SETUP
+const FOC = [[-90, 'Left side'], [-45, 'Upper left'], [0, 'Top'], [45, 'Upper right'], [90, 'Right side']];
 function renderSetup() {
   const el = $('#tab-setup'); const p = profile();
   el.innerHTML = `${BACK}
@@ -1784,7 +1998,9 @@ function renderSetup() {
     <label class="row"><span>Scope</span><select id="s-prof">${Object.entries(state.profiles).map(([k, v]) => `<option value="${k}" ${k === state.active ? 'selected' : ''}>${esc(v.name)}</option>`).join('')}</select></label>
     <label class="row"><span>Focal length (mm)</span><input id="s-fl" type="number" inputmode="decimal" value="${p.fl}"></label>
     <label class="row"><span>Aperture (mm)</span><input id="s-ap" type="number" inputmode="decimal" value="${p.aperture}"></label>
-    <label class="row"><span>Focuser position <span class="muted small">(behind the scope, tube level)</span></span><select id="s-foc">${[[-90, 'Left side'], [-45, 'Upper left'], [0, 'Top'], [45, 'Upper right'], [90, 'Right side']].map(([v, l]) => `<option value="${v}" ${(p.focuser ?? 90) === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+    <div class="focpick"><div><b>Where is the focuser?</b><p class="muted small" style="margin:4px 0 0">Stand behind the telescope with the tube level, looking the way it points. Tap where the focuser sticks out. On a Skyward it is on the right.</p><p id="s-foclab" style="margin:8px 0 0"></p></div>
+      <svg viewBox="0 0 160 112" role="group" aria-label="Focuser position"><circle cx="80" cy="70" r="30" class="fp-tube"/><circle cx="80" cy="70" r="20" class="fp-mirror"/><text x="80" y="74" text-anchor="middle" class="fp-t">tube</text>
+      ${FOC.map(([v, l]) => { const s = Math.sin(v * D2R), c = Math.cos(v * D2R); return `<g data-foc="${v}" class="fp-opt${(p.focuser ?? 90) === v ? ' on' : ''}" role="button" aria-label="${l}"><line x1="${(80 + 30 * s).toFixed(1)}" y1="${(70 - 30 * c).toFixed(1)}" x2="${(80 + 44 * s).toFixed(1)}" y2="${(70 - 44 * c).toFixed(1)}"/><circle cx="${(80 + 52 * s).toFixed(1)}" cy="${(70 - 52 * c).toFixed(1)}" r="11"/></g>`; }).join('')}</svg></div>
     <p class="muted small">${esc(p.source || '')}</p>
     <h3>Eyepieces</h3>
     <table class="res"><tr><th>Name</th><th>mm</th><th>AFOV°</th><th>Field</th><th>Cycle</th><th></th></tr>
@@ -1828,7 +2044,9 @@ function renderSetup() {
   $('#s-prof').onchange = (e) => { state.active = e.target.value; state.ep = 0; align = { obs: [], fit: null, syncs: [], confirm: [] }; applyModelSettings(); save(); renderSetup(); };
   $('#s-fl').onchange = () => { p.fl = num('#s-fl') || p.fl; save(); renderSetup(); };
   $('#s-ap').onchange = () => { p.aperture = num('#s-ap') || p.aperture; save(); };
-  $('#s-foc').onchange = (e) => { p.focuser = +e.target.value; save(); };
+  const focLab = () => { $('#s-foclab').innerHTML = 'Selected: <b>' + (FOC.find(([v]) => v === (p.focuser ?? 90)) || FOC[4])[1] + '</b>'; };
+  focLab();
+  el.querySelectorAll('[data-foc]').forEach((g) => g.onclick = () => { p.focuser = +g.dataset.foc; save(); el.querySelectorAll('[data-foc]').forEach((x) => x.classList.toggle('on', x === g)); focLab(); });
   el.querySelectorAll('[data-epn]').forEach((i) => i.onchange = () => { p.eyepieces[+i.dataset.epn].name = i.value; save(); });
   el.querySelectorAll('[data-epf]').forEach((i) => i.onchange = () => { p.eyepieces[+i.dataset.epf].fl = parseFloat(i.value) || 10; save(); renderSetup(); });
   el.querySelectorAll('[data-epa]').forEach((i) => i.onchange = () => { const e = p.eyepieces[+i.dataset.epa]; e.afov = parseFloat(i.value) || 50; e.verified = true; save(); renderSetup(); });
@@ -2031,6 +2249,7 @@ function renderMore() {
     ${item('align', 'Alignment', state.mode === 'compass' ? 'Compass mode — no alignment needed' : alignedNow() ? `Aligned on ${align.obs.map((o) => esc(o.label)).join(' and ')} · ${syncAgo()}` : 'Not aligned yet — two minutes, and the app shows you which stars')}
     ${item('log', 'Observing log', st.total ? `${st.total} object${st.total === 1 ? '' : 's'} seen · Messier ${st.messier} of ${st.messierTotal}` : 'Nothing logged yet — your Messier count and milestones live here')}
     ${item('sky', 'Sky darkness check', state.skyq ? `${esc(state.skyq.label)} · ${shortDate(state.skyq.when)}` : '30 seconds — tunes the visibility ratings to your sky')}
+    ${item('horizon', 'Blocked sky', horizonNow() ? esc(horizonSummary(state.horizon)) : 'Mark trees and buildings so the app never sends you behind them')}
     ${item('test', 'Phone check-up and sensor tests', chk ? `This phone: ${V[chk.result.verdict] || esc(chk.result.verdict)} · ${shortDate(chk.when)}` : 'Find out how accurate this phone can be — 4 minutes')}
     ${item('setup', 'Setup', `${esc(profile().name)} · eyepieces, location, phone mount`)}
     ${item('start', 'Start screen', 'Choose what to do and how it works')}
@@ -2054,7 +2273,7 @@ let lastFrame = 0;
 function loop(ts) {
   if (ts - lastFrame > 66) {
     lastFrame = ts; refreshSky(false);
-    try { updateStatus(); if (tab === 'push') updatePush(); if (tab === 'align') updateAlign(); if (tab === 'game') updateGame(); updateTest(); } catch (e) { console.error(e); }
+    try { updateStatus(); if (tab === 'push') updatePush(); if (tab === 'align') updateAlign(); if (tab === 'game') updateGame(); if (tab === 'horizon') updateHorizon(); updateTest(); } catch (e) { console.error(e); }
   }
   requestAnimationFrame(loop);
 }
@@ -2063,7 +2282,7 @@ function loop(ts) {
 const ACTIVITIES = [
   ['observe', 'Observe', 'Follow the arrows to targets', '<circle cx="12" cy="12" r="7"/><path d="M12 2v5M12 17v5M2 12h5M17 12h5"/>'],
   ['explore', 'Explore', 'Wander the sky, no set-up', '<path d="M12 3l1.9 5.6L19.5 10l-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.4z"/><path d="M19 16l.6 1.9 1.9.6-1.9.6L19 21l-.6-1.9-1.9-.6 1.9-.6z"/>'],
-  ['game', 'Play', 'Ten targets against the clock', '<circle cx="12" cy="14" r="7"/><path d="M12 14v-4M10 3h4M12 3v4M18.5 7.5 20 6"/>'],
+  ['game', 'Play', 'Messier Marathon or a timed race', '<circle cx="12" cy="14" r="7"/><path d="M12 14v-4M10 3h4M12 3v4M18.5 7.5 20 6"/>'],
   ['plan', 'Plan', 'Pick targets for a night out', '<path d="M9 6h11M9 12h11M9 18h11"/><path d="m3.5 6 1.2 1.2L6.8 5M3.5 12l1.2 1.2L6.8 11M3.5 18l1.2 1.2L6.8 17"/>'],
 ];
 const STEP_INFO = {

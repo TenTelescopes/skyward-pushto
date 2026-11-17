@@ -193,7 +193,7 @@ export function describe(o, r) {
     ST: ['Bright star — look at its colour', 'Easy star', 'Faint star'],
   }[t] || ['Easy', 'Visible', 'Hard'];
   if (o.planet && (o.id === 'Uranus' || o.id === 'Neptune') && r.level < 3) return r.level === 1 ? 'A tiny disc, almost star-like — high power shows it is not a star' : 'Tiny and faint — hard to tell from a star';
-  const why = { moon: 'Moon washes it out', twilight: 'Sky not dark yet', low: 'Low in the haze', sky: 'Light pollution', close: 'Close pair', faint: 'Faint', below: 'Below the horizon', daylight: 'Daylight' }[r.cause] || '';
+  const why = { moon: 'Moon washes it out', twilight: 'Sky not dark yet', low: 'Low in the haze', sky: 'Light pollution', close: 'Close pair', faint: 'Faint', below: 'Below the horizon', daylight: 'Daylight', blocked: 'Behind the trees or buildings you marked' }[r.cause] || '';
   if (r.level === 3) return why ? `Not now — ${why === 'Moon washes it out' ? 'the Moon washes it out' : why.toLowerCase()}` : 'Not now';
   return `${see[Math.min(2, r.level)]}${r.level > 0 && why && r.cause !== 'faint' ? ` · ${why}` : ''}`;
 }

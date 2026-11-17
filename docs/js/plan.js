@@ -3,6 +3,7 @@
 
 import { rate, describe, LEVEL_NAMES, DEFAULT_NELM } from './vis.js';
 import { BLURBS } from '../data/blurbs.js';
+import { blocked } from './horizon.js';
 
 export const LEVELS = LEVEL_NAMES.slice(0, 3);       // Obvious, Visible, Challenging ("Not tonight" is left out)
 export const STEP_MIN = 15;
@@ -15,7 +16,7 @@ const sepP = (a1, z1, a2, z2) => Math.acos(Math.max(-1, Math.min(1, Math.sin(a1 
  * "Challenging" are left out. Rows (sorted by best time):
  *   { o, key, level, margin, ep, cause, desc, best: Date, alt, az, from: Date, to: Date }
  */
-export function planTargets(sky, { start, hours, scope, nelm = DEFAULT_NELM, minAlt = 20 } = {}) {
+export function planTargets(sky, { start, hours, scope, nelm = DEFAULT_NELM, minAlt = 20, horizon = null } = {}) {
   const n = Math.max(1, Math.round(hours * 60 / STEP_MIN)), times = [];
   for (let i = 0; i <= n; i++) times.push(new Date(start.getTime() + i * STEP_MIN * 60000));
   const cond = times.map((t) => ({ sun: sky.sunAlt(t), moon: sky.moonInfo(t) }));
@@ -24,7 +25,7 @@ export function planTargets(sky, { start, hours, scope, nelm = DEFAULT_NELM, min
   for (const o of cands) {
     let bestR = null, bi = -1, from = null, to = null, pos = null;
     times.forEach((t, i) => {
-      const p = sky.altAz(o, t); if (p.alt < minAlt) return;
+      const p = sky.altAz(o, t); if (p.alt < minAlt || blocked(horizon, p.alt, p.az, 2)) return;
       const c = cond[i];
       const r = rate(o, { alt: p.alt, sunAlt: c.sun, moonAlt: c.moon.alt, moonFrac: c.moon.frac, moonSep: sepP(p.alt, p.az, c.moon.alt, c.moon.az), nelm }, scope);
       if (!r || r.level > 2) return;

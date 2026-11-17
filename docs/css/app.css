@@ -321,3 +321,23 @@ body::before, #gate::before { content: ""; position: fixed; inset: 0; z-index: -
 .shnav span { flex: 1; text-align: center; }
 .shnav button { flex: none; width: 48px; min-height: 36px; padding: 0; display: grid; place-items: center; }
 .shnav button:disabled { opacity: .3; }
+
+/* focuser position: a picture you tap, seen from behind the tube */
+.focpick { display: flex; gap: 10px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.focpick > div { flex: 1; min-width: 0; } .focpick svg { width: 150px; flex: none; }
+.fp-tube { fill: none; stroke: var(--dim); stroke-width: 3; } .fp-mirror { fill: var(--line); } .fp-t { font-size: 9px; fill: var(--dim); }
+.fp-opt { cursor: pointer; } .fp-opt line { stroke: var(--line); stroke-width: 6; stroke-linecap: round; } .fp-opt circle { fill: var(--panel); stroke: var(--dim); stroke-width: 1.5; }
+.fp-opt.on line { stroke: var(--hi); } .fp-opt.on circle { fill: var(--hi); stroke: var(--hi); }
+
+/* blocked sky: a compass ring you tap; horizon at the rim, overhead in the middle */
+.hzring { display: block; width: min(80vw, 300px, 40vh); margin: 6px auto; touch-action: manipulation; }
+.hz-w { cursor: pointer; } .hz-w path { fill: var(--panel); stroke: var(--line); stroke-width: 1.5; }
+.hz-w.lv1 path { fill: color-mix(in srgb, var(--hi) 22%, var(--panel)); } .hz-w.lv2 path { fill: color-mix(in srgb, var(--hi) 42%, var(--panel)); }
+.hz-w.lv3 path { fill: color-mix(in srgb, var(--hi) 62%, var(--panel)); } .hz-w.lv4 path { fill: color-mix(in srgb, var(--hi) 85%, var(--panel)); }
+.hz-l { font-size: 12px; fill: var(--dim); pointer-events: none; } .hz-v { font-size: 13px; font-weight: 600; fill: var(--fg); pointer-events: none; }
+.hz-w.lv3 .hz-v, .hz-w.lv4 .hz-v { fill: var(--bg); }
+.hz-me { fill: var(--bg); stroke: var(--line); } .hz-line { fill: none; stroke: var(--fg); stroke-width: 2; stroke-linejoin: round; pointer-events: none; }
+.hz-dot { fill: var(--fg); pointer-events: none; } .hz-now { fill: none; stroke: var(--good); stroke-width: 3; }
+/* play */
+.gamecard h3 { margin: 0 0 6px; } .gamecard p { margin: 6px 0; }
+.mscore { text-align: center; font-size: 18px; margin: 4px 0 2px; } .mscore b { font-size: 30px; color: var(--hi); }
