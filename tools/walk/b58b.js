@@ -17,7 +17,7 @@ const { chromium, devices } = require('playwright');
   // align, then trace with the scope
   await pg.click('#st-pill'); await wait(800);
   for (let i = 0; i < 2; i++) { const name = await pg.textContent('#tab-align .target-h .name').catch(() => null); if (!name) break; await pg.evaluate((n) => window.simGoto(n), name); await wait(1700); await pg.click('#a-ok'); await wait(1000); }
-  await tabTo('more'); await pg.click('#tab-more [data-go=horizon]'); await wait(300); await pg.click('#hz-trace'); await wait(400);
+  await tabTo('more'); await pg.click('#tab-more [data-go=horizon]'); await wait(300); await pg.click('#hz-trace'); await wait(400); await pg.click('#hz-rec'); await wait(200);
   const sk = (az) => 8 + 30 * Math.max(0, Math.cos((az - 270) * Math.PI / 180)) ** 2;     // tall trees to the west
   for (let az = 0; az < 360; az += 4) { await pg.evaluate(([a, z]) => window.simGoto({ alt: a, az: z }), [sk(az), az]); await wait(260); if (az === 200) await pg.screenshot({ path: 'hz2.png' }); }
   console.log('live:', await pg.textContent('#hz-live'));

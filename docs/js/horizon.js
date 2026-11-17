@@ -47,10 +47,12 @@ export function wedgeLevel(H, k) {
 export const wedgeHeight = (H, k) => { const v = []; for (let i = 0; i < BINS; i++) if (wedgeOfBin(i) === k) v.push(H.h[i]); return v.reduce((a, b) => a + b, 0) / v.length; };
 
 /** Trace method: follow the skyline with the scope (or the phone); each sample is where the sky starts in that direction. */
-export const newTrace = () => ({ sum: new Array(BINS).fill(0), n: new Array(BINS).fill(0) });
+export const newTrace = () => ({ sum: new Array(BINS).fill(0), n: new Array(BINS).fill(0), last: -1 });
 export function traceAdd(T, alt, az) {
   if (alt == null || az == null || isNaN(alt) || isNaN(az)) return T;
-  const i = binOf(az); T.sum[i] += clampAlt(alt); T.n[i]++; return T;
+  const i = binOf(az);
+  if (i !== T.last) { T.sum[i] = 0; T.n[i] = 0; T.last = i; }      // coming back to a direction replaces what was there: the latest pass wins
+  T.sum[i] += clampAlt(alt); T.n[i]++; return T;
 }
 export const traceCoverage = (T) => T.n.filter((n) => n > 0).length / BINS;
 /**

@@ -47,6 +47,8 @@ export const DOUBLE_NATURE = {
   // travelling together at the same distance; too wide and slow to watch orbiting
   'Cor Caroli': 'lb', Mesarthim: 'lb', Kuma: 'lb', 'Theta 1 Ser': 'lb', 'Beta Mon': 'lm', Trapezium: 'lm',
   Albireo: 'unsure',
+  // a chance line-up: the two stars lie at very different distances
+  M40: 'od', 'Winnecke 4': 'od',
 };
 export const NATURE_LABEL = { tb: 'True binary', lb: 'Likely binary', tm: 'True multiple', lm: 'Likely multiple', od: 'Optical double', om: 'Optical multiple', unsure: 'Double star', unknown: 'Double star' };
 export const NATURE_NOTE = {
@@ -84,7 +86,7 @@ export const STAR_CLASS = {
 /** Colours of the two stars of some famous doubles (brighter first), by the label the app shows. */
 export const PAIR_CLASS = {
   Albireo: 'KB', Almach: 'KB', Almaak: 'KB', Izar: 'KA', Rasalgethi: 'MG', 'Cor Caroli': 'AF', Mizar: 'AA', Castor: 'AA', Algieba: 'KG',
-  '61 Cyg': 'KK', Achird: 'GM', Mesarthim: 'AA', Polaris: 'FF',
+  '61 Cyg': 'KK', Achird: 'GM', Mesarthim: 'AA', Polaris: 'FF', M40: 'GF', 'Winnecke 4': 'GF',
 };
 
 export const BLURBS = {

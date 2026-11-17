@@ -341,3 +341,14 @@ body::before, #gate::before { content: ""; position: fixed; inset: 0; z-index: -
 /* play */
 .gamecard h3 { margin: 0 0 6px; } .gamecard p { margin: 6px 0; }
 .mscore { text-align: center; font-size: 18px; margin: 4px 0 2px; } .mscore b { font-size: 30px; color: var(--hi); }
+.hzlink { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; text-align: left; margin: 10px 0 4px; padding: 10px 14px; }
+.hzlink .muted { font-size: 13px; font-weight: 400; }
+.sess.hzrow { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); align-items: center; }
+.actionbar > button.named { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; padding: 4px 6px; line-height: 1.15; overflow: hidden; }
+.actionbar > button.named .bn { font-size: 17px; font-weight: 700; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.actionbar > button.named .bn i { font-style: normal; font-weight: 400; opacity: .8; font-size: 14px; }
+.actionbar > button.named .bs { font-size: 12px; font-weight: 500; opacity: .85; }
+/* saved places and kept plans */
+.placecard .chips, .plancard .btnrow { margin-top: 8px; }
+.plancard textarea { width: 100%; margin-top: 8px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg2); color: var(--fg); font: inherit; font-size: 15px; resize: vertical; min-height: 44px; }
+.plancard .list { margin-top: 8px; } .plancard .list li { display: flex; align-items: center; gap: 6px; } .plancard .list .grow { flex: 1; min-width: 0; }

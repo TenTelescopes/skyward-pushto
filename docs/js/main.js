@@ -1,6 +1,7 @@
 import { PointingModel, MOUNTINGS, fitAlignment, guidance, tangentOffset, mulMV, altAzFromVec, norm, wrap180, wrap360, sepDeg, D2R, R2D } from './model.js';
 import { emptyHorizon, hasHorizon, limitAt, blocked, setWedge, wedgeLevel, wedgeHeight, newTrace, traceAdd, traceFinish, traceCoverage, summary as horizonSummary, WEDGES, LEVELS as HZ_LEVELS, BINS as HZ_BINS } from './horizon.js';
-import { marathonList, pick as marathonPick, nightOf } from './marathon.js';
+import { marathonList, pick as marathonPick, nightOf, syncStarFor } from './marathon.js';
+import { nearPlaces, uniqueName, relocate, planAutoName, coordText, PLACE_IDEAS } from './places.js';
 import { Sky, typeLabel, compassName, LINES } from './astro.js';
 import { Sensors, SimSensors } from './sensors.js';
 import { Recorder, analyzeStillness, analyzeRepeat, analyzeReversal, analyzeAccuracy, fmt, toCSV } from './tests.js';
@@ -259,15 +260,32 @@ const BACK = '<button class="back" data-back>‹ More</button>';
 function bindBack(el) { const b = $('[data-back]', el); if (b) b.onclick = () => showTab('more'); }
 
 // ---------------------------------------------------------------- PLAN
-// state.plan = { start: ISO, hours, items: [{ key, sync? }], done: { key: true } }
-let planRows = null, planLevel = 'all', planSort = 'top', planLimit = 40, planEdit = false, planReorder = false;
+// state.plan = { id, start: ISO, hours, items: [{ key, sync? }], done: { key: true }, notes, name, nameSet, placeName }  (the one being worked on)
+// state.plans = the other plans, kept automatically (newest first). Nothing is ever thrown away unless the user deletes it.
+const plansList = () => state.plans || (state.plans = []);
+const newPlanObj = () => ({ id: 'p' + Date.now().toString(36), start: null, hours: state.plan ? state.plan.hours || 2 : 2, items: [], done: {}, notes: '', placeName: null });
+const planWhere = (P) => P.placeName || placeLabel() || (/^default/.test(state.site.source || '') ? '' : coordText(state.site.lat, state.site.lon));
+const planTitle = (P) => (P.nameSet && P.name ? P.name : planAutoName(new Date(P.start || Date.now()), planWhere(P)));
+const planWorthKeeping = (P) => !!P && (P.items.length > 0 || !!(P.notes || '').trim());
+function stashPlan() {
+  const P = state.plan; if (!planWorthKeeping(P)) return false;
+  if (!P.placeName) P.placeName = planWhere(P) || null;
+  P.kept = Date.now(); plansList().unshift(P); if (plansList().length > 60) plansList().length = 60; return true;
+}
+function startNewPlan() { const kept = stashPlan(); state.plan = newPlanObj(); state.plan.start = defaultStart().toISOString(); planRows = null; save(); return kept; }
+function openSavedPlan(id) {
+  const i = plansList().findIndex((p) => p.id === id); if (i < 0) return;
+  const [P] = plansList().splice(i, 1); stashPlan(); state.plan = P; planRows = null; save();
+}
+let planRows = null, planLevel = 'all', planSort = 'top', planLimit = 40, planEdit = false, planReorder = false, planMine = false;
 const hm = (d) => (d ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '—');
 const pad = (n) => String(n).padStart(2, '0');
 const dateVal = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const timeVal = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 const objByKey = (k) => sky.objects.find((o) => o.key === k);
 function planState() {
-  if (!state.plan) state.plan = { start: null, hours: 2, items: [], done: {} };
+  if (!state.plan) state.plan = newPlanObj();
+  if (!state.plan.id) state.plan.id = 'p' + Date.now().toString(36);
   if (!state.plan.start) state.plan.start = defaultStart().toISOString();
   return state.plan;
 }
@@ -282,7 +300,7 @@ function markDone(key, v) { if (!state.plan) return; state.plan.done = state.pla
 function planBar(o) {
   const P = planList(), i = P.findIndex((x) => x.key === o.key); if (i < 0) return '';
   const it = P[i], nxt = P[i + 1] && objByKey(P[i + 1].key);
-  return `<div class="planbar">${it.sync ? `<b>Sync star.</b> Centre ${esc(o.label)}, tap <b>Centred — Sync</b>, then the arrow. ` : ''}Plan ${i + 1} of ${P.length}${nxt ? ` · next: <b>${esc(nxt.label)}</b>` : ' · last one'}</div>`;
+  return `<div class="planbar">${it.sync ? `<b>Sync star.</b> Centre ${esc(o.label)}, tap <b>It’s centred — sync</b>, then the arrow. ` : ''}Plan ${i + 1} of ${P.length}${nxt ? ` · next: <b>${esc(nxt.label)}</b>` : ' · last one'}</div>`;
 }
 function dayLabel(d) {
   const now = new Date(), a = new Date(now.getFullYear(), now.getMonth(), now.getDate()), b = new Date(d.getFullYear(), d.getMonth(), d.getDate());
@@ -305,6 +323,7 @@ function renderPlan() {
         <div class="muted small">${esc(skyName)} · Moon ${moonTxt}</div>
         <div class="muted small">Sunset ${hm(n.set)} · fully dark ${hm(n.astro)} – ${hm(n.astroAm)}${n.set && start < n.set ? ' · <b>you start before sunset</b>' : ''}</div></div>
         <button id="pl-edit" class="mini">${planEdit ? 'Done' : 'Change'}</button></div>
+      <div class="sess hzrow"><div class="muted small">${placeLabel() ? hzLine() : `Blocked sky: ${hzLine()}`}</div><button id="pl-hz" class="mini">${horizonNow() ? 'Change' : 'Mark it'}</button></div>
       <div id="pl-form" class="${planEdit ? '' : 'hidden'}" style="margin-top:8px">
         <div class="btnrow"><button id="pl-dark" class="mini">Start at full dark (${hm(n.astro || n.naut)})</button><button id="pl-now" class="mini">Start now</button></div>
         <label class="row"><span>Date</span><input id="pl-date" type="date" value="${dateVal(start)}"></label>
@@ -313,6 +332,13 @@ function renderPlan() {
         <label class="row"><span>Your sky</span><select id="pl-skysel">${SKY_PICKS.map(([m, l]) => `<option value="${m}" ${Math.abs(skyNelm() - m) < 0.26 ? 'selected' : ''}>${l}</option>`).join('')}${SKY_PICKS.some(([m]) => Math.abs(skyNelm() - m) < 0.26) ? '' : `<option selected>${esc(state.skyq.label)}</option>`}</select></label>
         <div class="btnrow"><button id="pl-skyq" class="mini">Measure it: Little Dipper check (30 s)</button></div>
       </div>
+    </div>
+    <div class="card plancard">
+      <div class="sess"><div><b id="pl-name">${esc(planTitle(P))}</b><div class="muted small">${planWorthKeeping(P) ? 'Kept automatically' : 'Nothing in it yet'}${P.nameSet ? '' : ' · named from the date and place'}</div></div><button id="pl-rename" class="mini">Rename</button></div>
+      <textarea id="pl-notes" rows="2" placeholder="Notes: the sky, who came, what to try next time…">${esc(P.notes || '')}</textarea>
+      <div class="btnrow"><button id="pl-new" class="mini" ${planWorthKeeping(P) ? '' : 'disabled'}>New plan</button><button id="pl-mine" class="mini" ${plansList().length ? '' : 'disabled'}>${planMine ? 'Hide' : 'My plans'} (${plansList().length})</button></div>
+      ${planMine && plansList().length ? `<ul class="list" id="pl-saved">${plansList().map((S) => { const t = S.items.filter((x) => !x.sync), d = t.filter((x) => S.done && S.done[x.key]).length, note = (S.notes || '').trim().split('\n')[0];
+        return `<li><div class="grow"><b>${esc(planTitle(S))}</b><div class="muted small">${t.length} target${t.length === 1 ? '' : 's'}${d ? ` · ${d} done` : ''}${note ? ` · ${esc(note.slice(0, 60))}${note.length > 60 ? '…' : ''}` : ''}</div></div><button class="mini" data-open="${S.id}">Open</button><button class="mini" data-del="${S.id}" id="pl-del-${S.id}">Delete</button></li>`; }).join('')}</ul>` : ''}
     </div>
     ${P.items.length ? `<div class="sech"><h3>Your plan <span class="muted small">${T.length} target${T.length === 1 ? '' : 's'}${nSync ? ` + ${nSync} sync star${nSync === 1 ? '' : 's'}` : ''}${nDone ? ` · ${nDone} done` : ''}</span></h3><button id="pl-reorder" class="mini">${planReorder ? 'Done' : 'Edit'}</button></div>
       ${openStar ? `<div class="planbar" id="pl-open">Start with a sync star: <b>★ ${esc(openStar.o.label)}</b>, ${openStar.dist.toFixed(0)}° from ${esc((objByKey(P.items[0].key) || {}).label || 'your first target')}. Centring it first makes the arrows accurate from the start. <button id="pl-openadd" class="mini primary">Add it</button></div>` : ''}
@@ -325,6 +351,15 @@ function renderPlan() {
     <div class="chips" id="pl-lv">${[['all', 'All'], ['0', '●●● Obvious'], ['1', '●●○ Visible'], ['2', '●○○ Challenging']].map(([k, l]) => `<button data-lv="${k}" class="${planLevel === k ? 'on' : ''}">${l}</button>`).join('')}</div>
     <div class="chips" id="pl-sort">${[['top', 'Top picks'], ['time', 'Looks best'], ['alt', 'Highest'], ['name', 'Catalog #']].map(([k, l]) => `<button data-s="${k}" class="${planSort === k ? 'on' : ''}">${l}</button>`).join('')}</div>
     <ul class="list" id="pl-sugg"><li class="muted">Working it out…</li></ul>`;
+  $('#pl-hz').onclick = () => openHorizon('plan');
+  $('#pl-notes').oninput = (e) => { P.notes = e.target.value; save(); };
+  $('#pl-notes').onchange = () => { const y = $('main').scrollTop; renderPlan(); $('main').scrollTop = y; };
+  $('#pl-rename').onclick = () => { const auto = planAutoName(new Date(P.start), planWhere(P)), n = prompt('Name this plan (leave it as is to keep the automatic name)', planTitle(P)); if (n == null) return;
+    if (!n.trim() || n.trim() === auto) { P.nameSet = false; delete P.name; } else { P.name = n.trim().slice(0, 60); P.nameSet = true; } save(); renderPlan(); };
+  $('#pl-new').onclick = () => { const name = planTitle(P); startNewPlan(); planMine = false; renderPlan(); $('main').scrollTop = 0; toast(`"${name}" is kept under My plans. Fresh plan started.`, 4000); };
+  $('#pl-mine').onclick = () => { planMine = !planMine; const y = $('main').scrollTop; renderPlan(); $('main').scrollTop = y; };
+  el.querySelectorAll('[data-open]').forEach((b) => b.onclick = () => { openSavedPlan(b.dataset.open); planMine = false; renderPlan(); $('main').scrollTop = 0; toast(`Opened "${planTitle(state.plan)}"`); });
+  el.querySelectorAll('[data-del]').forEach((b) => b.onclick = () => { if (!confirmTwice(b.id)) return; state.plans = plansList().filter((p) => p.id !== b.dataset.del); save(); const y = $('main').scrollTop; renderPlan(); $('main').scrollTop = y; });
   const keepScroll = (f) => { const y = $('main').scrollTop; f(); $('main').scrollTop = y; };
   const setStart = (d) => { P.start = d.toISOString(); planRows = null; save(); renderPlan(); };
   const fromInputs = () => { const [y, m, d] = $('#pl-date').value.split('-').map(Number), [hh, mm] = $('#pl-time').value.split(':').map(Number); if (y && hh != null) setStart(new Date(y, m - 1, d, hh, mm || 0)); };
@@ -567,7 +602,8 @@ const rateTag = (r) => (r ? `<span class="dots lv${r.level}">${DOTS[r.level]}</s
 const SUN_KEEP = 20;   // degrees: warn when a target is this close to the Sun
 function sunSep(o) { const S = sky.sunAltAz(); return sepDeg(o.alt, o.az, S.alt, S.az); }
 const targetObj = () => sky.objects.find((o) => o.key === state.target);
-const ZOOM_ROW = () => `<div class="btnrow zoom"><button id="z-out" aria-label="Zoom out">−</button><button id="z-in" aria-label="Zoom in">+</button><button id="z-ep" title="Tap to cycle eyepieces">${esc(eyepiece().name)}</button><button id="z-auto">Fit</button></div>`;
+const HZ_TOGGLE = () => (horizonNow() ? `<button id="z-hz" class="${state.hzShow === false ? '' : 'on'}" title="Show or hide the hatching over sky you marked as blocked">${state.hzShow === false ? 'Blocked sky: hidden' : 'Blocked sky: shown'}</button>` : '');
+const ZOOM_ROW = () => `<div class="btnrow zoom"><button id="z-out" aria-label="Zoom out">−</button><button id="z-in" aria-label="Zoom in">+</button><button id="z-ep" title="Tap to cycle eyepieces">${esc(eyepiece().name)}</button><button id="z-auto">Fit</button>${HZ_TOGGLE()}</div>`;
 function renderPush() {
   const el = $('#tab-push'); const o = targetObj();
   pstatKey = null; rateT = 0;
@@ -577,11 +613,13 @@ function renderPush() {
       <canvas id="reticle" class="chart big" width="800" height="800"></canvas>
       <div id="whereami" class="whereami"></div>
       ${ZOOM_ROW()}
+      <div class="btnrow"><button id="p-hz" class="mini">${placeLabel() ? hzLine() : `Blocked sky: ${hzLine()}`}</button></div>
       <p class="muted small">The chart follows the scope.${state.mounting === 'top-sky' ? ' In your hand, point the top edge of the phone at the sky, like a TV remote.' : ''} When it says you're near something, tap the name to read about it.</p>
       <div class="actionbar"><button id="sv-find" class="primary">Pick a target</button>${align.fit || state.mode === 'compass' ? '' : '<button id="sv-align">Align</button>'}</div>`;
     chartCentre = 'scope'; if (zoom == null) zoom = 30;
     bindChartControls();
     $('#sv-find').onclick = () => showTab('find');
+    $('#p-hz').onclick = () => openHorizon('push');
     if ($('#sv-align')) $('#sv-align').onclick = () => showTab('align');
     return;
   }
@@ -610,7 +648,7 @@ function renderPush() {
     ${blurb ? `<p class="blurb">${esc(blurb)}</p>` : ''}
     ${doubleNature(o) ? `<p class="small">${esc(NATURE_NOTE[doubleNature(o)])}</p>` : ''}
     <details class="more"><summary>View options</summary>
-      <div class="btnrow"><button id="z-ctr">${chartCentre === 'scope' ? 'Chart follows: scope' : 'Chart follows: target'}</button><button id="z-wide">Wide (30°)</button><button id="z-lock" class="${state.zoomLock ? 'on' : ''}">${state.zoomLock ? 'Zoom locked' : 'Lock zoom'}</button></div>
+      <div class="btnrow"><button id="z-ctr">${chartCentre === 'scope' ? 'Chart follows: scope' : 'Chart follows: target'}</button><button id="z-wide">Wide (30°)</button><button id="z-lock" class="${state.zoomLock ? 'on' : ''}">${state.zoomLock ? 'Zoom locked' : 'Lock zoom'}</button>${HZ_TOGGLE()}</div>
       <label class="row"><span>Draw the eyepiece view the way your Newtonian shows it</span><input type="checkbox" id="rot180" ${state.rot180 ? 'checked' : ''}></label>
       <p class="muted small" id="eyedim"></p>
       <p class="muted small">Eyepiece view computed for a focuser on the ${({ '-90': 'left side', '-45': 'upper left', 0: 'top', 45: 'upper right', 90: 'right side' })[profile().focuser ?? 90]} (standing behind the scope, tube level), with your head upright; tilting your head turns the view with it. <b>↑Z</b> points toward the zenith, N and E are celestial north and east.</p>
@@ -621,7 +659,7 @@ function renderPush() {
       ${o.pairs ? `<p class="muted small">${o.pairs.map((p) => `${p.c}: ${p.sep}″ apart, PA ${p.pa}° (mags ${p.mags})`).join(' · ')}</p>` : ''}
       <div class="kv" id="pinfo"></div>
     </details>
-    <div class="btnrow"><button id="b-info">About ${esc(o.label)}</button><button id="b-free">Sky view</button></div>
+    <div class="btnrow"><button id="b-info">About ${esc(o.label)}</button><button id="b-free">Sky view</button><button id="p-hz">Blocked sky</button></div>
     <div class="actionbar" id="p-actions"></div>`;
   el.querySelectorAll('[data-ep]').forEach((b) => b.onclick = () => { state.ep = +b.dataset.ep; save(); renderPush(); });
   $('#rot180').onchange = (e) => { state.rot180 = e.target.checked; save(); eyeT = 0; };
@@ -634,7 +672,7 @@ function renderPush() {
   const bar = $('#p-actions');
   const mainBar = () => {
     const seen = seenSet().has(o.key);
-    bar.innerHTML = `<button class="ibtn" id="b-prev" aria-label="Previous target">${ICON.prev}</button><button id="b-sync" class="primary wide">Centred — Sync</button>${loggable ? `<button id="b-log">${seen ? 'Seen ✓' : 'Log'}</button>` : ''}<button class="ibtn" id="b-next" aria-label="Next target">${ICON.next}</button>`;
+    bar.innerHTML = `<button class="ibtn" id="b-prev" aria-label="Previous target">${ICON.prev}</button><button id="b-sync" class="primary wide named" aria-label="${esc(o.label)}: centred, sync"><span class="bn">${esc(o.label)}${o.name && o.name.length <= 14 ? ` <i>${esc(o.name)}</i>` : ''}</span><span class="bs">It’s centred — sync</span></button>${loggable ? `<button id="b-log">${seen ? 'Seen ✓' : 'Log'}</button>` : ''}<button class="ibtn" id="b-next" aria-label="Next target">${ICON.next}</button>`;
     $('#b-sync').onclick = () => doSync(o);
     $('#b-prev').onclick = () => step(-1); $('#b-next').onclick = () => step(1);
     if ($('#b-log')) $('#b-log').onclick = () => {
@@ -645,6 +683,7 @@ function renderPush() {
   };
   mainBar(); pushBar = mainBar;
   $('#b-free').onclick = () => { state.target = null; save(); renderPush(); };
+  $('#p-hz').onclick = () => openHorizon('push');
   $('#b-info').onclick = () => openObject(o.key);
   $('#whereami').onclick = (e) => { const a = e.target.closest('[data-near]'); if (a) openObject(a.dataset.near); };
   bindChartControls();
@@ -674,7 +713,7 @@ function setDelta(el, d, axis, ok, approx) {
 function onTargetHTML(o, wide, U, loggable) {
   if (wide) return `<div class="ontarget"><b>Close</b><div class="small">Within about ±${fmt.am(U)} — more than this eyepiece shows. Sweep gently around, or drop to a lower power. Sync on a nearby bright star to tighten it up.</div></div>`;
   const last = lastEntry(state.log, o.key), recent = last && last.seen === 'yes' && Date.now() - last.t < 6 * 3600000;
-  if (!loggable) return `<div class="ontarget"><b>✓ In the eyepiece</b><div class="small">Centre it, then tap <b>Centred — Sync</b>.</div></div>`;
+  if (!loggable) return `<div class="ontarget"><b>✓ In the eyepiece</b><div class="small">Centre it, then tap <b>It’s centred — sync</b>.</div></div>`;
   if (recent) return `<div class="ontarget"><b>✓ In the eyepiece</b><div class="small">Logged ✓ — tap the arrow for the next one.</div></div>`;
   return `<div class="ontarget"><b>✓ In the eyepiece</b> — take a look
     <div class="seenrow"><span>See it?</span><button data-seen="yes" class="primary">Yes</button><button data-seen="maybe">Not sure</button><button data-seen="no">No</button></div></div>`;
@@ -871,6 +910,7 @@ function bindChartControls() {
   on('z-in', () => setZoom((zoom ?? cv._lastView) / 1.6));
   on('z-out', () => setZoom((zoom ?? cv._lastView) * 1.6));
   on('z-auto', () => { setZoom(null); toast('Zoom fits the distance to the target'); });
+  on('z-hz', () => { state.hzShow = state.hzShow === false; save(); const b = $('#z-hz'); b.classList.toggle('on', state.hzShow); b.textContent = state.hzShow ? 'Blocked sky: shown' : 'Blocked sky: hidden'; toast(state.hzShow ? 'Hatching on: sky hidden from this spot is marked. Targets behind it stay off your suggestions.' : 'Hatching off. Targets behind your blocked sky still stay off your suggestions.', 4500); });
   on('z-lock', () => { state.zoomLock = !state.zoomLock; save(); const b = $('#z-lock'); b.classList.toggle('on', state.zoomLock); b.textContent = state.zoomLock ? 'Zoom locked' : 'Lock zoom'; toast(state.zoomLock ? 'Zoom locked — it won\'t zoom out while you move' : 'Zoom unlocked — zooms out while you move'); });
   on('z-ep', cycleEyepiece);
   on('z-wide', () => setZoom(30));
@@ -903,10 +943,19 @@ function bindChartControls() {
   cv.addEventListener('wheel', (e) => { setZoom((zoom ?? cv._lastView) * Math.exp(e.deltaY * 0.002)); e.preventDefault(); }, { passive: false });
 }
 
+/** Sky hidden from this spot: a see-through hatched band, so what is behind the trees can still be seen on the chart. */
 function hzFill(c, top, bot, col) {
-  c.beginPath(); c.moveTo(top[0].x, top[0].y); for (const p of top) c.lineTo(p.x, p.y); for (let i = bot.length - 1; i >= 0; i--) c.lineTo(bot[i].x, bot[i].y); c.closePath();
-  c.fillStyle = col(120, 60, 40, 0.22); c.fill();
-  c.beginPath(); c.moveTo(top[0].x, top[0].y); for (const p of top) c.lineTo(p.x, p.y); c.strokeStyle = col(150, 70, 40, 0.7); c.lineWidth = 2; c.stroke();
+  const path = () => { c.beginPath(); c.moveTo(top[0].x, top[0].y); for (const p of top) c.lineTo(p.x, p.y); for (let i = bot.length - 1; i >= 0; i--) c.lineTo(bot[i].x, bot[i].y); c.closePath(); };
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  for (const p of top.concat(bot)) { x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y); }
+  const W = c.canvas.width, H = c.canvas.height; x0 = Math.max(-20, x0); y0 = Math.max(-20, y0); x1 = Math.min(W + 20, x1); y1 = Math.min(H + 20, y1);
+  c.save(); path(); c.clip();
+  c.fillStyle = col(150, 80, 50, 0.09); c.fillRect(x0, y0, x1 - x0, y1 - y0);
+  const gap = Math.max(14, W / 50), h = y1 - y0;
+  c.beginPath(); for (let x = x0 - h; x <= x1; x += gap) { c.moveTo(x, y1); c.lineTo(x + h, y0); }
+  c.strokeStyle = col(175, 95, 60, 0.46); c.lineWidth = Math.max(1.5, W / 420); c.stroke();
+  c.restore();
+  c.beginPath(); c.moveTo(top[0].x, top[0].y); for (const p of top) c.lineTo(p.x, p.y); c.strokeStyle = col(175, 95, 60, 0.75); c.lineWidth = 2; c.stroke();
 }
 function drawReticle(cur, tgt, o, opt = {}) {
   const cv = opt.canvas || $('#reticle'); if (!cv) return; const c = cv.getContext('2d'); const W = cv.width, H = cv.height, cx = W / 2, cy = H / 2, Rpx = W * 0.46;
@@ -939,7 +988,7 @@ function drawReticle(cur, tgt, o, opt = {}) {
   }
   c.stroke(); c.setLineDash([]);
   // blocked sky (trees, roofs) as marked by the observer
-  const HZ = horizonNow();
+  const HZ = state.hzShow === false ? null : horizonNow();
   if (HZ) {
     const top = [], bot = [], span = Math.min(179, view * 2.5), stepD = Math.max(0.5, view / 30);
     for (let d = -span; d <= span; d += stepD) {
@@ -1073,6 +1122,13 @@ function refit() {
   const lo = align.obs[align.obs.length - 1];
   align.syncs.push({ t: Date.now(), theta: model.theta, kind: 'align', pos: { alt: lo.alt, az: lo.az }, ep: align.epoch || 0 });
 }
+let syncArm = { key: null, until: 0 };
+/** Take back the last Sync: heading, drift estimate and what it taught the sky correction. */
+function undoSync() {
+  const u = align.undo; if (!u) return false;
+  model.theta = u.theta; model.t0 = u.t0; model.rate = u.rate; align.fit = u.fit; align.syncs.length = u.nS; align.confirm.length = u.nC; align.undo = null;
+  toast(`Sync on ${u.label} undone`); return true;
+}
 function doSync(o) {
   const ob = makeObs(o); if (!ob) return toast('No sensor data');
   if (state.mode === 'compass') {
@@ -1080,10 +1136,23 @@ function doSync(o) {
     const raw = altAzFromVec(mulMV(ob.R, model.axis()));
     state.compassCorr = wrap180(ob.az - raw.az - co); save(); return toast(`Compass correction set to ${state.compassCorr.toFixed(2)}°`);
   }
+  // Guard against a stray tap. Height comes from gravity and does not drift, so if the scope's tilt is nowhere near the
+  // object's height it cannot be centred, whatever the heading says. That one is refused outright.
+  const here = pointing(), meas = here ? here.alt : altAzFromVec(mulMV(ob.R, model.axis())).alt;
+  const dAlt = meas - ob.alt, altTol = align.fit ? 4 : 10;
+  if (Math.abs(dAlt) > altTol) { cue.miss(); toast(`Not synced. The scope is tilted ${Math.abs(dAlt).toFixed(0)}° ${dAlt > 0 ? 'above' : 'below'} ${o.label}, so it can't be centred on it. Nothing was changed.`, 6000); return false; }
   const f = fitAlignment([ob], model.d0, { p: model.p, q: model.q }, { thetaOnly: true });
   const prev = align.syncs[align.syncs.length - 1];
   const seenBefore = skyTable() ? pointing() : null;       // with sky correction on, report the error of what the arrows actually showed
   const before = align.fit ? (seenBefore && seenBefore.ready ? wrap180(ob.az - seenBefore.az) : wrap180(f.theta - model.thetaAt())) : null;
+  // A big sideways correction can be real (the heading jumps if the app was put away), so that one asks for a second tap.
+  const swing = before == null ? 0 : Math.abs(before) * Math.cos(ob.alt * D2R);
+  if (swing > 15 && !align.suspect && !(syncArm.key === o.key && Date.now() < syncArm.until)) {
+    syncArm = { key: o.key, until: Date.now() + 8000 }; cue.miss();
+    toast(`That would swing the pointing by ${swing.toFixed(0)}°. If ${o.label} really is centred, tap again. If it was a slip, do nothing.`, 7000); return false;
+  }
+  syncArm = { key: null, until: 0 };
+  align.undo = { theta: model.theta, t0: model.t0, rate: model.rate, fit: align.fit, nS: align.syncs.length, nC: align.confirm.length, label: o.label, t: Date.now() };
   model.theta = f.theta; model.t0 = Date.now(); align.suspect = false; cue.sync();
   if (!align.fit) align.fit = { theta: f.theta, p: model.p, q: model.q, rms: f.rms, resid: [f.rms], solvedAxis: false };
   // Drift is only measured between two syncs with no interruption in between (a heading jump is not drift).
@@ -1093,9 +1162,9 @@ function doSync(o) {
   const msg = before == null ? `Synced on ${o.label}` : (Math.abs(before) * 60 < 0.5 ? `Synced on ${o.label}: alignment still spot on` : `Synced on ${o.label}: corrected ${Math.abs(before) < 1 ? Math.abs(before * 60).toFixed(0) + '′' : Math.abs(before).toFixed(2) + '°'}`);
   if (state.waypoint && state.waypoint.via === o.key) {
     const then = sky.objects.find((x) => x.key === state.waypoint.then); state.waypoint = null;
-    if (then) { state.target = then.key; save(); const U = pointingUncertainty(sky.altAz(then)); toast(`${msg}. Now push to ${then.label}${U ? ` — estimated error ±${fmt.am(U)}` : ''}`, 4500); renderPush(); return; }
+    if (then) { state.target = then.key; save(); const U = pointingUncertainty(sky.altAz(then)); toast(`${msg}. Now push to ${then.label}${U ? ` — estimated error ±${fmt.am(U)}` : ''}`, 4500); renderPush(); return true; }
   }
-  toast(msg);
+  toast(msg); return true;
 }
 const cap1 = (t) => t.charAt(0).toUpperCase() + t.slice(1);
 let assist = { skip: new Set(), pending: null };
@@ -1143,7 +1212,7 @@ function renderAlign() {
       <canvas id="dome" width="700" height="720" style="width:100%;max-width:360px;display:block;margin:0 auto;background:var(--chart);border-radius:10px"></canvas>
       <div class="chips" style="justify-content:center">${[1, 10, 30].map((m) => `<button data-mag="${m}" class="${domeMag === m ? 'on' : ''}">errors ×${m}</button>`).join('')}<button id="dome-red" class="${state.domeRed ? 'on' : ''}">Red only</button></div>
       <div id="dome-info"></div></div>` : ''}
-    <div class="btnrow"><button id="clr">Start over</button><button id="savecal" ${f && f.solvedAxis ? '' : 'disabled'}>Save tilt to ${esc(profile().name)}</button></div>
+    <div class="btnrow"><button id="clr">Start over</button><button id="unsync" ${align.undo ? '' : 'disabled'}>${align.undo ? `Undo sync on ${esc(align.undo.label)}` : 'Undo last sync'}</button><button id="savecal" ${f && f.solvedAxis ? '' : 'disabled'}>Save tilt to ${esc(profile().name)}</button></div>
     <details class="more"><summary>Alignment details</summary>
     <div class="card kv">
       <span>Saved mount tilt</span><span>${c ? `${Math.hypot(c.p, c.q).toFixed(2)}° · ${c.n} stars` : 'none yet'}</span>
@@ -1182,6 +1251,7 @@ function renderAlign() {
   if ($('#a-retry')) $('#a-retry').onclick = () => { assist.pending = null; renderAlign(); };
   if ($('#a-force')) $('#a-force').onclick = () => { const p = assist.pending; addStar(p.o, true); };
   $('#cal').onchange = (e) => { state.calibrate = e.target.checked; save(); refit(); renderAlign(); };
+  $('#unsync').onclick = () => { if (undoSync()) renderAlign(); };
   $('#clr').onclick = () => { align = { obs: [], fit: null, syncs: [], confirm: [] }; model.rate = 0; assist = { skip: new Set(), pending: null }; renderAlign(); };
   const saveTilt = () => { profile().cal = { p: model.p, q: model.q, n: align.obs.length, rms: f.rms, date: Date.now() }; save(); toast('Saved. Next session, one star is enough.'); renderAlign(); };
   $('#savecal').onclick = saveTilt; if ($('#savecal2')) $('#savecal2').onclick = saveTilt;
@@ -1374,6 +1444,7 @@ function renderLobby(el) {
       <p class="small">How many Messier objects can you bag tonight? The app picks the order: whatever is about to set comes first, then the shortest hop. No clock, one point each.</p>
       ${mine ? `<p class="small"><b>${mine.over ? 'Tonight' : 'In progress'}: ${nFound} found.</b></p>` : ''}
       ${best ? `<p class="muted small">Your best night: ${best.found} of ${best.possible} possible · ${shortDate(best.when)}</p>` : ''}
+      <label class="row"><span>Sync stars before long hops <span class="muted small">(a bright star to centre first, so the arrows land closer)</span></span><input type="checkbox" id="mm-sync" ${state.marSync !== false ? 'checked' : ''}></label>
       <div class="btnrow"><button id="mm-go" class="primary big" ${aligned ? '' : 'disabled'}>${mine && !mine.over ? 'Carry on' : mine ? 'Start again tonight' : 'Start the marathon'}</button></div></div>
     <div class="card gamecard"><h3>Race</h3>
       <p class="small">The 10 best targets for your sky right now, a short route, and a stopwatch. Friends at the same site can scan your code and race the same 10.</p>
@@ -1389,6 +1460,7 @@ function renderLobby(el) {
   $('#g-site').onchange = (e) => { state.siteName = e.target.value.trim(); save(); };
   $('#g-style').onchange = (e) => { state.gameStyle = e.target.value; save(); $('#g-styledesc').textContent = STYLES[state.gameStyle].desc; };
   if ($('#g-align')) $('#g-align').onclick = () => showTab('align');
+  $('#mm-sync').onchange = (e) => { state.marSync = e.target.checked; save(); };
   $('#mm-go').onclick = () => {
     if (mine && mine.over && !confirmTwice('mm-go')) return;
     startMarathon(!(mine && !mine.over));
@@ -1419,6 +1491,13 @@ function marPick() {
   const p = marathonPick(sky, rows, { now: new Date(), done: new Set(Object.keys(M.found)), later: new Map(Object.entries(M.later)), cur: c && c.ready ? c : null, horizon: horizonNow() });
   mar.p = p; mar.cur = p.next; mar.dw = {}; mar.armed = 0; mar.pinged = false;
   mar.hop = p.next && c && c.ready ? (() => { const t = sky.altAz(p.next.o); return sepDeg(c.alt, c.az, t.alt, t.az); })() : null;
+  mar.sync = null;
+  if (p.next && state.marSync !== false && mar.noSync !== p.next.key) {
+    // Where the pointing is freshest: the last thing synced or aligned on (its place in the sky now), else where the scope is.
+    const ls = align.syncs[align.syncs.length - 1], lo = ls && ls.key ? objByKey(ls.key) : null;
+    const from = lo ? sky.altAz(lo) : ls && ls.pos ? ls.pos : align.obs.length ? (() => { const a = objByKey(align.obs[align.obs.length - 1].key); return a ? sky.altAz(a) : null; })() : null;
+    try { mar.sync = from ? syncStarFor(sky, p.next.o, { from, horizon: horizonNow() }) : null; } catch (e) { mar.sync = null; }
+  }
   if (!p.next && !p.waiting) finishMarathon();
   return p;
 }
@@ -1451,11 +1530,25 @@ function renderMar(el) {
   }
   const p = mar.p, r = mar.cur;
   const score = `<div class="mscore"><b>${found}</b> found<span class="muted"> · ${p.left} still possible${p.missed ? ` · ${p.missed} missed` : ''}</span></div>`;
-  const foot = `<div class="btnrow"><button id="mm-pause">Pause</button><button id="mm-end">Finish the night</button></div>`;
+  const foot = `<div class="btnrow"><button id="mm-pause">Pause</button><button id="mm-synct">Sync stars: ${state.marSync !== false ? 'on' : 'off'}</button><button id="mm-end">Finish the night</button></div>`;
   if (!r) {
     const w = p.waiting;
     el.innerHTML = `<h2>Messier Marathon</h2>${score}
       <div class="card"><b>Nothing in reach right now.</b><p class="small">${w ? `Next up: <b>${esc(w.o.label)}</b>, from about ${hm(w.from)}${sky.sunAlt() > -6 ? ' — once the sky is dark enough' : ''}.` : ''}</p></div>${foot}`;
+  } else if (mar.sync) {
+    const s = mar.sync.o;
+    el.innerHTML = `${score}
+      <div class="planbar">Sync star on the way to <b>${esc(r.o.label)}</b> (a ${mar.sync.hop.toFixed(0)}° hop). Centre the star, tap Sync, and the last ${mar.sync.dist.toFixed(0)}° will land closer.</div>
+      <div class="target-h" style="justify-content:center;margin-top:6px"><span class="name">★ ${esc(s.label)}</span><span class="muted">bright star · mag ${(+s.mag).toFixed(1)}</span></div>
+      <div class="guide" id="g-deltas">
+        <div class="delta" id="gd-az"><div class="lab">Turn</div><div class="val">—</div><div class="dir"></div></div>
+        <div class="delta" id="gd-alt"><div class="lab">Tilt</div><div class="val">—</div><div class="dir"></div></div></div>
+      <div class="infield" id="g-status"></div>
+      <canvas id="g-chart" class="chart" width="800" height="800"></canvas>
+      ${foot}
+      <div class="actionbar"><button id="mm-dosync" class="primary">It’s centred — sync</button><button id="mm-nosync">Skip the star</button></div>`;
+    $('#mm-dosync').onclick = () => { if (doSync(s) === false) return; mar.sync = null; mar.dw = {}; renderGame(); };
+    $('#mm-nosync').onclick = () => { mar.noSync = r.key; mar.sync = null; mar.dw = {}; renderGame(); };
   } else {
     const o = r.o, why = mar.p.why === 'setting' ? `Going soon — about ${p.minsLeft} min left` : mar.p.why === 'skipped' ? 'One you skipped — try again?' : mar.hop != null && mar.hop < 30 ? 'Shortest hop from here' : 'Next on the route';
     el.innerHTML = `${score}
@@ -1483,6 +1576,7 @@ function renderMar(el) {
     };
   }
   $('#mm-pause').onclick = () => { mar = null; renderGame(); };
+  $('#mm-synct').onclick = () => { state.marSync = state.marSync === false; save(); toast(state.marSync ? 'Sync stars on: you will be offered a bright star before long hops.' : 'Sync stars off: straight from one Messier object to the next.', 3500); marPick(); renderGame(); };
   $('#mm-end').onclick = () => { if (confirmTwice('mm-end')) finishMarathon(); };
 }
 let marT = 0;
@@ -1491,15 +1585,15 @@ function updateMar() {
   const now = Date.now(), r = mar.cur;
   if (!r) { if (now - marT > 20000) { marT = now; const p = marPick(); if (mar && (p.next || !p.waiting)) renderGame(); } return; }
   if (r.to.getTime() <= now) { toast(`${r.o.label} has gone — on to the next`, 3000); marPick(); renderGame(); return; }
-  const o = r.o, tgt = sky.altAz(o), cur = pointing(), st = $('#g-status'); if (!st) return;
-  if (blocked(horizonNow(), tgt.alt, tgt.az)) { toast(`${o.label} has slipped behind your blocked sky`, 3000); state.marathon.later[r.key] = now + 20 * 60000; marPick(); renderGame(); return; }
+  const o = mar.sync ? mar.sync.o : r.o, tgt = sky.altAz(o), cur = pointing(), st = $('#g-status'); if (!st) return;
+  if (!mar.sync && blocked(horizonNow(), tgt.alt, tgt.az)) { toast(`${o.label} has slipped behind your blocked sky`, 3000); state.marathon.later[r.key] = now + 20 * 60000; marPick(); renderGame(); return; }
   if (!cur || !cur.ready) { st.textContent = 'Waiting for sensors / alignment…'; drawReticle(null, tgt, o, { canvas: $('#g-chart'), view: 6, centre: 'target' }); return; }
   const gd = guidance(cur, tgt), R = foundRadius(o), half = tfov() / 2;
   setDelta($('#gd-az'), gd.dAz, 'az', Math.abs(gd.dAz * Math.cos(tgt.alt * D2R)) < half); setDelta($('#gd-alt'), gd.dAlt, 'alt', Math.abs(gd.dAlt) < half);
   const on = dwell(mar.dw, gd.sep, R, now, 1500);
   if (on && !mar.pinged) { mar.pinged = true; cue.onTarget(); if (navigator.vibrate) navigator.vibrate(80); }
   if (gd.sep > 3 * R) mar.pinged = false;
-  st.textContent = gd.sep <= R ? 'On target — look in the eyepiece, then tap Got it' : `${gd.sep.toFixed(1)}° away`;
+  st.textContent = gd.sep <= R ? (mar.sync ? 'On the star — centre it in the eyepiece, then tap Sync' : 'On target — look in the eyepiece, then tap Got it') : `${gd.sep.toFixed(1)}° away`;
   drawReticle(cur, tgt, o, { canvas: $('#g-chart') });
 }
 
@@ -1516,59 +1610,128 @@ function hzRingSVG(H, T) {
   const traced = T ? T.n.map((n, i) => (n ? `<circle cx="${pt(rad(T.sum[i] / n), (i + 0.5) * 360 / HZ_BINS)[0].toFixed(1)}" cy="${pt(rad(T.sum[i] / n), (i + 0.5) * 360 / HZ_BINS)[1].toFixed(1)}" r="2.6" class="hz-dot"/>` : '')).join('') : '';
   return `<svg viewBox="0 0 260 260" class="hzring">${wedges}${H.how === 'trace' && !T ? `<polygon points="${outline(H.h)}" class="hz-line"/>` : ''}${traced}<circle cx="${C}" cy="${C}" r="${r0 - 4}" class="hz-me"/><text x="${C}" y="${C + 4}" text-anchor="middle" class="hz-l">you</text><g id="hz-ptr"></g></svg>`;
 }
+// ---- saved places: a spot and its blocked-sky map.  state.places = [{ id, name, lat, lon, elev, horizon }], state.placeId
+const places = () => state.places || (state.places = []);
+const curPlace = () => places().find((p) => p.id === state.placeId) || null;
+const placeLabel = () => { const p = curPlace(); return p ? p.name : null; };
+/** Every change to the blocked-sky map goes through here, so the place you are at keeps its own copy. */
+function setHorizon(H) { state.horizon = H; const p = curPlace(); if (p) p.horizon = H; planRows = null; rateCache.clear(); save(); }
+function usePlace(id) {
+  const p = places().find((x) => x.id === id); if (!p) return;
+  state.placeId = p.id; state.horizon = p.horizon || null;
+  state.site = { lat: p.lat, lon: p.lon, elev: p.elev || 0, source: `saved place: ${p.name}` };
+  sky.setSite(p.lat, p.lon, p.elev || 0); planRows = null; rateCache.clear(); save();
+}
+function addPlace(name) {
+  const cur = curPlace();
+  const p = { id: 'pl' + Date.now().toString(36), name: uniqueName(places().map((x) => x.name), name), lat: state.site.lat, lon: state.site.lon, elev: state.site.elev || 0,
+    horizon: cur ? null : (state.horizon || null) };              // from another place: start clear; from an unsaved spot: keep what was just marked
+  places().push(p); state.placeId = p.id; state.horizon = p.horizon; planRows = null; rateCache.clear(); save(); return p;
+}
+/** The observer's position changed: stay at the saved place, switch to the one that is here, or leave. */
+function siteMoved() {
+  const r = relocate(places(), state.placeId, state.site.lat, state.site.lon), had = curPlace();
+  if (r.why === 'stay') { if (had) { had.lat = state.site.lat; had.lon = state.site.lon; had.elev = state.site.elev || 0; } return; }
+  if (r.why === 'switch') { const p = places().find((x) => x.id === r.id); state.placeId = p.id; state.horizon = p.horizon || null; setTimeout(() => toast(`You're at ${p.name}. Using its blocked sky.`, 4000), 1200); }
+  else {
+    if (had) { state.placeId = null; state.horizon = null; }
+    if (r.why === 'choose') setTimeout(() => toast(`${r.choices.length} of your saved places are here. Pick one under Blocked sky.`, 5000), 1200);
+  }
+  planRows = null; rateCache.clear();
+}
+let hzFrom = 'more', plcAdding = false;
+const HZ_BACK = () => `<button class="back" id="hz-back">‹ ${{ more: 'More', plan: 'Plan', push: 'Push', start: 'Start screen' }[hzFrom] || 'More'}</button>`;
+/** Open Blocked sky from anywhere; its back button returns to where you came from. */
+function openHorizon(from = 'more') { hzFrom = from; $('#gate').classList.add('hidden'); showTab('horizon'); }
+function hzBindBack() { const b = $('#hz-back'); if (b) b.onclick = () => { hzTrace = null; if (hzFrom === 'start') { renderLaunch(); $('#gate').classList.remove('hidden'); } else showTab(hzFrom); }; }
+const hzLine = () => (placeLabel() ? `${esc(placeLabel())}: ` : '') + (horizonNow() ? esc(horizonSummary(state.horizon)).replace(/^B/, placeLabel() ? 'b' : 'B') : 'none marked');
+const SIM_URL = new URLSearchParams(location.search).has('sim');
+/** Start a skyline trace, switching the motion sensors on first if they are off (the tap is the permission gesture iOS needs). */
+async function beginTrace() {
+  if (!sensors || !sensors.fresh()) {
+    toast('Starting the motion sensors…', 2000);
+    const ok = await startSensors(SIM_URL && !(sensors && sensors.started));
+    if (!ok) return;                                              // the start screen is showing the reason and the fix
+    const t0 = Date.now(); while (!sensors.fresh() && Date.now() - t0 < 2500) await new Promise((r) => setTimeout(r, 100));
+    if (!sensors.fresh()) return;                                 // no data: startSensors puts the explanation up
+  }
+  const p = pointing(), ok = p && p.ready;
+  if (!ok) { const t0 = Date.now(); while (!guessPointing() && Date.now() - t0 < 1500) await new Promise((r) => setTimeout(r, 100)); }
+  if (!ok && !guessPointing()) return toast('The phone has no compass reading and you are not star-aligned yet, so the app cannot tell directions. Align first, or use the taps.', 6000);
+  hzTrace = { T: newTrace(), rough: !ok, t: 0 };
+  if (tab !== 'horizon') showTab('horizon'); else renderHorizon();
+}
 function renderHorizon() {
   const el = $('#tab-horizon'), H = state.horizon || emptyHorizon();
   if (hzTrace) {
-    el.innerHTML = `${BACK}<h2>Trace the skyline</h2>
-      <p class="small">Put the scope on the top of the trees or roofs, then <b>sweep slowly all the way round</b>, keeping it on the line where the sky starts. Where the view is open, follow the true horizon.</p>
+    el.innerHTML = `${HZ_BACK()}<h2>Trace the skyline</h2>
+      <p class="small">Put the scope on the top of the trees or roofs and tap Start. Then <b>sweep slowly all the way round</b>, keeping it on the line where the sky starts. Where the view is open, follow the true horizon. Went wrong somewhere? Sweep over that part again; the latest pass counts.</p>
       ${hzTrace.rough ? '<p class="muted small"><b>Rough mode:</b> you are not star-aligned, so directions come from the phone\'s compass and can be 10° or more out. Heights are still good. For an accurate map, align first and trace again.</p>' : '<p class="muted small">Star-aligned: directions are as good as the pointing.</p>'}
       <div id="hz-box">${hzRingSVG(H, hzTrace.T)}</div>
       <div class="infield" id="hz-live">Waiting for the sensors…</div>
       <div class="btnrow"><button id="hz-cancel">Cancel</button></div>
-      <div class="actionbar"><button id="hz-done" class="primary">Save</button></div>`;
+      <div class="actionbar">${hzTrace.rec ? '<button id="hz-done" class="primary">Save</button>' : '<button id="hz-rec" class="primary">Scope is on the skyline — start</button>'}</div>`;
+    if ($('#hz-rec')) $('#hz-rec').onclick = () => { hzTrace.rec = true; hzTrace.T = newTrace(); renderHorizon(); };
     $('#hz-cancel').onclick = () => { hzTrace = null; renderHorizon(); };
-    $('#hz-done').onclick = () => {
+    if ($('#hz-done')) $('#hz-done').onclick = () => {
       if (traceCoverage(hzTrace.T) < 0.2) return toast('Sweep further round first — at least a fifth of the circle.');
       const part = traceCoverage(hzTrace.T) < 0.95;
-      state.horizon = { ...traceFinish(hzTrace.T, state.horizon), lat: state.site.lat, lon: state.site.lon, when: Date.now(), rough: hzTrace.rough };
-      hzTrace = null; save(); planRows = null; renderHorizon();
+      setHorizon({ ...traceFinish(hzTrace.T, state.horizon), lat: state.site.lat, lon: state.site.lon, when: Date.now(), rough: hzTrace.rough });
+      hzTrace = null; renderHorizon();
       toast(part ? 'Saved. Directions you did not sweep were filled in from their neighbours.' : 'Saved.', 4000);
     };
-    bindBack(el); return;
+    hzBindBack(); return;
   }
+  const PL = curPlace();
   const moved = hasHorizon(H) && H.lat != null && (Math.abs(H.lat - state.site.lat) > 0.02 || Math.abs(H.lon - state.site.lon) > 0.03);
-  el.innerHTML = `${BACK}<h2>Blocked sky</h2>
+  el.innerHTML = `${HZ_BACK()}<h2>Blocked sky</h2>
     <p class="small">Tell the app where trees, buildings or hills hide the sky. It shades those parts on the chart and stops suggesting targets behind them.</p>
-    ${moved ? '<div class="card"><b>This map was made somewhere else.</b> <span class="small">Clear it or redo it for where you are now.</span></div>' : ''}
+    <div class="card placecard">
+      ${PL ? `<div class="sess"><div><b>${esc(PL.name)}</b><div class="muted small">${coordText(PL.lat, PL.lon)} · changes here are saved to this place</div></div><button id="plc-rename" class="mini">Rename</button></div>`
+        : `<b>${places().length ? 'No saved place selected' : 'Save this spot'}</b><div class="muted small">${places().length ? 'Pick one below, or save where you are now as a new place.' : 'Give it a name and its blocked sky is remembered. Add more later: front yard, cottage, park.'}</div>`}
+      ${places().length ? `<div class="chips wrap" id="plc-list">${places().map((p) => `<button data-place="${p.id}" class="${PL && p.id === PL.id ? 'on' : ''}">${esc(p.name)}</button>`).join('')}<button id="plc-add">＋ New place</button></div>` : ''}
+      ${!places().length || plcAdding ? `<div class="muted small" style="margin-top:6px">${places().length ? 'Name the new place (it uses your current location' + (PL ? ' and starts with a clear sky' : '') + '):' : 'Tap a name:'}</div>
+        <div class="chips wrap" id="plc-ideas">${PLACE_IDEAS.filter((n) => !places().some((p) => p.name.toLowerCase() === n.toLowerCase())).map((n) => `<button data-idea="${n}">${n}</button>`).join('')}<button data-idea="">Other name…</button></div>` : ''}
+      ${PL ? `<div class="btnrow"><button id="plc-del" class="mini">Delete this place</button></div>` : ''}
+    </div>
+    ${moved && !PL ? '<div class="card"><b>This map was made somewhere else.</b> <span class="small">Clear it or redo it for where you are now.</span></div>' : ''}
+    <label class="row"><span>Show on star maps <span class="muted small">(see-through hatching, so you can still see what is behind it)</span></span><input type="checkbox" id="hz-show" ${state.hzShow === false ? '' : 'checked'}></label>
     <h3>Quick way: tap a direction</h3>
     <p class="muted small">Each tap steps through: clear → low (15°) → tall (30°) → very tall (50°) → blocked. A fist held at arm's length is about 10° high.${H.how === 'trace' ? ' The white line is your traced skyline: the rim is the horizon, the middle is overhead.' : ''}</p>
     <div id="hz-box">${hzRingSVG(H, null)}</div>
     <p class="muted small" style="text-align:center">${hasHorizon(H) ? esc(horizonSummary(H)) + (H.how === 'trace' ? (H.rough ? ' · traced by compass (rough)' : ' · traced with the scope') : '') : 'Nothing marked — the whole sky counts as open.'}</p>
     <h3>Accurate way: trace the skyline</h3>
-    <p class="muted small">Sweep the telescope once around, following the tops of the trees and roofs. Best done after star alignment.</p>
+    <p class="muted small">Sweep the telescope once around, following the tops of the trees and roofs. Best done after star alignment.${sensors && sensors.fresh() ? '' : ' The motion sensors are off; this button switches them on.'}</p>
     <div class="btnrow"><button id="hz-trace" class="primary">Trace the skyline</button><button id="hz-clear" ${hasHorizon(H) ? '' : 'disabled'}>Clear all</button></div>`;
   el.querySelectorAll('[data-wedge]').forEach((g) => g.onclick = () => {
     const k = +g.dataset.wedge, base = state.horizon || emptyHorizon();
-    state.horizon = { ...setWedge(base, k, (wedgeLevel(base, k) + 1) % HZ_LEVELS.length), lat: state.site.lat, lon: state.site.lon, when: Date.now(), rough: base.rough };
-    save(); planRows = null; renderHorizon();
+    setHorizon({ ...setWedge(base, k, (wedgeLevel(base, k) + 1) % HZ_LEVELS.length), lat: state.site.lat, lon: state.site.lon, when: Date.now(), rough: base.rough });
+    renderHorizon();
   });
-  $('#hz-trace').onclick = () => {
-    const p = pointing(), ok = p && p.ready, g = ok ? null : guessPointing();
-    if (!ok && !g) return toast(sensors && sensors.fresh() ? 'No compass reading and no alignment yet — align first, or use the taps.' : 'This needs the phone\'s motion sensors. Start them from the start screen, or use the taps.', 5000);
-    hzTrace = { T: newTrace(), rough: !ok, t: 0 }; renderHorizon();
-  };
-  $('#hz-clear').onclick = () => { if (!confirmTwice('hz-clear')) return; state.horizon = null; save(); planRows = null; renderHorizon(); };
-  bindBack(el);
+  $('#hz-trace').onclick = beginTrace;
+  $('#hz-show').onchange = (e) => { state.hzShow = e.target.checked; save(); };
+  el.querySelectorAll('[data-place]').forEach((b) => b.onclick = () => { plcAdding = false; usePlace(b.dataset.place); renderHorizon(); toast(`Now at ${curPlace().name}`); });
+  if ($('#plc-add')) $('#plc-add').onclick = () => { plcAdding = !plcAdding; renderHorizon(); };
+  el.querySelectorAll('[data-idea]').forEach((b) => b.onclick = () => {
+    let name = b.dataset.idea;
+    if (!name) { name = prompt('Name this place', uniqueName(places().map((p) => p.name), `Spot ${coordText(state.site.lat, state.site.lon)}`)); if (!name || !name.trim()) return; }
+    const kept = !curPlace() && horizonNow(); const p = addPlace(name.trim().slice(0, 30)); plcAdding = false; renderHorizon();
+    toast(kept ? `Saved as ${p.name}, with the blocked sky you marked.` : `${p.name} saved. Mark its blocked sky below.`, 4000);
+  });
+  if ($('#plc-rename')) $('#plc-rename').onclick = () => { const p = curPlace(), n = prompt('Rename this place', p.name); if (!n || !n.trim()) return; p.name = uniqueName(places().filter((x) => x !== p).map((x) => x.name), n.trim().slice(0, 30)); save(); renderHorizon(); };
+  if ($('#plc-del')) $('#plc-del').onclick = () => { if (!confirmTwice('plc-del')) return; const p = curPlace(); state.places = places().filter((x) => x !== p); state.placeId = null; save(); renderHorizon(); toast(`${p.name} deleted. Its blocked sky is still shown until you clear it or pick another place.`, 5000); };
+  $('#hz-clear').onclick = () => { if (!confirmTwice('hz-clear')) return; setHorizon(null); renderHorizon(); };
+  hzBindBack();
 }
 function updateHorizon() {
   if (!hzTrace) return;
   let p = pointing(); if (!p || !p.ready) p = hzTrace.rough ? guessPointing() : null;
   const live = $('#hz-live'); if (!live) return;
   if (!p) { live.textContent = 'Waiting for the sensors…'; return; }
-  if (p.alt > -8 && p.alt < 88) traceAdd(hzTrace.T, p.alt, p.az);
+  if (hzTrace.rec && p.alt > -8 && p.alt < 88) traceAdd(hzTrace.T, p.alt, p.az);
   const now = Date.now(); if (now - hzTrace.t < 300) return; hzTrace.t = now;
   const cov = traceCoverage(hzTrace.T);
-  live.textContent = `${Math.max(0, p.alt).toFixed(0)}° up, facing ${compassName(p.az)} · ${Math.round(cov * 100)}% of the way round${cov >= 0.95 ? ' — done, tap Save' : ''}`;
+  live.textContent = `${Math.max(0, p.alt).toFixed(0)}° up, facing ${compassName(p.az)}` + (hzTrace.rec ? ` · ${Math.round(cov * 100)}% of the way round${cov >= 0.95 ? ' — done, tap Save' : ''}` : ' · not recording yet');
   $('#hz-box').innerHTML = hzRingSVG(state.horizon || emptyHorizon(), hzTrace.T);
   const C = 130, r = 112 - 78 * Math.min(90, Math.max(0, p.alt)) / 90;
   $('#hz-ptr').innerHTML = `<circle cx="${(C + r * Math.sin(p.az * D2R)).toFixed(1)}" cy="${(C - r * Math.cos(p.az * D2R)).toFixed(1)}" r="6" class="hz-now"/>`;
@@ -2065,7 +2228,7 @@ function renderSetup() {
   $('#s-rate').onchange = (e) => { state.useRate = e.target.checked; model.useRate = state.useRate; save(); };
   $('#s-smooth').onchange = (e) => { state.smooth = parseFloat(e.target.value); save(); };
   $('#s-clrcal').onclick = () => { p.cal = null; applyModelSettings(); save(); renderSetup(); };
-  const site = () => { state.site = { lat: num('#s-lat'), lon: num('#s-lon'), elev: num('#s-el') || 0, source: 'entered manually' }; sky.setSite(state.site.lat, state.site.lon, state.site.elev); save(); };
+  const site = () => { state.site = { lat: num('#s-lat'), lon: num('#s-lon'), elev: num('#s-el') || 0, source: 'entered manually' }; sky.setSite(state.site.lat, state.site.lon, state.site.elev); siteMoved(); save(); };
   ['#s-lat', '#s-lon', '#s-el'].forEach((id) => $(id).onchange = site);
   $('#s-gps').onclick = getGPS;
   $('#s-day').onchange = (e) => setShade(e.target.checked ? 0 : 1, true);
@@ -2076,7 +2239,7 @@ async function getGPS() {
   toast('Getting GPS fix…', 8000);
   const done = (lat, lon, elev, acc) => {
     state.site = { lat: +lat.toFixed(5), lon: +lon.toFixed(5), elev: Math.round(elev || state.site.elev || 0), source: `GPS ±${Math.round(acc)} m, ${new Date().toLocaleString()}` };
-    sky.setSite(state.site.lat, state.site.lon, state.site.elev); planRows = null; rateCache.clear(); save(); toast('Location set'); if (tab === 'setup') renderSetup(); if (tab === 'find') renderFind(); if (!$('#gate').classList.contains('hidden')) renderLaunch();
+    sky.setSite(state.site.lat, state.site.lon, state.site.elev); planRows = null; rateCache.clear(); siteMoved(); save(); toast('Location set'); if (tab === 'setup') renderSetup(); if (tab === 'find') renderFind(); if (!$('#gate').classList.contains('hidden')) renderLaunch();
   };
   try {
     const G = cap('Geolocation');
@@ -2262,7 +2425,7 @@ function renderMore() {
     <p class="muted small">Keep screen awake: ${awakeText()}.</p>`;
   el.querySelectorAll('[data-go]').forEach((b) => b.onclick = () => {
     const k = b.dataset.go;
-    if (k === 'sky') openSkyCheck(); else if (k === 'start') { renderLaunch(); $('#gate').classList.remove('hidden'); } else showTab(k);
+    if (k === 'sky') openSkyCheck(); else if (k === 'horizon') openHorizon('more'); else if (k === 'start') { renderLaunch(); $('#gate').classList.remove('hidden'); } else showTab(k);
   });
   $('#m-br').oninput = (e) => { state.bright = parseFloat(e.target.value); applyTheme(); save(); };
   $('#m-day').onchange = (e) => setShade(e.target.checked ? 0 : 1);
@@ -2336,6 +2499,7 @@ function renderLaunch() {
     : `<div class="stop na"><input type="checkbox" disabled aria-hidden="true"><span><b>${STEP_INFO[k][0]}</b><span class="muted">not needed for this</span></span></div>`)).join('')}
       <div class="stop end"><span class="dest"></span><button id="l-go" class="primary">${GO[act]}</button></div>
     </div>
+    <button id="l-hz" class="hzlink"><b>Blocked sky</b><span class="muted">${!horizonNow() && !placeLabel() ? 'Trees or buildings in the way? Mark them' : hzLine()}</span></button>
     <details class="more"><summary>How it works</summary>
       <ol class="how"><li><b>Clip the phone into its dock</b> — screen up, top of the phone toward the sky end of the tube.</li>
       <li><b>Align on two bright stars.</b> The app tells you which ones and where to look.</li>
@@ -2345,6 +2509,7 @@ function renderLaunch() {
   $('#launch').querySelectorAll('[data-step]').forEach((c) => c.onchange = () => { state.launch[c.dataset.step] = c.checked; save(); renderLaunch(); });
   $('#launch').querySelectorAll('[data-act]').forEach((b) => b.onclick = () => { const g = $('#gate'), y = g.scrollTop; state.launchAct = b.dataset.act; save(); renderLaunch(); g.scrollTop = y; });
   $('#l-go').onclick = () => launch(act);
+  $('#l-hz').onclick = () => openHorizon('start');
   $('#l-shade').onclick = (e) => { e.stopPropagation(); openShade(); };
   if ($('#l-resume')) $('#l-resume').onclick = () => launch('resume');
   applyTheme();

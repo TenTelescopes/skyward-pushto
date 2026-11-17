@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { Sky } from '../docs/js/astro.js';
-import { marathonList, pick, nightOf, isMessier, PER_OBJECT_MIN } from '../docs/js/marathon.js';
+import { marathonList, pick, nightOf, isMessier, PER_OBJECT_MIN, syncStarFor, SYNC_NEAR } from '../docs/js/marathon.js';
 import { emptyHorizon, setWedge, limitAt, blocked, wedgeLevel, newTrace, traceAdd, traceFinish, traceCoverage, hasHorizon, summary, LEVELS } from '../docs/js/horizon.js';
 
 const sky = new Sky(); sky.setSite(43.55, -80.25, 330);          // Guelph
@@ -34,6 +34,12 @@ ok('gaps in a trace are bridged from both sides, and readings below the horizon 
   assert.ok(traceCoverage(T) < 1);
   const H = traceFinish(T); const mid = limitAt(H, 120); assert.ok(mid > 12 && mid < 28, String(mid));
   const T2 = newTrace(); traceAdd(T2, -5, 50); traceAdd(T2, NaN, 60); assert.equal(traceFinish(T2).h[10], 0);
+});
+
+ok('sweeping over a direction again replaces the earlier reading', () => {
+  const T = newTrace(); for (let i = 0; i < 20; i++) traceAdd(T, 40, 2);            // parked high before the sweep began
+  for (let az = 7; az < 360; az += 2) traceAdd(T, 10, az); for (let i = 0; i < 3; i++) traceAdd(T, 10, 2);   // all the way round and back to the start
+  const H = traceFinish(T); assert.equal(H.h[0], 10); assert.equal(H.h[30], 10);
 });
 
 // ---- marathon
@@ -98,5 +104,14 @@ ok('a marked obstruction removes what is only ever behind it and never sends you
     const pos = sky.altAz(p.next.o, now); assert.equal(blocked(H, pos.alt, pos.az), false, p.next.o.label);
     done.add(p.next.key); now = new Date(now.getTime() + PER_OBJECT_MIN * 60000);
   }
+});
+ok('a long hop gets a bright sync star near the target; a short hop gets none', () => {
+  const now = new Date('2026-11-16T20:00:00-05:00'), M = (l) => sky.objects.find((o) => o.label === l);
+  const at = sky.altAz(M('M30'), now), s = syncStarFor(sky, M('M33'), { now, from: at });
+  assert.ok(s, 'expected a star'); assert.ok(s.o.key.startsWith('st:') && s.o.mag <= 2.6); assert.ok(s.dist <= SYNC_NEAR && s.dist < s.hop, `${s.o.label} ${s.dist}`);
+  console.log(`     M30 → M33 (${s.hop.toFixed(0)}° hop): sync on ${s.o.label}, ${s.dist.toFixed(0)}° from M33`);
+  assert.equal(syncStarFor(sky, M('M32'), { now, from: sky.altAz(M('M31'), now) }), null);
+  let H = emptyHorizon(); for (let k = 0; k < 8; k++) H = setWedge(H, k, 4);
+  assert.equal(syncStarFor(sky, M('M33'), { now, from: at, horizon: H }), null);            // every star hidden: no suggestion
 });
 console.log('marathon + horizon tests passed');

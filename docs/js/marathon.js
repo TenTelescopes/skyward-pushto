@@ -82,3 +82,21 @@ export function pick(sky, rows, { now = new Date(), done = new Set(), later = ne
   res.upNext = order.slice(1).map((x) => x.r);
   return res;
 }
+
+export const SYNC_DIST = 40;     // offer a sync star when the next object is farther than this from the last thing you synced on
+export const SYNC_NEAR = 25;     // and only a star within this of the object: a short, accurate final push
+/**
+ * A bright star to centre and Sync on before a long hop to `target`, or null when none is needed or none is suitable.
+ * `from` = {alt, az} of the last thing synced on (where the pointing is freshest). The star must be bright (mag ≤ 2.6),
+ * 15°–78° up, clear of the marked horizon, within SYNC_NEAR of the target and closer to it than `from` is.
+ */
+export function syncStarFor(sky, target, { now = new Date(), from = null, horizon = null } = {}) {
+  const p = sky.altAz(target, now);
+  const far = from ? sep(from.alt, from.az, p.alt, p.az) : Infinity;
+  if (far <= SYNC_DIST) return null;
+  const best = sky.objects.filter((o) => (o.key || '').startsWith('st:') && o.mag != null && o.mag <= 2.6)
+    .map((o) => { const q = sky.altAz(o, now); return { o, q, d: sep(q.alt, q.az, p.alt, p.az) }; })
+    .filter((x) => x.q.alt > 15 && x.q.alt < 78 && !blocked(horizon, x.q.alt, x.q.az, PAD) && x.d <= SYNC_NEAR && x.d < far)
+    .sort((a, b) => (a.d + 3 * a.o.mag) - (b.d + 3 * b.o.mag))[0];
+  return best ? { o: best.o, alt: best.q.alt, az: best.q.az, dist: best.d, hop: far } : null;
+}
