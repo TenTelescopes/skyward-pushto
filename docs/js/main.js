@@ -1640,7 +1640,9 @@ function siteMoved() {
   planRows = null; rateCache.clear();
 }
 let hzFrom = 'more', plcAdding = false;
-const HZ_BACK = () => `<button class="back" id="hz-back">‹ ${{ more: 'More', plan: 'Plan', push: 'Push', start: 'Start screen' }[hzFrom] || 'More'}</button>`;
+const hzInFlow = () => hzFrom === 'flow' && flow && flow.steps[flow.i] === 'horizon';
+const HZ_BACK = () => (hzInFlow() ? '' : `<button class="back" id="hz-back">‹ ${{ more: 'More', plan: 'Plan', push: 'Push', start: 'Start screen' }[hzFrom] || 'More'}</button>`);
+const hzDone = () => { state.launch.horizon = false; save(); flowStepDone('horizon'); };
 /** Open Blocked sky from anywhere; its back button returns to where you came from. */
 function openHorizon(from = 'more') { hzFrom = from; $('#gate').classList.add('hidden'); showTab('horizon'); }
 function hzBindBack() { const b = $('#hz-back'); if (b) b.onclick = () => { hzTrace = null; if (hzFrom === 'start') { renderLaunch(); $('#gate').classList.remove('hidden'); } else showTab(hzFrom); }; }
@@ -1702,13 +1704,15 @@ function renderHorizon() {
     <p class="muted small" style="text-align:center">${hasHorizon(H) ? esc(horizonSummary(H)) + (H.how === 'trace' ? (H.rough ? ' · traced by compass (rough)' : ' · traced with the scope') : '') : 'Nothing marked — the whole sky counts as open.'}</p>
     <h3>Accurate way: trace the skyline</h3>
     <p class="muted small">Sweep the telescope once around, following the tops of the trees and roofs. Best done after star alignment.${sensors && sensors.fresh() ? '' : ' The motion sensors are off; this button switches them on.'}</p>
-    <div class="btnrow"><button id="hz-trace" class="primary">Trace the skyline</button><button id="hz-clear" ${hasHorizon(H) ? '' : 'disabled'}>Clear all</button></div>`;
+    <div class="btnrow"><button id="hz-trace" ${hzInFlow() ? '' : 'class="primary"'}>Trace the skyline</button><button id="hz-clear" ${hasHorizon(H) ? '' : 'disabled'}>Clear all</button></div>
+    ${hzInFlow() ? `<div class="actionbar"><button id="hz-next" class="primary">${hasHorizon(H) ? 'Done — carry on' : 'Nothing in the way — carry on'}</button></div>` : ''}`;
   el.querySelectorAll('[data-wedge]').forEach((g) => g.onclick = () => {
     const k = +g.dataset.wedge, base = state.horizon || emptyHorizon();
     setHorizon({ ...setWedge(base, k, (wedgeLevel(base, k) + 1) % HZ_LEVELS.length), lat: state.site.lat, lon: state.site.lon, when: Date.now(), rough: base.rough });
     renderHorizon();
   });
   $('#hz-trace').onclick = beginTrace;
+  if ($('#hz-next')) $('#hz-next').onclick = hzDone;
   $('#hz-show').onchange = (e) => { state.hzShow = e.target.checked; save(); };
   el.querySelectorAll('[data-place]').forEach((b) => b.onclick = () => { plcAdding = false; usePlace(b.dataset.place); renderHorizon(); toast(`Now at ${curPlace().name}`); });
   if ($('#plc-add')) $('#plc-add').onclick = () => { plcAdding = !plcAdding; renderHorizon(); };
@@ -2451,13 +2455,16 @@ const ACTIVITIES = [
 const STEP_INFO = {
   check: ['Phone check-up', '4 min, once per phone — how far to trust the arrows'],
   sky: ['Sky darkness check', '30 s — count Little Dipper stars'],
+  horizon: ['Blocked sky', '1 min, once per place — mark trees and buildings'],
   align: ['Star alignment', '2 min — point at two bright stars'],
 };
 /** The stops that make sense on the way to each activity. Planning and exploring need no phone check-up. */
-const PATH = { observe: ['check', 'sky', 'align'], game: ['check', 'align'], explore: ['sky'], plan: ['sky'], resume: ['check', 'sky', 'align'] };
+const PATH = { observe: ['check', 'sky', 'horizon', 'align'], game: ['check', 'horizon', 'align'], explore: ['sky', 'horizon'], plan: ['sky', 'horizon'], resume: ['check', 'sky', 'horizon', 'align'] };
+/** Is a stop switched on? Blocked sky starts on until this spot has a map, then stays off unless the user ticks it. */
+const stepOn = (k) => (k === 'horizon' ? (state.launch.horizon ?? (!horizonNow() && !curPlace())) : !!state.launch[k]);
 const GO = { observe: 'Start observing', explore: 'Start exploring', game: 'Start the game', plan: 'Start planning' };
 let flow = null;   // { steps: [..], i, dest, started, quiet }
-const stepsFor = (dest) => (PATH[dest] || []).filter((k) => state.launch[k] && !(k === 'align' && alignedNow()));
+const stepsFor = (dest) => (PATH[dest] || []).filter((k) => stepOn(k) && !(k === 'align' && alignedNow()));
 /** "Dark from 6:32 PM · Moon 27% lit, sets 8:58 PM · Saturn and Jupiter are up" */
 function tonightLine() {
   try {
@@ -2485,6 +2492,7 @@ function renderLaunch() {
     check: chk ? `done — ${V[chk.result.verdict] || chk.result.verdict}` : STEP_INFO.check[1],
     sky: sq ? `last: ${sq.label.toLowerCase()}` : STEP_INFO.sky[1],
     align: alignedNow() ? 'already aligned' : STEP_INFO.align[1],
+    horizon: horizonNow() || placeLabel() ? hzLine() : STEP_INFO.horizon[1],
   };
   const act = ACTIVITIES.some((x) => x[0] === state.launchAct) ? state.launchAct : 'observe', stops = PATH[act];
   $('#launch').innerHTML = `<div class="lhead"><h1>Skyward <span>Push-To</span></h1><button class="hbtn shadebtn" id="l-shade" aria-label="Day or night look"></button></div>
@@ -2494,12 +2502,11 @@ function renderLaunch() {
     <div class="lgrid">${ACTIVITIES.map(([k, t, sub, ic]) => `<button class="act${k === act ? ' on' : ''}" data-act="${k}"><svg class="ic" viewBox="0 0 24 24">${ic}</svg><b>${t}</b><span class="muted">${sub}</span></button>`).join('')}</div>
     <div class="path">
       <div class="pnote">Your path — tap a star to skip a stop</div>
-      ${['check', 'sky', 'align'].map((k) => (stops.includes(k)
-    ? `<label class="stop"><input type="checkbox" data-step="${k}" ${L[k] ? 'checked' : ''}><span><b>${STEP_INFO[k][0]}</b><span class="muted">${esc(L[k] ? status[k] : 'skipped')}</span></span></label>`
+      ${['check', 'sky', 'horizon', 'align'].map((k) => (stops.includes(k)
+    ? `<label class="stop"><input type="checkbox" data-step="${k}" ${stepOn(k) ? 'checked' : ''}><span><b>${STEP_INFO[k][0]}</b><span class="muted">${k === 'horizon' ? (stepOn(k) || horizonNow() || placeLabel() ? status[k] : 'skipped') : esc(stepOn(k) ? status[k] : 'skipped')}</span></span>${k === 'horizon' ? '<button id="l-hz" class="mini" type="button">Open</button>' : ''}</label>`
     : `<div class="stop na"><input type="checkbox" disabled aria-hidden="true"><span><b>${STEP_INFO[k][0]}</b><span class="muted">not needed for this</span></span></div>`)).join('')}
       <div class="stop end"><span class="dest"></span><button id="l-go" class="primary">${GO[act]}</button></div>
     </div>
-    <button id="l-hz" class="hzlink"><b>Blocked sky</b><span class="muted">${!horizonNow() && !placeLabel() ? 'Trees or buildings in the way? Mark them' : hzLine()}</span></button>
     <details class="more"><summary>How it works</summary>
       <ol class="how"><li><b>Clip the phone into its dock</b> — screen up, top of the phone toward the sky end of the tube.</li>
       <li><b>Align on two bright stars.</b> The app tells you which ones and where to look.</li>
@@ -2509,7 +2516,7 @@ function renderLaunch() {
   $('#launch').querySelectorAll('[data-step]').forEach((c) => c.onchange = () => { state.launch[c.dataset.step] = c.checked; save(); renderLaunch(); });
   $('#launch').querySelectorAll('[data-act]').forEach((b) => b.onclick = () => { const g = $('#gate'), y = g.scrollTop; state.launchAct = b.dataset.act; save(); renderLaunch(); g.scrollTop = y; });
   $('#l-go').onclick = () => launch(act);
-  $('#l-hz').onclick = () => openHorizon('start');
+  $('#l-hz').onclick = (e) => { e.preventDefault(); e.stopPropagation(); openHorizon('start'); };
   $('#l-shade').onclick = (e) => { e.stopPropagation(); openShade(); };
   if ($('#l-resume')) $('#l-resume').onclick = () => launch('resume');
   applyTheme();
@@ -2561,6 +2568,7 @@ function flowNext() {
   renderFlowBar();
   if (k === 'check') { showTab('test'); startTest('check'); }
   else if (k === 'sky') openSkyCheck();
+  else if (k === 'horizon') openHorizon('flow');
   else if (k === 'align') showTab('align');
 }
 let nightNudged = false;

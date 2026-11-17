@@ -352,3 +352,4 @@ body::before, #gate::before { content: ""; position: fixed; inset: 0; z-index: -
 .placecard .chips, .plancard .btnrow { margin-top: 8px; }
 .plancard textarea { width: 100%; margin-top: 8px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg2); color: var(--fg); font: inherit; font-size: 15px; resize: vertical; min-height: 44px; }
 .plancard .list { margin-top: 8px; } .plancard .list li { display: flex; align-items: center; gap: 6px; } .plancard .list .grow { flex: 1; min-width: 0; }
+.stop > button.mini { flex: none; margin-left: auto; }
