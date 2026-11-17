@@ -362,3 +362,9 @@ canvas.rtmap { width: 100%; display: block; }
 .rtviews figcaption { font-size: 11.5px; color: var(--dim); margin-top: 3px; line-height: 1.25; }
 .rtarrow { font-size: 16px; color: var(--dim); line-height: 1; }
 #rt-card { padding: 10px 12px; } #rt-card .target-h .name { font-size: 22px; } #tab-route h2 { margin-bottom: 8px; }
+/* drag to reorder the plan */
+.grip { flex: none; width: 40px; height: 44px; display: flex; align-items: center; justify-content: center; font-size: 24px; color: var(--dim); touch-action: none; cursor: grab; user-select: none; -webkit-user-select: none; }
+#pl-list.sorting { user-select: none; -webkit-user-select: none; }
+#pl-list li.dragging { position: relative; z-index: 5; background: var(--panel); border-radius: 10px; box-shadow: 0 6px 18px rgba(0, 0, 0, .45); opacity: .96; }
+#pl-list li.dragging .grip { cursor: grabbing; color: var(--hi); }
+#pl-list.sorting li:not(.dragging) { transition: transform .15s ease; }

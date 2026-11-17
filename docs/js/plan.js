@@ -78,43 +78,90 @@ export function openingSync(sky, first, at) {
     .map((x) => ({ ...x, d: sep_(x.q, p) })).sort((a, b) => (a.d + 3 * a.s.mag) - (b.d + 3 * b.s.mag))[0];
   return best ? { o: best.s, alt: best.q.alt, az: best.q.az, dist: best.d } : null;
 }
-export function routePlan(sky, rows, { start, hours, minAlt = 25, perTarget = null } = {}) {
-  const end = start.getTime() + hours * 3600000;
-  const each = (perTarget ?? Math.max(5, Math.min(20, hours * 60 / Math.max(1, rows.length)))) * 60000;
-  const stars = sky.objects.filter((o) => o.key.startsWith('st:') && o.mag != null && o.mag <= 2.6);
-  const steps = []; let rest = rows.slice(), t = start.getTime(), cur = null, sync = null;
-  while (rest.length && t <= end) {
-    const at = new Date(t);
-    const up = rest.map((r) => ({ r, p: sky.altAz(r.o, at) })).filter((x) => x.p.alt >= minAlt);
-    if (!up.length) { t += STEP_MIN * 60000; continue; }
-    // About to drop below the limit: those go first, earliest deadline first. Otherwise the nearest one.
-    const left = (x) => (x.r.to ? (x.r.to.getTime() - t) / 60000 : Infinity);
-    const score = (x) => (left(x) < 45 ? -1000 + left(x) : cur ? sep_(cur, x.p) : -x.p.alt / 10);
-    up.sort((a, b) => score(a) - score(b));
-    const { r, p } = up[0];
-    // Distance from the last thing you centred and synced on: the previous target, or a sync star.
-    const syncPos = sync ? sky.altAz(sync, at) : null, dSync = syncPos ? sep_(syncPos, p) : Infinity;
-    if (!r.o.key.startsWith('st:') && dSync > SYNC_DIST) {
-      const best = stars.map((s) => ({ s, q: sky.altAz(s, at) })).filter((x) => x.q.alt > 20)
-        .map((x) => ({ ...x, d: sep_(x.q, p) })).filter((x) => x.d < Math.min(SYNC_NEAR, dSync * 0.6))
-        .sort((a, b) => (a.d + 3 * a.s.mag) - (b.d + 3 * b.s.mag))[0];
-      const own = best && rest.find((x) => x.o === best.s);
-      if (own) {                                                       // the sync star is itself on the list: visit it now, as a target
-        steps.push({ kind: 'target', o: own.o, at, alt: best.q.alt, az: best.q.az, dist: null });
-        sync = own.o; cur = best.q; rest = rest.filter((x) => x !== own); t += each; continue;
-      }
-      if (best) { steps.push({ kind: 'sync', o: best.s, at, alt: best.q.alt, az: best.q.az, dist: best.d, first: !sync }); sync = best.s; }
-    }
-    // Every plan opens with a sync star, even when none sits close to the first target.
-    if (!steps.length) {
-      const open = openingSync(sky, r.o, at), own = open && rest.find((x) => x.o === open.o);
-      if (own) { steps.push({ kind: 'target', o: own.o, at, alt: open.alt, az: open.az, dist: null }); sync = own.o; cur = { alt: open.alt, az: open.az }; rest = rest.filter((x) => x !== own); t += each; continue; }
-      if (open) { steps.push({ kind: 'sync', o: open.o, at, alt: open.alt, az: open.az, dist: open.dist, first: true }); sync = open.o; }
-    }
-    steps.push({ kind: 'target', o: r.o, at, alt: p.alt, az: p.az, dist: sync ? sep_(sky.altAz(sync, at), p) : null });
-    sync = r.o; cur = p; rest = rest.filter((x) => x !== r); t += each;
+/**
+ * The order to visit `rows` in: slot i is at start + i × each.
+ *  1. Anything with under 45 minutes left at the start goes first, soonest to set first.
+ *  2. The rest starts as nearest-next, then is improved by trying every move of one target to another place, every swap
+ *     and every reversal of a stretch, keeping a change when it shortens the total travel across the sky.
+ * Travel is measured between where each target will be at its own slot. A target that is sinking is charged a little for
+ * every degree of height it has lost by the time it is visited, so western objects tend to come early. A target visited below `minAlt`, before it
+ * has risen into its window or after it has left it, is charged far more than any detour, so those cases are avoided
+ * whenever an order exists that avoids them. Close neighbours (M81 and M82) end up side by side because that is shortest.
+ */
+export function orderTargets(sky, rows, { start, each, minAlt = 25 } = {}) {
+  const t0 = start.getTime(), n = rows.length; if (n < 2) return rows.slice();
+  const memo = new Map();
+  const pos = (r, i) => { const k = r.key + '|' + i; let v = memo.get(k); if (!v) { v = sky.altAz(r.o, new Date(t0 + i * each)); memo.set(k, v); } return v; };
+  const fine = (r, i) => {                               // 0 when the visit is comfortably inside the target's window
+    const t = t0 + i * each, p = pos(r, i); let f = 0;
+    if (p.alt < minAlt) f += 60 + 40 * (minAlt - p.alt);
+    if (r.to) { const left = (r.to.getTime() - t) / 60000; if (left < 0) f += 200 - left; else if (left < 10) f += 3 * (10 - left); }
+    if (r.from && t < r.from.getTime() - 5 * 60000) f += 60 + (r.from.getTime() - t) / 60000;
+    f += 1.5 * Math.max(0, pos(r, 0).alt - p.alt);        // sinking targets are better caught early, while they are higher
+    return f;
+  };
+  const cost = (ord, from = 0) => { let c = 0; for (let i = from; i < ord.length; i++) { c += fine(ord[i], i); if (i > from) c += sep_(pos(ord[i - 1], i - 1), pos(ord[i], i)); else if (from > 0) c += sep_(pos(ord[i - 1], i - 1), pos(ord[i], i)); } return c; };
+  const left0 = (r) => (r.to ? (r.to.getTime() - t0) / 60000 : Infinity);
+  const head = rows.filter((r) => left0(r) < 45).sort((a, b) => left0(a) - left0(b));          // fixed: about to set
+  let rest = rows.filter((r) => !head.includes(r));
+  // nearest-next start
+  const ord = head.slice(); let pool = rest.slice();
+  while (pool.length) {
+    const i = ord.length, prev = i ? pos(ord[i - 1], i - 1) : null;
+    pool.sort((a, b) => (fine(a, i) + (prev ? sep_(prev, pos(a, i)) : -pos(a, i).alt / 10)) - (fine(b, i) + (prev ? sep_(prev, pos(b, i)) : -pos(b, i).alt / 10)));
+    ord.push(pool.shift());
   }
-  return { steps, notUp: rest };
+  // improve everything after the fixed head
+  const h = head.length; let best = cost(ord, h), better = true, guard = 0;
+  const tryOrd = (cand) => { const c = cost(cand, h); if (c < best - 1e-6) { best = c; ord.splice(0, ord.length, ...cand); return true; } return false; };
+  while (better && guard++ < 40) {
+    better = false;
+    for (let i = h; i < n; i++) for (let j = h; j < n; j++) {
+      if (i === j) continue;
+      const mv = ord.slice(); const [x] = mv.splice(i, 1); mv.splice(j, 0, x); if (tryOrd(mv)) { better = true; continue; }                 // move one
+      if (j > i) { const rv = ord.slice(0, i).concat(ord.slice(i, j + 1).reverse(), ord.slice(j + 1)); if (tryOrd(rv)) { better = true; continue; } // reverse a stretch
+        const sw = ord.slice(); [sw[i], sw[j]] = [sw[j], sw[i]]; if (tryOrd(sw)) better = true; }                                              // swap two
+    }
+  }
+  return ord;
+}
+/** Total sky travel (degrees) of an order, each target taken at its own slot. For tests and comparisons. */
+export function travelOf(sky, ord, { start, each }) {
+  let c = 0; for (let i = 1; i < ord.length; i++) c += sep_(sky.altAz(ord[i - 1].o, new Date(start.getTime() + (i - 1) * each)), sky.altAz(ord[i].o, new Date(start.getTime() + i * each))); return c;
+}
+export function routePlan(sky, rows, { start, hours, minAlt = 25, perTarget = null } = {}) {
+  const each = (perTarget ?? Math.max(5, Math.min(20, hours * 60 / Math.max(1, rows.length)))) * 60000;
+  const listed = new Set(rows.map((r) => r.o));
+  const stars = sky.objects.filter((o) => o.key.startsWith('st:') && o.mag != null && o.mag <= 2.6 && !listed.has(o));      // a sync star is never also a target
+  let order = orderTargets(sky, rows, { start, each, minAlt });
+  // Every plan opens on a bright star. If the best one is itself on the list, it becomes the first stop.
+  if (order.length) {
+    const open = openingSync(sky, order[0].o, start), own = open && order.find((x) => x.o === open.o);
+    if (own && own !== order[0]) order = [own].concat(orderTargets(sky, order.filter((x) => x !== own), { start: new Date(start.getTime() + each), each, minAlt }));
+  }
+  const steps = [], notUp = []; let sync = null, i = 0;
+  for (const r of order) {
+    const at = new Date(start.getTime() + i * each), p = sky.altAz(r.o, at);
+    if (p.alt < minAlt - 3) { notUp.push(r); continue; }                // never gets high enough in its slot: listed at the end, unrouted
+    const isStar = r.o.key.startsWith('st:');
+    if (!steps.length && !(isStar && r.o.mag != null && r.o.mag <= 2.6)) {
+      const open = openingSync(sky, r.o, at), usable = open && !listed.has(open.o) ? open : null;
+      const alt2 = usable || stars.map((s) => ({ s, q: sky.altAz(s, at) })).filter((x) => x.q.alt > 20 && x.q.alt < 75).map((x) => ({ o: x.s, alt: x.q.alt, az: x.q.az, dist: sep_(x.q, p), w: sep_(x.q, p) + 3 * x.s.mag })).sort((a, b) => a.w - b.w)[0];
+      if (alt2) { steps.push({ kind: 'sync', o: alt2.o, at, alt: alt2.alt, az: alt2.az, dist: alt2.dist, first: true }); sync = alt2.o; }
+    } else if (!isStar) {
+      // Distance from the last thing you centred and synced on: the previous target, or a sync star.
+      const syncPos = sync ? sky.altAz(sync, at) : null, dSync = syncPos ? sep_(syncPos, p) : Infinity;
+      if (dSync > SYNC_DIST) {
+        const best = stars.map((s) => ({ s, q: sky.altAz(s, at) })).filter((x) => x.q.alt > 20)
+          .map((x) => ({ ...x, d: sep_(x.q, p) })).filter((x) => x.d < Math.min(SYNC_NEAR, dSync * 0.6))
+          .sort((a, b) => (a.d + 3 * a.s.mag) - (b.d + 3 * b.s.mag))[0];
+        if (best) { steps.push({ kind: 'sync', o: best.s, at, alt: best.q.alt, az: best.q.az, dist: best.d, first: false }); sync = best.s; }
+      }
+    }
+    steps.push({ kind: 'target', o: r.o, at, alt: p.alt, az: p.az, dist: sync && sync !== r.o ? sep_(sky.altAz(sync, at), p) : null });
+    sync = r.o; i++;
+  }
+  return { steps, notUp };
 }
 
 

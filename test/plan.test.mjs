@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { Sky } from '../docs/js/astro.js';
-import { planTargets, routePlan, nextDarkNight, openingSync } from '../docs/js/plan.js';
+import { planTargets, routePlan, nextDarkNight, openingSync, orderTargets, travelOf } from '../docs/js/plan.js';
 import { rate, skyFromNelm, describe } from '../docs/js/vis.js';
 
 const sky = new Sky(); sky.setSite(43.55, -80.25, 330);          // Guelph
@@ -104,5 +104,33 @@ ok('the opening sync star is bright, well placed, and not needed when the first 
   const s = openingSync(sky, m57, at);
   assert.ok(s && s.o.mag <= 2.6 && s.alt > 20 && s.alt < 75, 'a bright star at a comfortable height');
   assert.equal(openingSync(sky, vega, at), null);
+});
+const sepOf = (a, b) => Math.acos(Math.max(-1, Math.min(1, Math.sin(a.alt * Math.PI / 180) * Math.sin(b.alt * Math.PI / 180) + Math.cos(a.alt * Math.PI / 180) * Math.cos(b.alt * Math.PI / 180) * Math.cos((a.az - b.az) * Math.PI / 180)))) * 180 / Math.PI;
+ok('close neighbours are visited together and the route beats nearest-next', () => {
+  const want = ['M81', 'M82', 'M31', 'M32', 'M110', 'M13', 'M57', 'M27', 'M15', 'M2', 'M45', 'M33', 'M103', 'M52', 'Albireo', 'Saturn', 'M11', 'M34'];
+  for (const [when, hours] of [['2026-11-17T18:33:00-05:00', 2], ['2026-11-17T20:00:00-05:00', 3], ['2027-03-10T20:30:00-05:00', 3], ['2027-07-10T22:30:00-04:00', 2]]) {
+    const start = new Date(when), rows = planTargets(sky, { start, hours, scope: S150, nelm: 5, minAlt: 20 });
+    const pick = want.map((l) => rows.find((r) => r.o.label === l)).filter(Boolean); if (pick.length < 6) continue;
+    const each = Math.max(5, Math.min(20, hours * 60 / pick.length)) * 60000;
+    const ord = orderTargets(sky, pick, { start, each, minAlt: 20 }), lab = ord.map((r) => r.o.label), at = (l) => lab.indexOf(l);
+    assert.equal(new Set(lab).size, pick.length);
+    if (at('M81') >= 0 && at('M82') >= 0) assert.equal(Math.abs(at('M81') - at('M82')), 1, `${when}: ${lab.join(' ')}`);
+    if (at('M31') >= 0 && at('M32') >= 0) assert.equal(Math.abs(at('M31') - at('M32')) <= 2, true, `${when}: ${lab.join(' ')}`);
+    // nearest-next, the old way, for comparison
+    const nn = [], pool = pick.slice(); let cur = null, i = 0;
+    while (pool.length) { const tt = new Date(start.getTime() + i * each); pool.sort((a, b) => (cur ? sepOf(cur, sky.altAz(a.o, tt)) - sepOf(cur, sky.altAz(b.o, tt)) : sky.altAz(b.o, tt).alt - sky.altAz(a.o, tt).alt)); const r = pool.shift(); nn.push(r); cur = sky.altAz(r.o, tt); i++; }
+    const a = travelOf(sky, ord, { start, each }), b = travelOf(sky, nn, { start, each });
+    console.log(`     ${when.slice(0, 16)}: ${pick.length} targets, ${a.toFixed(0)}° of travel (nearest-next: ${b.toFixed(0)}°)`);
+    assert.ok(a <= b * 1.25, `${when}: ${a} vs ${b}`);      // nearest-next ignores rise and set times, so it can be a little shorter when those bind
+    // every target is visited inside its window and above the limit
+    ord.forEach((r, k) => { const tt = new Date(start.getTime() + k * each); if (r.to && r.to - start < 45 * 60000) return; assert.ok(sky.altAz(r.o, tt).alt >= 17, `${when}: ${r.o.label} at ${sky.altAz(r.o, tt).alt.toFixed(1)}°`); if (r.to && r.to - start >= 45 * 60000) assert.ok(tt <= r.to, `${when}: ${r.o.label} after its window`); });     // (several things setting at once cannot all be caught)
+  }
+});
+ok('a pair is not split when one of them is a hair under the height limit', () => {
+  const start = new Date('2026-11-17T18:33:00-05:00'), find2 = (l) => ({ o: sky.objects.find((o) => o.label === l), key: l });
+  const a81 = sky.altAz(find2('M81').o, start).alt, a82 = sky.altAz(find2('M82').o, start).alt, lim = Math.max(a81, a82) - 0.2;      // one above, one just below
+  const pick = ['M81', 'M82', 'M31', 'M57', 'M45', 'M13', 'M15'].map(find2);
+  const lab = orderTargets(sky, pick, { start, each: 8 * 60000, minAlt: lim }).map((r) => r.key);
+  assert.equal(Math.abs(lab.indexOf('M81') - lab.indexOf('M82')), 1, lab.join(' '));
 });
 console.log('plan tests passed');

@@ -429,7 +429,7 @@ function planItemHTML(it, i) {
     : '<div class="t2">Not well placed in this session</div>';
   return `<li class="${done ? 'done' : ''}"><span class="muted small" style="width:16px;text-align:right">${i + 1}</span>
     <div class="main" data-goplan="${esc(it.key)}"><div class="t1">${it.sync ? '★ ' : ''}${nameHTML(o)}${kindTag(o)}${done ? ' <span class="seen">✓</span>' : ''}</div>${info}</div>
-    ${planReorder ? `<button class="ibtn" data-up="${i}" ${i === 0 ? 'disabled' : ''} aria-label="Move up">↑</button><button class="ibtn" data-dn="${i}" ${last ? 'disabled' : ''} aria-label="Move down">↓</button><button class="ibtn" data-rm="${i}" aria-label="Remove from plan">✕</button>` : `<span class="muted" aria-hidden="true">›</span>`}</li>`;
+    ${planReorder ? `<button class="ibtn" data-up="${i}" ${i === 0 ? 'disabled' : ''} aria-label="Move up">↑</button><button class="ibtn" data-dn="${i}" ${last ? 'disabled' : ''} aria-label="Move down">↓</button><button class="ibtn" data-rm="${i}" aria-label="Remove from plan">✕</button><span class="grip" data-grip="${i}" role="button" aria-label="Drag to reorder">≡</span>` : `<span class="muted" aria-hidden="true">›</span>`}</li>`;
 }
 function bindPlanList() {
   const P = state.plan, ul = $('#pl-list'); if (!ul) return;
@@ -438,7 +438,39 @@ function bindPlanList() {
   ul.querySelectorAll('[data-up]').forEach((b) => b.onclick = () => mv(+b.dataset.up, +b.dataset.up - 1));
   ul.querySelectorAll('[data-dn]').forEach((b) => b.onclick = () => mv(+b.dataset.dn, +b.dataset.dn + 1));
   ul.querySelectorAll('[data-rm]').forEach((b) => b.onclick = () => { P.items.splice(+b.dataset.rm, 1); redo(); });
-  ul.querySelectorAll('[data-goplan]').forEach((d) => d.onclick = () => openObject(d.dataset.goplan, { row: rowFor(d.dataset.goplan), keys: [...ul.querySelectorAll('[data-goplan]')].map((x) => x.dataset.goplan), rowFor }));
+  // Drag a row by its grip. The row follows the finger and the others slide aside; letting go saves the new order.
+  // Nothing is moved in the page until the drop (rows are only shifted visually), so the touch is never interrupted.
+  ul.querySelectorAll('[data-grip]').forEach((g) => {
+    g.onpointerdown = (e) => {
+      e.preventDefault(); const li = g.closest('li'), sc = $('main'); if (!li || ul.classList.contains('sorting')) return;
+      const rows = [...ul.children], from = rows.indexOf(li), tops = rows.map((r) => r.offsetTop), hs = rows.map((r) => r.offsetHeight), H = hs[from];
+      const y0 = e.clientY, scroll0 = sc.scrollTop; let lastY = y0, to = from, raf = 0;
+      li.classList.add('dragging'); ul.classList.add('sorting');
+      const place = () => {
+        const dy = lastY - y0 + (sc.scrollTop - scroll0); li.style.transform = `translateY(${dy}px)`;
+        const mid = tops[from] + H / 2 + dy;                                   // where the middle of the dragged row is now
+        to = from;
+        for (let i = from + 1; i < rows.length; i++) if (mid > tops[i] + hs[i] / 2) to = i;
+        for (let i = from - 1; i >= 0; i--) if (mid < tops[i] + hs[i] / 2) to = i;
+        rows.forEach((r, i) => { if (r === li) return; r.style.transform = i > from && i <= to ? `translateY(${-H}px)` : i < from && i >= to ? `translateY(${H}px)` : ''; });
+      };
+      const edge = () => {                                                     // near the top or bottom of the screen: scroll the list
+        const r = sc.getBoundingClientRect(), pad = 70; let v = 0;
+        if (lastY < r.top + pad) v = -Math.ceil((r.top + pad - lastY) / 6); else if (lastY > r.bottom - pad) v = Math.ceil((lastY - (r.bottom - pad)) / 6);
+        if (v) { sc.scrollTop += v; place(); }
+        raf = requestAnimationFrame(edge);
+      };
+      const move = (ev) => { if (ev.pointerId !== e.pointerId) return; ev.preventDefault(); lastY = ev.clientY; place(); };
+      const end = (ev) => {
+        if (ev.pointerId !== e.pointerId) return;
+        cancelAnimationFrame(raf); window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', end); window.removeEventListener('pointercancel', end);
+        rows.forEach((r) => { r.style.transform = ''; }); li.classList.remove('dragging'); ul.classList.remove('sorting');
+        if (ev.type === 'pointerup' && to !== from) { const [it] = P.items.splice(from, 1); P.items.splice(to, 0, it); if (navigator.vibrate) navigator.vibrate(15); redo(); }
+      };
+      window.addEventListener('pointermove', move, { passive: false }); window.addEventListener('pointerup', end); window.addEventListener('pointercancel', end);
+      raf = requestAnimationFrame(edge);
+    };
+  });
 }
 function fillPlanSuggestions() {
   const ul = $('#pl-sugg'); if (!ul) return;
