@@ -155,3 +155,11 @@ unrelated extra star in the object-page sentence. Still open with Bryan: whether
 - Solver hint: when aligned, the current pointing is given as a 25° prior; if that fails it searches the whole sky.
 - Walk: `tools/walk/b78.js` (needs Chromium's fake camera fed a .y4m of a known field; see the header).
 - NOT done / unknown: no real sky frame yet; planets are not in the solver's catalogue; landscape screen rotation is untested; native exposure control (Swift) not written.
+
+## Build 79 — frames lined up before stacking (Nov 18)
+
+- `skycam.js`: `halfLum` (half-size brightness from RGBA), `registerStars(ref, cur, w, h)` (vote on the shift, then fit twist + shift and re-match; null when unmatched), `addFrame(sum, cnt, rgba, w, h, tf)` (nearest-pixel warp; `cnt` counts frames per pixel).
+- `camera.js` `find()`: first frame is the reference; each frame's brightest stars (half-size, threshold 8σ, top 14) give its transform. Unmatched frames are left out. After four still frames in a row only every sixth is checked. Falls back to plain adding when a single frame shows fewer than two stars. `?noalign` switches it off for comparison.
+- The solution describes the reference frame, so the phone attitude used for the fix is captured at that moment (`onReference` → `o.R` in `makeObs`), not at the end of the stack.
+- Walk: `tools/walk/b79.js` (needs a wandering fake-camera video).
+- Unknown: whether single short frames from a real phone show two stars to lock onto; speed on a phone.

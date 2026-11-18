@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { FIELD } from '../docs/data/catalog.js';
 import { makeIndex, solveField } from '../docs/js/solve.js';
-import { skyMask, isSky, findStars, planIntegration, skyWord } from '../docs/js/skycam.js';
+import { skyMask, isSky, findStars, planIntegration, skyWord, registerStars, addFrame, halfLum } from '../docs/js/skycam.js';
 const ok = (name, f) => { const t = Date.now(); f(); console.log('ok  ', name, `(${Date.now() - t} ms)`); };
 const D2R = Math.PI / 180;
 let seed = 11; const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
@@ -85,4 +85,31 @@ ok('frame length follows the sky: shorter under light pollution, longer under a 
   const fixed = planIntegration({ level: 765 * 0.01, noise: 1, frameTime: 1 / 30, collected: 0.1, canSetExposure: false });
   assert.equal(fixed.frameTime, 1 / 30); assert.match(fixed.frameWhy, /will not take/);
   assert.equal(skyWord(765 * 0.3), 'very bright'); assert.equal(skyWord(10), 'very dark');
+});
+
+ok('frames are matched by their stars: shift and twist recovered, junk refused', () => {
+  const w = 960, h = 540, ref = Array.from({ length: 12 }, () => ({ x: 40 + rnd() * (w - 80), y: 40 + rnd() * (h - 80) }));
+  const move = (dx, dy, rot) => ref.map((p) => { const c = Math.cos(-rot), s = Math.sin(-rot), x = p.x - w / 2 - dx, y = p.y - h / 2 - dy; return { x: w / 2 + c * x - s * y + gauss() * 0.2, y: h / 2 + s * x + c * y + gauss() * 0.2 }; });
+  for (const [dx, dy, rot] of [[0, 0, 0], [7.3, -4.1, 0], [-12, 9, 0.02], [3, 3, -0.035]]) {
+    const cur = move(dx, dy, rot).filter(() => rnd() > 0.2).concat([{ x: 100, y: 100 }]);      // a few stars lost, one false one
+    const r = registerStars(ref, cur, w, h); assert.ok(r, `no match for ${dx},${dy},${rot}`);
+    assert.ok(Math.abs(r.dx - dx) < 0.5 && Math.abs(r.dy - dy) < 0.5 && Math.abs(r.rot - rot) < 0.003, `${dx},${dy},${rot} → ${r.dx.toFixed(2)},${r.dy.toFixed(2)},${r.rot.toFixed(4)}`);
+  }
+  assert.equal(registerStars(ref, Array.from({ length: 12 }, () => ({ x: rnd() * w, y: rnd() * h })), w, h), null, 'unrelated stars must not match');
+  assert.equal(registerStars(ref, [{ x: 5, y: 5 }], w, h), null);
+});
+ok('a shaky run of frames stacks sharp when lined up, and smears when it is not', () => {
+  // The same star field photographed 16 times while the camera wanders by several pixels.
+  const w = 640, h = 360, N = 16, stars = Array.from({ length: 30 }, (_, i) => ({ x: 30 + rnd() * (w - 60), y: 30 + rnd() * (h - 60), a: 260 * Math.pow(0.86, i) + 14 }));
+  const frame = (dx, dy) => { const d = new Uint8ClampedArray(w * h * 4), lum = new Float32Array(w * h).fill(30); for (const s of stars) { const X = s.x + dx, Y = s.y + dy; for (let yy = -4; yy <= 4; yy++) for (let xx = -4; xx <= 4; xx++) { const px = (X | 0) + xx, py = (Y | 0) + yy; if (px < 0 || py < 0 || px >= w || py >= h) continue; lum[py * w + px] += s.a * Math.exp(-((px - X) ** 2 + (py - Y) ** 2) / (2 * 1.3 * 1.3)); } } for (let i = 0; i < lum.length; i++) { const v = Math.max(0, Math.min(255, (lum[i] + gauss() * 14) / 3)); d[4 * i] = d[4 * i + 1] = d[4 * i + 2] = v; d[4 * i + 3] = 255; } return d; };
+  const quick = (d) => { const hl = halfLum(d, w, h); return findStars(hl.lum, hl.w, hl.h, null, 8).stars.slice(0, 14); };
+  const run = (align) => {
+    seed = 99; const sum = new Float32Array(w * h), cnt = new Uint16Array(w * h); let ref = null, used = 0;
+    for (let k = 0; k < N; k++) { const d = frame(9 * Math.sin(k / 2.3), 7 * Math.cos(k / 3.1)); let tf = null; if (align) { if (!ref) ref = quick(d); else { const r = registerStars(ref, quick(d), w >> 1, h >> 1); if (!r) continue; tf = { dx: r.dx * 2, dy: r.dy * 2, rot: r.rot }; } } addFrame(sum, cnt, d, w, h, tf); used++; }
+    const avg = new Float32Array(w * h); for (let i = 0; i < avg.length; i++) avg[i] = cnt[i] ? sum[i] / cnt[i] : 0;
+    return { n: findStars(avg, w, h, null, 6).stars.length, used };
+  };
+  const plain = run(false), lined = run(true);
+  console.log(`      stars found: ${plain.n} without lining up, ${lined.n} with (${lined.used}/${N} frames used)`);
+  assert.ok(lined.used >= N - 2, 'too many frames rejected'); assert.ok(lined.n >= 22, `only ${lined.n} of 30 stars after lining up`); assert.ok(lined.n >= plain.n + 5, 'lining up made no real difference');
 });

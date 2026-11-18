@@ -1,7 +1,7 @@
 // The phone camera as a star finder: open it, collect light, find the sky and the stars, and solve where it points.
 // Browser-side glue around skycam.js (what is sky, where are the stars, how much light) and solve.js (which stars they are).
 
-import { skyMask, findStars, planIntegration, skyWord, drawRejected } from './skycam.js';
+import { skyMask, findStars, planIntegration, skyWord, drawRejected, halfLum, registerStars, addFrame } from './skycam.js';
 import { makeIndex, solveField } from './solve.js';
 
 export const MAX_LIGHT = 12;       // most seconds of light to collect
@@ -84,7 +84,8 @@ export class SkyCamera {
 
   /**
    * Collect light until the sky shows enough stars (or patience runs out), then solve.
-   * opts: { FIELD, prior: {ra, dec, radius} | null, status(text), progress(0..1) }
+   * opts: { FIELD, prior: {ra, dec, radius} | null, status(text), progress(0..1), align (default true),
+   *         onReference() — called when the reference frame is taken; the solved position is where the camera pointed then }
    */
   async find(opts) {
     const v = this.v, status = opts.status || (() => {}), progress = opts.progress || (() => {});
@@ -102,29 +103,45 @@ export class SkyCamera {
         this._known = { frameTime, source, interval, probe };
       }
       frameTime = Math.min(Math.max(frameTime, 1 / 2000), 4);
-      const sum = new Float32Array(w * h), avg = new Float32Array(w * h); let N = 0, plan = null, an = null; const checks = [];
+      const sum = new Float32Array(w * h), cnt = new Uint16Array(w * h), avg = new Float32Array(w * h); let N = 0, plan = null, an = null; const checks = [];
+      // Lining frames up. The first frame is the reference; each later frame's brightest stars say how far it has moved.
+      // When several frames in a row have not moved, the phone is steady and only every sixth frame is checked.
+      const reg = { on: opts.align !== false, ref: null, seen: 0, rejected: 0, moved: 0, maxShift: 0, steady: 0, note: '' };
+      const quick = (d) => { const hl = halfLum(d, w, h); return findStars(hl.lum, hl.w, hl.h, null, 8).stars.slice(0, 14); };
+      const mean = () => { for (let i = 0; i < sum.length; i++) avg[i] = cnt[i] ? sum[i] / cnt[i] : 0; };
       const t0 = performance.now(), batch = Math.max(1, Math.round(0.5 / frameTime));
       for (;;) {
         await this._next(); if (!this.alive) throw new Error('The camera was closed.');
         cx.drawImage(v, 0, 0, w, h); const d = cx.getImageData(0, 0, w, h).data;
-        for (let i = 0, j = 0; i < sum.length; i++, j += 4) sum[i] += d[j] + d[j + 1] + d[j + 2];
-        N++;
+        let tf = null, use = true; reg.seen++;
+        if (reg.on) {
+          if (!reg.ref) { reg.ref = quick(d); if (opts.onReference) opts.onReference();      // the solution will describe THIS frame: note the phone's attitude now
+            if (reg.ref.length < 2) { reg.on = false; reg.note = 'too few stars in a single frame to line frames up, so they were added as they came'; } }
+          else if (reg.steady < 4 || reg.seen % 6 === 0) {
+            const r = registerStars(reg.ref, quick(d), w >> 1, h >> 1);
+            if (!r) { use = false; reg.rejected++; reg.steady = 0; }
+            else { tf = { dx: r.dx * 2, dy: r.dy * 2, rot: r.rot }; const sh = Math.hypot(tf.dx, tf.dy) + Math.abs(tf.rot) * Math.hypot(w, h) / 2; reg.maxShift = Math.max(reg.maxShift, sh); if (sh < 0.5) { reg.steady++; tf = null; } else { reg.steady = 0; reg.moved++; reg.last = tf; } }
+          } else tf = null;
+        }
+        if (use) { addFrame(sum, cnt, d, w, h, tf); N++; }
         const collected = N * frameTime, waited = (performance.now() - t0) / 1000, last = collected >= MAX_LIGHT || waited >= MAX_WAIT;
         progress(Math.min(1, collected / (plan ? Math.max(plan.total, collected) : 2)));
-        if (N % batch === 0 || last) {
-          for (let i = 0; i < sum.length; i++) avg[i] = sum[i] / N;
+        if (!N) { if (last) throw new Error('The picture never held still long enough to use.'); continue; }
+        if ((use && N % batch === 0) || last) {
+          mean();
           an = analyse(avg, w, h);
           plan = planIntegration({ level: an.mask.level, noise: an.mask.noise, frameTime, collected, snrs: an.cand.map((s) => s.snr), canSetExposure: !!st0.exposureTime, maxFrameTime: caps.exposureTime ? caps.exposureTime.max / 10000 : frameTime, maxTotal: MAX_LIGHT });
           checks.push(`${collected.toFixed(2)} s: ${plan.good} clear, ${an.cand.length} possible → ${plan.done ? 'enough' : `aim for ${plan.total.toFixed(1)} s`}`);
-          status(`Sky is ${plan.sky}. ${collected.toFixed(1)} s of light, ${plan.good} clear stars. ${plan.done ? 'Enough.' : `Collecting to about ${plan.total.toFixed(1)} s…`}`);
+          status(`Sky is ${plan.sky}. ${collected.toFixed(1)} s of light, ${plan.good} clear stars${reg.moved ? ', lining up a moving picture' : ''}. ${plan.done ? 'Enough.' : `Collecting to about ${plan.total.toFixed(1)} s…`}`);
           if (plan.done || collected >= plan.total - 1e-6 || last) break;
           await new Promise((r) => setTimeout(r, 0));
         }
       }
+      if (!reg.note) reg.note = !reg.on ? 'switched off' : reg.moved || reg.rejected ? `the picture moved up to ${reg.maxShift.toFixed(1)} px; ${reg.moved} frame${reg.moved === 1 ? '' : 's'} shifted into place, ${reg.rejected} left out as smeared or unmatched` : 'the picture held still, nothing to correct';
       const took = (performance.now() - t0) / 1000, collected = N * frameTime;
       status('Matching the stars to the star map…'); await new Promise((r) => setTimeout(r, 30));
       const s = solve(an.stars, w, h, opts.FIELD, opts.prior);
-      return { lum: avg, w, h, an, sol: s.sol, ms: s.ms, usedPrior: s.usedPrior, plan, frameTime, source, interval, probe, N, collected, took, checks, log: this.log.slice(), settings: this.track.getSettings(), caps, label: this.track.label };
+      return { reg, lum: avg, w, h, an, sol: s.sol, ms: s.ms, usedPrior: s.usedPrior, plan, frameTime, source, interval, probe, N, collected, took, checks, log: this.log.slice(), settings: this.track.getSettings(), caps, label: this.track.label };
     } finally { this.busy = false; }
   }
 }
@@ -174,6 +191,7 @@ export function reportText(r, version) {
     `Gap between frames: ${(r.interval * 1000).toFixed(1)} ms`,
     ...(r.probe ? [`Frame-rate trial (rate: gap, sky brightness, implied frame time): ${r.probe.rows.map((x) => x.refused ? `${x.rate}/s refused` : `${x.rate}/s: ${(x.gap * 1000).toFixed(0)} ms, ${x.level.toFixed(1)}, ${(x.time * 1000).toFixed(0)} ms`).join(' | ')}`] : []),
     `Light collected: ${r.N} frame${r.N === 1 ? '' : 's'} = ${r.collected.toFixed(2)} s, in ${r.took.toFixed(1)} s of waiting`,
+    `Lining frames up: ${r.reg.note}`,
     `Sky: ${r.plan.sky}; level ${r.an.mask.level.toFixed(1)} of 765, noise ${r.an.mask.noise.toFixed(2)}; ${(r.an.mask.fraction * 100).toFixed(0)}% of the picture counted as sky`,
     `Plan: ${r.plan.why}${r.plan.capped ? ' (capped)' : ''}; ${r.plan.frameWhy}`,
     `Checks along the way: ${r.checks.join(' | ')}`,

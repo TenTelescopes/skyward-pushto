@@ -173,6 +173,77 @@ export function findStars(lum, w, h, mask, K = 6) {
   return { stars: kept, noise: medSd, level: bg.length ? Array.from(bg).sort((a, b) => a - b)[bg.length >> 1] : 0 };
 }
 
+// ---- lining frames up before adding them --------------------------------------------------------------------------------
+// A hand-held phone, or a telescope still settling after a push, moves between frames. Each frame's brightest stars are
+// matched to the first frame's, which gives the shift and twist to undo before the frame is added to the stack.
+
+/** Half-size brightness image straight from canvas RGBA data (each output pixel is the mean of a 2×2 block). */
+export function halfLum(rgba, w, h) {
+  const w2 = w >> 1, h2 = h >> 1, out = new Float32Array(w2 * h2);
+  for (let y = 0; y < h2; y++) { let i = (2 * y * w) * 4, j = i + w * 4; for (let x = 0; x < w2; x++, i += 8, j += 8) out[y * w2 + x] = (rgba[i] + rgba[i + 1] + rgba[i + 2] + rgba[i + 4] + rgba[i + 5] + rgba[i + 6] + rgba[j] + rgba[j + 1] + rgba[j + 2] + rgba[j + 4] + rgba[j + 5] + rgba[j + 6]) / 4; }
+  return { lum: out, w: w2, h: h2 };
+}
+/**
+ * How frame `cur` must be moved to sit on frame `ref`, from their star lists ([{x, y}], brightest first, same pixel scale).
+ * Returns { dx, dy, rot (radians, about the picture centre), n } meaning ref = centre + Rot·(cur − centre) + (dx, dy),
+ * or null when the stars cannot be matched (too few, or the frame is smeared).
+ */
+export function registerStars(ref, cur, w, h, tol = 2.5) {
+  const A = ref.slice(0, 14), B = cur.slice(0, 14); if (A.length < 2 || B.length < 2) return null;
+  // Vote on the shift: every pairing of a reference star with a current star proposes one; the true shift is proposed by many.
+  let best = null;
+  for (const a of A) for (const b of B) {
+    const dx = a.x - b.x, dy = a.y - b.y; let votes = 0;
+    for (const p of A) for (const q of B) if (Math.abs(p.x - q.x - dx) < tol * 1.6 && Math.abs(p.y - q.y - dy) < tol * 1.6) { votes++; break; }
+    if (!best || votes > best.votes) best = { dx, dy, votes };
+  }
+  if (!best || best.votes < 2) return null;
+  const cx = w / 2, cy = h / 2;
+  // Fit twist-about-the-centre plus shift to a set of matched stars.
+  const fit = (pairs, allowRot) => {
+    let rot = 0;
+    if (allowRot && pairs.length >= 2) {
+      let ax = 0, ay = 0, bx = 0, by = 0; for (const [p, q] of pairs) { ax += p.x; ay += p.y; bx += q.x; by += q.y; } ax /= pairs.length; ay /= pairs.length; bx /= pairs.length; by /= pairs.length;
+      let sc = 0, ss = 0; for (const [p, q] of pairs) { const px = p.x - ax, py = p.y - ay, qx = q.x - bx, qy = q.y - by; sc += qx * px + qy * py; ss += qx * py - qy * px; }
+      rot = Math.atan2(ss, sc);
+    }
+    const c = Math.cos(rot), sn = Math.sin(rot); let dx = 0, dy = 0;
+    for (const [p, q] of pairs) { dx += p.x - (cx + c * (q.x - cx) - sn * (q.y - cy)); dy += p.y - (cy + sn * (q.x - cx) + c * (q.y - cy)); }
+    return { dx: dx / pairs.length, dy: dy / pairs.length, rot, c, sn };
+  };
+  const at = (t, q) => [cx + t.c * (q.x - cx) - t.sn * (q.y - cy) + t.dx, cy + t.sn * (q.x - cx) + t.c * (q.y - cy) + t.dy];
+  const match = (t, lim) => { const pairs = []; for (const p of A) { let m = null, md = lim; for (const q of B) { const [x, y] = at(t, q), d = Math.hypot(p.x - x, p.y - y); if (d < md) { md = d; m = q; } } if (m) pairs.push([p, m]); } return pairs; };
+  // Start from the voted shift with a loose tolerance (a twist spreads the stars' shifts), then fit and re-match to tighten.
+  let t = { dx: best.dx, dy: best.dy, rot: 0, c: 1, sn: 0 }, pairs = match(t, tol * 3);
+  for (let it = 0; it < 4 && pairs.length >= 2; it++) { t = fit(pairs, true); pairs = match(t, it < 2 ? tol * 2 : tol); }
+  if (pairs.length < 2) return null;
+  // With only two stars the twist rests on a single line between them: too shaky, so keep the shift alone.
+  t = fit(pairs, pairs.length >= 3);
+  if (Math.abs(t.rot) > 0.2) return null;                    // more than ~11° between frames is not a stack
+  let err = 0; for (const [p, q] of pairs) { const [x, y] = at(t, q); err += Math.hypot(p.x - x, p.y - y); }
+  if (err / pairs.length > tol) return null;
+  return { dx: t.dx, dy: t.dy, rot: t.rot, n: pairs.length };
+}
+/**
+ * Add one RGBA frame into the stack, moved by `tf` (from registerStars, in full-size pixels) or as it is when tf is null.
+ * `sum` collects brightness, `cnt` how many frames reached each pixel (the edges get fewer once frames are shifted).
+ */
+export function addFrame(sum, cnt, rgba, w, h, tf) {
+  if (!tf || (Math.abs(tf.dx) < 0.25 && Math.abs(tf.dy) < 0.25 && Math.abs(tf.rot) < 1e-4)) {
+    for (let i = 0, j = 0; i < sum.length; i++, j += 4) { sum[i] += rgba[j] + rgba[j + 1] + rgba[j + 2]; cnt[i]++; }
+    return;
+  }
+  // For each stack pixel, find the frame pixel that belongs there: cur = centre + Rot⁻¹·(ref − centre − shift).
+  const c = Math.cos(tf.rot), s = Math.sin(tf.rot), cx = w / 2, cy = h / 2;
+  for (let y = 0; y < h; y++) {
+    const ry = y - cy - tf.dy; let sx = cx + c * (0 - cx - tf.dx) + s * ry + 0.5, sy = cy - s * (0 - cx - tf.dx) + c * ry + 0.5;
+    for (let x = 0, i = y * w; x < w; x++, i++, sx += c, sy -= s) {
+      const u = sx | 0, v = sy | 0; if (sx < 0 || sy < 0 || u >= w || v >= h) continue;
+      const j = (v * w + u) * 4; sum[i] += rgba[j] + rgba[j + 1] + rgba[j + 2]; cnt[i]++;
+    }
+  }
+}
+
 /** Words for how bright the sky background is, as a share of the camera's full range. */
 export function skyWord(level) {
   const f = level / FULL;

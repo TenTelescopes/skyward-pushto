@@ -1237,7 +1237,7 @@ function drawReticle(cur, tgt, o, opt = {}) {
 
 // ---------------------------------------------------------------- ALIGN + SYNC
 function makeObs(o) {
-  const R = avgR(1.0); if (!R) return null; const truth = o.fix || sky.altAz(o);      // a camera fix brings its own position
+  const R = o.R || avgR(1.0); if (!R) return null; const truth = o.fix || sky.altAz(o);      // a camera fix brings its own position
   return { key: o.key, label: o.label, R, alt: truth.alt, az: truth.az, t: Date.now(), ep: align.epoch || 0 };
 }
 function refit() {
@@ -2830,10 +2830,10 @@ function camTruth(sol) {
   return { ra, dec, ...sky.altAzRaDec(ra, dec) };
 }
 /** Use a camera solution for pointing: the first two fixes align the scope, later ones are syncs. Returns a sentence. */
-function applyCameraFix(sol) {
+function applyCameraFix(sol, refR) {
   if (state.mounting !== 'camera') return 'Not used for pointing: the phone position is not set to “Looking along the tube”.';
   if (!sensors || !sensors.fresh()) return 'Not used for pointing: the motion sensors are not running. Start them from the start screen.';
-  const t = camTruth(sol), o = { key: 'cam:' + Date.now(), label: 'the camera', fix: { alt: t.alt, az: t.az } };
+  const t = camTruth(sol), o = { key: 'cam:' + Date.now(), label: 'the camera', fix: { alt: t.alt, az: t.az }, R: refR || null };    // refR: the phone's attitude when the solved frame was taken
   if (state.mode === 'compass' || alignedNow()) return doSync(o) === false ? 'The camera fix was refused (see the message).' : 'Pointing synced to the camera.';
   const ob = makeObs(o); if (!ob) return 'Not used for pointing: no sensor data yet.';
   const raw = altAzFromVec(mulMV(ob.R, model.axis()));
@@ -2853,7 +2853,7 @@ function renderCamera() {
       <b class="${sol ? '' : 'warn'}" style="font-size:19px">${sol ? `Found it: ${near ? (near.d < 1.5 ? `on ${esc(near.name)}` : `${near.d.toFixed(0)}° from ${esc(near.name)}`) : `RA ${raHms(t.ra)}, Dec ${t.dec.toFixed(1)}°`}` : (r.an.stars.length < 5 ? 'Not enough stars to tell where this is' : 'Could not match these stars to the star map')}</b>
       ${sol ? `<p class="small" style="margin:4px 0">Telescope: ${t.alt.toFixed(1)}° up, ${compassName(t.az)} (${t.az.toFixed(1)}°). Recognised ${sol.n} of the ${sol.of} brightest stars.</p>` : ''}
       ${camNote ? `<p class="small" style="margin:4px 0"><b>${esc(camNote)}</b></p>` : ''}
-      <p class="muted small" style="margin:4px 0">Sky ${r.plan.sky}, ${(r.an.mask.fraction * 100).toFixed(0)}% of the picture used. ${r.collected.toFixed(1)} s of light in ${r.N} frame${r.N === 1 ? '' : 's'}: ${esc(r.plan.why)}${r.plan.capped ? ' (stopped at the limit)' : ''}.${r.an.mask.level > 765 * 0.5 ? ' This looks like daylight or a lit room, so it means nothing here.' : r.an.mask.fraction < 0.15 ? ' Hardly any of this is sky: aim away from trees and buildings.' : ''}</p>
+      <p class="muted small" style="margin:4px 0">Sky ${r.plan.sky}, ${(r.an.mask.fraction * 100).toFixed(0)}% of the picture used. ${r.collected.toFixed(1)} s of light in ${r.N} frame${r.N === 1 ? '' : 's'}: ${esc(r.plan.why)}${r.plan.capped ? ' (stopped at the limit)' : ''}.${r.reg && (r.reg.moved || r.reg.rejected) ? ` The picture was moving: ${r.reg.moved} frame${r.reg.moved === 1 ? '' : 's'} lined up, ${r.reg.rejected} left out.` : ''}${r.an.mask.level > 765 * 0.5 ? ' This looks like daylight or a lit room, so it means nothing here.' : r.an.mask.fraction < 0.15 ? ' Hardly any of this is sky: aim away from trees and buildings.' : ''}</p>
       <canvas id="cam-pic" class="campic"></canvas>
       <p class="muted small" style="margin:4px 0">Grey stripes were ignored. Green circles are stars it recognised, yellow ones it did not. The green mark is where the telescope points.</p>
       ${sol && along ? `<details class="more"><summary>Line the camera up with the eyepiece ${cal ? '✓' : '(recommended once)'}</summary>
@@ -2926,9 +2926,10 @@ async function cameraFind() {
   if (!skyCam || !skyCam.on) return; const go = $('#cam-go'); if (go) go.disabled = true;
   const here = pointing(), prior = here && here.ready && alignedNow() ? { ...altAzToJ2000(sky, here.alt, here.az), radius: 25 } : null;
   try {
-    const r = await skyCam.find({ FIELD: STAR_FIELD, prior, status: (t) => { const s = $('#cam-status'); if (s) s.textContent = t; }, progress: (f) => { const b = $('#cam-bar'); if (b) b.style.width = `${f * 100}%`; } });
+    let refR = null;
+    const r = await skyCam.find({ FIELD: STAR_FIELD, prior, onReference: () => { refR = avgR(0.3) || (sensors && sensors.R) || null; }, align: !/[?&]noalign/.test(location.search), status: (t) => { const s = $('#cam-status'); if (s) s.textContent = t; }, progress: (f) => { const b = $('#cam-bar'); if (b) b.style.width = `${f * 100}%`; } });
     if (!r) return;
-    camLast = r; camNote = r.sol ? applyCameraFix(r.sol) : '';
+    camLast = r; camNote = r.sol ? applyCameraFix(r.sol, refR) : '';
   } catch (e) { toast('Camera: ' + (e.message || e), 6000); }
   if (tab === 'camera') { renderCamera(); const c = $('#cam-pic'); if (c) c.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
 }
