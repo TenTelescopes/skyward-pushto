@@ -46,10 +46,29 @@ export function sepDeg(alt1, az1, alt2, az2) {
 
 /** Nominal optical-axis direction in the device frame for each supported phone mounting. */
 export const MOUNTINGS = {
-  'top-sky':    { label: 'Screen up, top edge toward sky end', d: [0, 1, 0] },
-  'top-mirror': { label: 'Screen up, top edge toward mirror end', d: [0, -1, 0] },
-  'camera':     { label: 'Camera (back of phone) looking along the tube', d: [0, 0, -1] },
+  'top-sky':      { where: 'On top', label: 'On top of the tube, screen up, top edge toward the sky end', edge: 'Top edge to the sky end', d: [0, 1, 0] },
+  'top-mirror':   { where: 'On top', label: 'On top of the tube, screen up, top edge toward the mirror end', edge: 'Top edge to the mirror end', d: [0, -1, 0] },
+  'side-sky':     { where: 'On the side', label: 'On the side of the tube, screen facing out, top edge toward the sky end', edge: 'Screen out, top edge to the sky end', d: [0, 1, 0] },
+  'side-mirror':  { where: 'On the side', label: 'On the side of the tube, screen facing out, top edge toward the mirror end', edge: 'Screen out, top edge to the mirror end', d: [0, -1, 0] },
+  'across-left':  { where: 'Across the tube', label: 'Across the tube, left edge toward the sky end', edge: 'Left edge to the sky end', d: [-1, 0, 0] },
+  'across-right': { where: 'Across the tube', label: 'Across the tube, right edge toward the sky end', edge: 'Right edge to the sky end', d: [1, 0, 0] },
+  'camera':       { where: 'Looking along', label: 'Camera (back of phone) looking along the tube', edge: 'Back camera faces the sky end', d: [0, 0, -1] },
 };
+/**
+ * DeviceOrientation angles that put a phone in mounting `m` on a tube pointed at altitude `alt`, where `alpha0` is the
+ * alpha a top-sky phone would read for that direction. Used by the simulator and the tests; side mountings are rolled 80°.
+ */
+export function eulerForMounting(m, alt, alpha0) {
+  switch (m) {
+    case 'top-mirror': return { alpha: wrap360(alpha0 + 180), beta: -alt, gamma: 0 };
+    case 'side-sky': return { alpha: wrap360(alpha0), beta: alt, gamma: 80 };
+    case 'side-mirror': return { alpha: wrap360(alpha0 + 180), beta: -alt, gamma: 80 };
+    case 'across-right': return { alpha: wrap360(alpha0 + 90), beta: 0, gamma: -alt };
+    case 'across-left': return { alpha: wrap360(alpha0 - 90), beta: 0, gamma: alt };
+    case 'camera': return { alpha: wrap360(alpha0), beta: 90 + alt, gamma: 0 };
+    default: return { alpha: wrap360(alpha0), beta: alt, gamma: 0 };
+  }
+}
 
 function basisFor(d0) {
   const ref = Math.abs(d0[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0];

@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b1020">
+<title>Skyward camera star test</title>
+<style>
+  :root { --bg: #0b1020; --panel: #141b3a; --line: #2c376b; --ink: #eceeff; --dim: #a9b0dc; --hi: #ffd66e; --ok: #7fe0a5; --bad: #ff9a8a; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; padding: 16px 16px 48px; max-width: 720px; margin-inline: auto; }
+  h1 { font-size: 22px; margin: 4px 0 6px; } h1 b { color: var(--hi); }
+  h2 { font-size: 17px; margin: 22px 0 8px; }
+  p { margin: 8px 0; } .dim { color: var(--dim); } .small { font-size: 14px; }
+  ol { padding-left: 22px; margin: 8px 0; } li { margin: 4px 0; }
+  button { font: inherit; font-weight: 650; color: var(--ink); background: var(--panel); border: 1.5px solid var(--line); border-radius: 12px; padding: 12px 16px; min-height: 48px; width: 100%; margin: 6px 0; }
+  button.primary { border-color: var(--hi); color: var(--hi); }
+  button:disabled { opacity: .45; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; margin: 12px 0; }
+  video, canvas { width: 100%; height: auto; display: block; border-radius: 10px; background: #000; }
+  #bar { height: 10px; border-radius: 5px; background: #0006; overflow: hidden; margin: 10px 0; }
+  #bar i { display: block; height: 100%; width: 0; background: var(--hi); }
+  .big { font-size: 34px; font-weight: 750; line-height: 1.1; }
+  .row { display: flex; gap: 12px; } .row > div { flex: 1; }
+  .ok { color: var(--ok); } .warn { color: var(--hi); } .bad { color: var(--bad); }
+  pre { white-space: pre-wrap; word-break: break-word; font: 12.5px/1.45 ui-monospace, Menlo, Consolas, monospace; background: #0006; border-radius: 10px; padding: 10px; margin: 8px 0; max-height: 320px; overflow: auto; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<h1><b>Skyward</b> camera star test</h1>
+<p class="dim">This page checks one thing: how many stars your phone's back camera can pick up from a web page. It adds short frames together until it has two seconds of light, then counts the stars. Nothing is uploaded; the pictures never leave your phone.</p>
+
+<div class="card" id="how">
+  <ol>
+    <li>Go outside on a clear night and give the phone a minute away from bright lights.</li>
+    <li>Rest the phone against something solid with the <b>back camera</b> aimed at a starry patch of sky. Hand-held will blur.</li>
+    <li>Tap <b>Start camera</b> and allow camera access.</li>
+    <li>Tap <b>Take 2-second stack</b> and keep still until it finishes.</li>
+    <li>Tap <b>Copy report</b> and paste it into the Ten Telescopes Discord, or email it to admin@tentelescopes.com.</li>
+  </ol>
+</div>
+
+<button id="start" class="primary">Start camera</button>
+<div id="live" class="hidden">
+  <video id="v" playsinline muted autoplay></video>
+  <p id="camline" class="dim small"></p>
+  <button id="go" class="primary">Take 2-second stack</button>
+  <div id="bar"><i></i></div>
+  <p id="status" class="dim small"></p>
+</div>
+
+<div id="out" class="hidden">
+  <h2>Result</h2>
+  <div class="card">
+    <div class="row">
+      <div><div class="dim small">One frame</div><div class="big" id="n1">–</div><div class="dim small">stars</div></div>
+      <div><div class="dim small">Stacked</div><div class="big" id="n2">–</div><div class="dim small">stars</div></div>
+    </div>
+    <p id="verdict"></p>
+  </div>
+  <canvas id="pic"></canvas>
+  <p class="dim small">The stacked picture, brightened. Circles mark what was counted as a star.</p>
+  <button id="copy">Copy report</button>
+  <button id="again">Take another</button>
+  <pre id="report"></pre>
+</div>
+<p id="err" class="bad"></p>
+
+<script>
+'use strict';
+const $ = (s) => document.querySelector(s);
+const TARGET_SECONDS = 2;          // total light to collect
+const MAX_FRAMES = 240, MIN_FRAMES = 1;
+let stream = null, track = null, log = [], lastReport = '';
+const note = (s) => { log.push(s); };
+
+// ---- star finding (shared by the single frame and the stack) ----------------------------------------------------------
+// lum: Float32Array of brightness (0..765 = r+g+b), averaged per frame. Returns stars sorted brightest first.
+function findStars(lum, w, h) {
+  // 3×3 box smooth: a real star covers several pixels, a hot pixel or a compression speck covers one.
+  const sm = new Float32Array(w * h);
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      const i = y * w + x;
+      sm[i] = (lum[i - w - 1] + lum[i - w] + lum[i - w + 1] + lum[i - 1] + lum[i] + lum[i + 1] + lum[i + w - 1] + lum[i + w] + lum[i + w + 1]) / 9;
+    }
+  }
+  // Background level and noise in 64-pixel tiles, with one round of clipping so stars don't raise their own threshold.
+  const T = 64, tw = Math.ceil(w / T), th = Math.ceil(h / T), bg = new Float32Array(tw * th), sd = new Float32Array(tw * th);
+  for (let ty = 0; ty < th; ty++) for (let tx = 0; tx < tw; tx++) {
+    const x0 = Math.max(1, tx * T), x1 = Math.min(w - 1, x0 + T), y0 = Math.max(1, ty * T), y1 = Math.min(h - 1, y0 + T);
+    let m = 0, s = 0, n = 0;
+    for (let y = y0; y < y1; y += 2) for (let x = x0; x < x1; x += 2) { const v = sm[y * w + x]; m += v; s += v * v; n++; }
+    if (!n) continue;
+    m /= n; let d = Math.sqrt(Math.max(0, s / n - m * m));
+    let m2 = 0, s2 = 0, n2 = 0; const lim = m + 2.5 * d;
+    for (let y = y0; y < y1; y += 2) for (let x = x0; x < x1; x += 2) { const v = sm[y * w + x]; if (v <= lim) { m2 += v; s2 += v * v; n2++; } }
+    if (n2 > 8) { m = m2 / n2; d = Math.sqrt(Math.max(0, s2 / n2 - m * m)); }
+    bg[ty * tw + tx] = m; sd[ty * tw + tx] = d;
+  }
+  // A camera that crushes black to exactly zero reports no noise at all; floor it so one grey pixel isn't called a star.
+  const sds = Array.from(sd).filter((v) => v > 0).sort((a, b) => a - b), medSd = sds.length ? sds[sds.length >> 1] : 0;
+  const floor = Math.max(0.35, medSd * 0.5);
+  const K = 6, R = 3, stars = [];
+  for (let y = R + 1; y < h - R - 1; y++) {
+    const ty = Math.min(th - 1, (y / T) | 0);
+    for (let x = R + 1; x < w - R - 1; x++) {
+      const i = y * w + x, t = ty * tw + Math.min(tw - 1, (x / T) | 0), b = bg[t], s = Math.max(sd[t], floor), v = sm[i] - b;
+      if (v < K * s) continue;
+      let peak = true;
+      for (let dy = -R; dy <= R && peak; dy++) for (let dx = -R; dx <= R; dx++) { if ((dx || dy) && sm[i + dy * w + dx] > sm[i]) { peak = false; break; } }
+      if (!peak) continue;
+      // Size: how many pixels within 12 px are also well above the background. Stars are small; lamps, the Moon and windows are not.
+      let big = 0; const y0 = Math.max(1, y - 12), y1 = Math.min(h - 2, y + 12), x0 = Math.max(1, x - 12), x1 = Math.min(w - 2, x + 12);
+      for (let yy = y0; yy <= y1; yy += 2) for (let xx = x0; xx <= x1; xx += 2) if (sm[yy * w + xx] - b > 3 * s) big++;
+      if (big > 60) continue;
+      // A hot pixel is one bright pixel with nothing around it; even a sharp star spills into its neighbours.
+      let ci = i; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (lum[i + dy * w + dx] > lum[ci]) ci = i + dy * w + dx;
+      const centre = lum[ci] - b, ring = (lum[ci - w - 1] + lum[ci - w] + lum[ci - w + 1] + lum[ci - 1] + lum[ci + 1] + lum[ci + w - 1] + lum[ci + w] + lum[ci + w + 1]) / 8 - b;
+      if (ring < 0.12 * centre) continue;
+      stars.push({ x, y, snr: v / s, flux: v });
+    }
+  }
+  // Two peaks a few pixels apart are the same star.
+  stars.sort((a, b) => b.snr - a.snr);
+  const kept = [];
+  for (const s of stars) { if (!kept.some((k) => Math.abs(k.x - s.x) < 8 && Math.abs(k.y - s.y) < 8)) kept.push(s); if (kept.length >= 400) break; }
+  return { stars: kept, noise: medSd, level: bg.length ? Array.from(bg).sort((a, b) => a - b)[bg.length >> 1] : 0 };
+}
+
+// ---- camera -----------------------------------------------------------------------------------------------------------
+async function tryApply(label, c) {
+  try { await track.applyConstraints(c); note(`set ${label}: ok`); return true; } catch (e) { note(`set ${label}: refused (${e.name})`); return false; }
+}
+async function startCamera() {
+  $('#err').textContent = '';
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { $('#err').textContent = 'This browser will not give a web page the camera. Try Chrome on Android or Safari on iPhone.'; return; }
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } } });
+  } catch (e) { $('#err').textContent = 'Could not open the camera: ' + (e.message || e.name) + '. Check that camera access is allowed for this page.'; return; }
+  track = stream.getVideoTracks()[0];
+  const caps = track.getCapabilities ? track.getCapabilities() : {};
+  log = [];
+  // Ask for the longest exposure, highest gain and far focus the phone will give a web page. Each is optional.
+  if (caps.frameRate && caps.frameRate.min) await tryApply(`frame rate ${caps.frameRate.min}`, { frameRate: { ideal: caps.frameRate.min } });
+  if (caps.exposureMode && caps.exposureMode.includes('manual') && caps.exposureTime && caps.exposureTime.max) {
+    await tryApply(`manual exposure ${caps.exposureTime.max}`, { advanced: [{ exposureMode: 'manual', exposureTime: caps.exposureTime.max }] });
+  } else note('manual exposure: not offered by this browser');
+  if (caps.iso && caps.iso.max) await tryApply(`ISO ${caps.iso.max}`, { advanced: [{ iso: caps.iso.max }] }); else note('ISO: not offered');
+  if (caps.exposureCompensation && caps.exposureCompensation.max && !(caps.exposureMode && caps.exposureMode.includes('manual'))) await tryApply(`exposure compensation ${caps.exposureCompensation.max}`, { advanced: [{ exposureCompensation: caps.exposureCompensation.max }] });
+  if (caps.focusMode && caps.focusMode.includes('manual') && caps.focusDistance && caps.focusDistance.max) await tryApply(`focus far (${caps.focusDistance.max})`, { advanced: [{ focusMode: 'manual', focusDistance: caps.focusDistance.max }] });
+  else note('manual focus: not offered');
+  if (caps.torch) await tryApply('torch off', { advanced: [{ torch: false }] });
+  const v = $('#v'); v.srcObject = stream; await v.play().catch(() => {});
+  $('#start').classList.add('hidden'); $('#live').classList.remove('hidden');
+  const st = track.getSettings();
+  $('#camline').textContent = `${track.label || 'Camera'} · ${st.width}×${st.height}` + (st.exposureTime ? ` · exposure ${fmtSec(st.exposureTime / 10000)}` : ' · exposure set by the phone');
+}
+const fmtSec = (s) => s >= 0.1 ? `${s.toFixed(2)} s` : `1/${Math.round(1 / s)} s`;
+
+// Wait for genuinely new frames (not screen refreshes of the same frame).
+function nextFrame(v) {
+  return new Promise((res) => {
+    if (v.requestVideoFrameCallback) v.requestVideoFrameCallback((now, meta) => res(meta.mediaTime !== undefined ? meta.mediaTime : now / 1000));
+    else { const t0 = v.currentTime; const tick = () => { if (v.currentTime !== t0) res(v.currentTime); else requestAnimationFrame(tick); }; requestAnimationFrame(tick); }
+  });
+}
+
+async function takeStack() {
+  const v = $('#v'), go = $('#go'), status = $('#status'), bar = $('#bar i');
+  go.disabled = true; $('#out').classList.add('hidden'); $('#err').textContent = '';
+  const w = v.videoWidth, h = v.videoHeight;
+  if (!w || !h) { $('#err').textContent = 'The camera has not produced a picture yet. Wait a second and try again.'; go.disabled = false; return; }
+  const cv = document.createElement('canvas'); cv.width = w; cv.height = h; const cx = cv.getContext('2d', { willReadFrequently: true });
+
+  // 1. Single-frame time. Use the exposure the camera reports; otherwise the measured gap between frames is the longest it can be.
+  status.textContent = 'Measuring the frame time…';
+  const times = []; let prev = await nextFrame(v);
+  for (let i = 0; i < 12; i++) { const t = await nextFrame(v); if (t > prev) times.push(t - prev); prev = t; }
+  times.sort((a, b) => a - b); const interval = times.length ? times[times.length >> 1] : 1 / 30;
+  const st = track.getSettings(); let frameTime, source;
+  if (st.exposureTime) { frameTime = st.exposureTime / 10000; source = 'reported by the camera'; }
+  else { frameTime = interval; source = 'not reported; assumed equal to the gap between frames (the true exposure may be shorter)'; }
+  frameTime = Math.min(Math.max(frameTime, 1 / 2000), 4);
+  const N = Math.min(MAX_FRAMES, Math.max(MIN_FRAMES, Math.ceil(TARGET_SECONDS / frameTime - 0.02)));
+
+  // 2. Stack until two seconds of light are collected.
+  const sum = new Float32Array(w * h); let first = null; const t0 = performance.now();
+  for (let k = 0; k < N; k++) {
+    await nextFrame(v);
+    cx.drawImage(v, 0, 0, w, h); const d = cx.getImageData(0, 0, w, h).data;
+    for (let i = 0, j = 0; i < sum.length; i++, j += 4) sum[i] += d[j] + d[j + 1] + d[j + 2];
+    if (k === 0) { first = new Float32Array(w * h); for (let i = 0, j = 0; i < first.length; i++, j += 4) first[i] = d[j] + d[j + 1] + d[j + 2]; }
+    bar.style.width = `${((k + 1) / N) * 100}%`; status.textContent = `Collecting light: frame ${k + 1} of ${N} (${fmtSec(frameTime)} each)`;
+  }
+  const took = (performance.now() - t0) / 1000;
+  for (let i = 0; i < sum.length; i++) sum[i] /= N;
+  status.textContent = 'Counting stars…'; await new Promise((r) => setTimeout(r, 30));
+  const one = findStars(first, w, h), all = findStars(sum, w, h);
+
+  // 3. Show it.
+  const pic = $('#pic'); pic.width = w; pic.height = h; const px = pic.getContext('2d'), img = px.createImageData(w, h);
+  const lo = all.level - 1.5 * all.noise, span = Math.max(12 * Math.max(all.noise, 0.5), 20);
+  for (let i = 0, j = 0; i < sum.length; i++, j += 4) { const t = Math.max(0, (sum[i] - lo) / span), g = Math.min(255, 255 * Math.asinh(t * 3) / Math.asinh(30)); img.data[j] = img.data[j + 1] = img.data[j + 2] = g; img.data[j + 3] = 255; }
+  px.putImageData(img, 0, 0); px.strokeStyle = '#ffd66e'; px.lineWidth = Math.max(2, w / 600);
+  for (const s of all.stars.slice(0, 150)) { px.beginPath(); px.arc(s.x, s.y, Math.max(9, w / 120), 0, 6.283); px.stroke(); }
+  $('#n1').textContent = one.stars.length; $('#n2').textContent = all.stars.length;
+  const n = all.stars.length, ver = $('#verdict');
+  if (n >= 12) { ver.className = 'ok'; ver.textContent = 'Plenty of stars. This phone looks usable for finding its place in the sky from a web page.'; }
+  else if (n >= 5) { ver.className = 'warn'; ver.textContent = 'Borderline. Enough to match a bright constellation, probably not enough in a sparse patch of sky.'; }
+  else { ver.className = 'bad'; ver.textContent = 'Too few stars. From a web page, this camera does not see enough to work with (check it was aimed at a clear, dark patch and held still).'; }
+
+  const caps = track.getCapabilities ? track.getCapabilities() : {}, pick = (o, ks) => Object.fromEntries(ks.filter((k) => o[k] !== undefined).map((k) => [k, o[k]]));
+  const KS = ['width', 'height', 'frameRate', 'exposureMode', 'exposureTime', 'exposureCompensation', 'iso', 'focusMode', 'focusDistance', 'whiteBalanceMode', 'zoom', 'facingMode'];
+  lastReport = [
+    'Skyward camera star test',
+    `When: ${new Date().toString()}`,
+    `Phone and browser: ${navigator.userAgent}`,
+    `Camera: ${track.label || 'unnamed'}`,
+    `Picture size: ${w}×${h}`,
+    `Single-frame time: ${fmtSec(frameTime)} (${(frameTime * 1000).toFixed(1)} ms), ${source}`,
+    `Gap between frames: ${(interval * 1000).toFixed(1)} ms`,
+    `Frames stacked: ${N} = ${(N * frameTime).toFixed(2)} s of light, collected in ${took.toFixed(1)} s`,
+    `Stars in one frame: ${one.stars.length}`,
+    `Stars in the stack: ${all.stars.length}`,
+    `Brightest ten (signal-to-noise): ${all.stars.slice(0, 10).map((s) => s.snr.toFixed(0)).join(', ') || 'none'}`,
+    `Sky level: ${all.level.toFixed(1)} of 765, noise ${all.noise.toFixed(2)} (one frame: ${one.noise.toFixed(2)})`,
+    `What the camera was asked for: ${log.join('; ')}`,
+    `Settings in use: ${JSON.stringify(pick(st, KS))}`,
+    `What this browser offers: ${JSON.stringify(pick(caps, KS))}`,
+  ].join('\n');
+  $('#report').textContent = lastReport; $('#out').classList.remove('hidden'); status.textContent = 'Done.'; go.disabled = false;
+  $('#out').scrollIntoView({ behavior: 'smooth' });
+}
+
+$('#start').onclick = startCamera;
+$('#go').onclick = () => takeStack().catch((e) => { $('#err').textContent = 'Something went wrong: ' + (e.message || e); $('#go').disabled = false; });
+$('#again').onclick = () => { $('#live').scrollIntoView({ behavior: 'smooth' }); $('#go').click(); };
+$('#copy').onclick = async () => {
+  const b = $('#copy');
+  try { await navigator.clipboard.writeText(lastReport); b.textContent = 'Copied'; }
+  catch (e) { const r = document.createRange(); r.selectNodeContents($('#report')); const s = getSelection(); s.removeAllRanges(); s.addRange(r); b.textContent = 'Selected — now copy it'; }
+  setTimeout(() => { b.textContent = 'Copy report'; }, 2500);
+};
+window.findStars = findStars;   // exposed for the test script
+</script>
+</body>
+</html>

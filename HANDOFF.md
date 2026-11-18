@@ -123,3 +123,17 @@ unrelated extra star in the object-page sentence. Still open with Bryan: whether
 - Build 73: drag to reorder the plan. In Edit mode each row has a grip (≡); rows are shifted visually during the drag and `P.items` is spliced on drop (`bindPlanList`). Window-level pointer listeners, `touch-action: none` on the grip, edge auto-scroll. The ↑ ↓ buttons are kept as a fallback until the drag is confirmed on a real touch screen (Playwright can only drive it with a mouse).
 - Nov 17: usability audit of Build 73 written to `AUDIT.md` (26 findings, ranked). Nothing fixed yet; waiting for Bryan to choose.
 - Build 74: audit fixes. See the table at the end of `AUDIT.md`. New: in-app dialogs (`askText`, `#dlg`), `askLocation`, `openBackup`/`backupData`/`restoreData`, `planSchedule`, `backTo`, tabs renamed Observe and Play, 44 px touch targets, check-up optional by default (`DEFAULTS.launch.check = false`), `SYNC_DIST` 50. Walk scripts written before this build need `#loc-skip` (or a seeded `site` with source "entered manually") to get past the location question.
+
+
+## Build 75 — phone position picker (Nov 17)
+
+- `MOUNTINGS` in `docs/js/model.js` now has seven positions (on top ×2, on the side with the screen facing out ×2, across the tube ×2, camera along the tube). Each is just the tube direction in the phone's frame; `where`/`edge` are the picker captions.
+- Side positions use the same axis as the dock ([0, ±1, 0]): rolling the phone around the tube does not change the pointing. They are separate entries only so the picture matches what the user sees.
+- Picker: `mountSVG`, `mountPickerHTML`, `setMounting` (clears every scope's remembered tilt and the alignment), `wireMountPicker` in `main.js`. Shown in Setup → Phone mount and sensors, and from the dock question ("My phone sits another way").
+- Simulator: `simGoto` uses `eulerForMounting`, so `?sim` behaves like a phone in the chosen position (side positions are rolled 80°).
+- Tests: `test/mount.test.mjs`; walk: `tools/walk/b75.js` (run as CommonJS; start sensors with `#gate-sim` after `#l-go`).
+- NOT done: landscape layout. A side-mounted or across-the-tube phone will often be seen sideways and the browser may rotate the page; layout is still portrait-only. Nothing here has been tried on a real phone.
+
+## Build 76 — picker trimmed to three (Nov 18)
+
+- The picker offers only `MOUNT_OFFERED` = on top (top edge to sky end), on the side (screen out, top edge to sky end), camera along the tube. The other four stay in `MOUNTINGS` (maths and tests unchanged) and one already saved from an older build is still shown.

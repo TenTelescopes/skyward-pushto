@@ -1,4 +1,4 @@
-import { PointingModel, MOUNTINGS, fitAlignment, guidance, tangentOffset, mulMV, altAzFromVec, norm, wrap180, wrap360, sepDeg, D2R, R2D } from './model.js';
+import { PointingModel, MOUNTINGS, eulerForMounting, fitAlignment, guidance, tangentOffset, mulMV, altAzFromVec, norm, wrap180, wrap360, sepDeg, D2R, R2D } from './model.js';
 import { emptyHorizon, hasHorizon, limitAt, blocked, setWedge, wedgeLevel, wedgeHeight, newTrace, traceAdd, traceFinish, traceCoverage, summary as horizonSummary, WEDGES, LEVELS as HZ_LEVELS, BINS as HZ_BINS } from './horizon.js';
 import { marathonList, pick as marathonPick, nightOf, syncStarFor } from './marathon.js';
 import { nearPlaces, uniqueName, relocate, planAutoName, coordText, PLACE_IDEAS } from './places.js';
@@ -2468,7 +2468,7 @@ function renderSetup() {
 
     <details class="more"><summary>Phone mount and sensors (advanced)</summary>
     <label class="row"><span>Phone dock</span><select id="s-dock"><option value="yes" ${state.dock !== 'no' ? 'selected' : ''}>Yes, on a bridge mount</option><option value="no" ${state.dock === 'no' ? 'selected' : ''}>No, strapped to the tube</option></select></label>
-    <label class="row"><span>Phone position</span><select id="s-mount">${Object.entries(MOUNTINGS).map(([k, v]) => `<option value="${k}" ${k === state.mounting ? 'selected' : ''}>${esc(v.label)}</option>`).join('')}</select></label>
+    <div class="row" style="display:block"><span>Phone position</span><div id="s-mount">${mountPickerHTML()}</div></div>
     <label class="row"><span>Azimuth source</span><select id="s-mode"><option value="gyro" ${state.mode === 'gyro' ? 'selected' : ''}>Gyro + star alignment (recommended)</option><option value="compass" ${state.mode === 'compass' ? 'selected' : ''}>Compass (no alignment)</option></select></label>
     <label class="row"><span>Compass correction, true − magnetic (°)</span><input id="s-cc" type="number" inputmode="decimal" step="0.1" value="${(+state.compassCorr).toFixed(2)}"></label>
     <label class="row"><span>Apply measured gyro drift between syncs</span><input type="checkbox" id="s-rate" ${state.useRate ? 'checked' : ''}></label>
@@ -2513,7 +2513,7 @@ function renderSetup() {
     const e = eyepiece(); e.afov = +(tf * p.fl / e.fl).toFixed(1); e.verified = true; save(); toast(`True field ${(tf * 60).toFixed(1)}′ → AFOV ${e.afov}°`); renderSetup();
   };
   $('#s-dock').onchange = (e) => { state.dock = e.target.value; save(); };
-  $('#s-mount').onchange = (e) => { state.mounting = e.target.value; applyModelSettings(); align = { obs: [], fit: null, syncs: [], confirm: [] }; save(); toast('Mounting changed — re-align'); };
+  wireMountPicker($('#s-mount'), (ch) => { if (ch) toast(`Phone position: ${MOUNTINGS[state.mounting].where.toLowerCase()} — align again`); renderSetup(); const d = $('#s-mount').closest('details'); if (d) d.open = true; });
   $('#s-mode').onchange = (e) => { state.mode = e.target.value; save(); };
   $('#s-cc').onchange = () => { state.compassCorr = num('#s-cc') || 0; save(); };
   $('#s-rate').onchange = (e) => { state.useRate = e.target.checked; model.useRate = state.useRate; save(); };
@@ -2810,6 +2810,39 @@ function renderLaunch() {
   if ($('#l-resume')) $('#l-resume').onclick = () => launch('resume');
   applyTheme();
 }
+// ---- Phone position picker: a small picture of each way the phone can sit on the tube ----
+const MOUNT_OFFERED = ['top-sky', 'side-sky', 'camera'];
+function mountSVG(k) {
+  const tube = '<rect x="30" y="10" width="36" height="96" rx="5" class="mt-tube"/><path d="M30 20h36" class="mt-rim"/><text x="48" y="7" class="mt-lab">sky end ★</text><text x="48" y="117" class="mt-lab">mirror end</text>';
+  const side = k.startsWith('side'), top = k.startsWith('top');
+  const foc = side ? '<circle cx="48" cy="29" r="6.5" class="mt-foc"/><circle cx="48" cy="29" r="3" class="mt-foc"/>' : '<rect x="66" y="23" width="10" height="11" rx="1.5" class="mt-foc"/>';
+  let ph = '';
+  if (top || side) {
+    const up = k.endsWith('sky');
+    ph = `<rect x="37" y="42" width="22" height="44" rx="3.5" class="mt-ph"/><rect x="39" y="${up ? 47 : 44.5}" width="18" height="36.5" rx="1.5" class="mt-scr"/><rect x="44" y="${up ? 43.6 : 82.6}" width="8" height="1.8" rx=".9" class="mt-ear"/><text x="48" y="${up ? 54.5 : 79}" class="mt-top">top</text>`;
+  } else if (k.startsWith('across')) {
+    const right = k === 'across-left';     // left edge to the sky end means the phone's top edge points to the right in this picture
+    ph = `<rect x="26" y="53" width="44" height="22" rx="3.5" class="mt-ph"/><rect x="${right ? 28.5 : 31}" y="55" width="36.5" height="18" rx="1.5" class="mt-scr"/><rect x="${right ? 66.6 : 27.6}" y="60" width="1.8" height="8" rx=".9" class="mt-ear"/><text x="${right ? 58 : 38}" y="66.5" class="mt-top">top</text>`;
+  } else {
+    ph = '<rect x="28" y="92" width="40" height="5" rx="2" class="mt-ph"/><circle cx="48" cy="88" r="2.6" class="mt-ear"/><path d="M48 80V40m-5 7 5-7 5 7" class="mt-arrow"/>';
+  }
+  return `<svg viewBox="0 0 96 120" aria-hidden="true">${tube}${k === 'camera' ? '' : foc}${ph}</svg>`;
+}
+function mountPickerHTML() {
+  // Only the three likely positions are offered; one chosen in an older build stays visible so nobody is stranded.
+  const offered = Object.entries(MOUNTINGS).filter(([k]) => MOUNT_OFFERED.includes(k) || k === state.mounting);
+  return `<div class="mnt-grid">${offered.map(([k, v]) => `<button class="mnt${k === state.mounting ? ' on' : ''}" data-mount="${k}" aria-pressed="${k === state.mounting}" aria-label="${esc(v.label)}">${mountSVG(k)}<b>${esc(v.where)}</b><span>${esc(v.edge)}</span></button>`).join('')}</div>
+    <p class="muted small">Looking at the tube with the sky end at the top. The little bar and the word “top” mark the phone's top edge. ${state.mounting.startsWith('side') ? 'On the side, the round focuser is facing you.' : ''}</p>`;
+}
+function setMounting(k) {
+  if (!MOUNTINGS[k] || k === state.mounting) return false;
+  state.mounting = k;
+  for (const pr of Object.values(state.profiles)) delete pr.cal;      // a remembered tilt belongs to the old position
+  applyModelSettings(); align = { obs: [], fit: null, syncs: [], confirm: [] }; save(); return true;
+}
+function wireMountPicker(root, after) {
+  root.querySelectorAll('.mnt').forEach((b) => { b.onclick = () => { const ch = setMounting(b.dataset.mount); after(ch); }; });
+}
 // Asked once, the first time someone heads for the telescope: the pointing depends on how the phone sits on the tube.
 function askDock(dest) {
   const el = $('#dockq'), card = $('#dockq-card');
@@ -2819,9 +2852,11 @@ function askDock(dest) {
       <p><b>Does your telescope have a phone dock?</b></p>
       <p class="muted small">The dock holds your phone square to the tube. It sits on a bridge mount made for your telescope.</p>
       <div class="btnrow"><button id="dq-yes" class="primary">Yes</button><button id="dq-no">Not yet</button></div>
+      <div class="btnrow"><button id="dq-other">My phone sits another way</button></div>
       <p class="muted small" style="margin-bottom:0">You can change this later in Setup.</p>`;
-    $('#dq-yes').onclick = () => done('yes');
+    $('#dq-yes').onclick = () => { setMounting('top-sky'); done('yes'); };
     $('#dq-no').onclick = none;
+    $('#dq-other').onclick = other;
   };
   const none = () => {
     card.innerHTML = `<h3 style="margin-top:0">No dock? You can still try it</h3>
@@ -2829,8 +2864,19 @@ function askDock(dest) {
       <li><b>Point the top of the phone at the sky end</b>, lined up with the tube as straight as you can.</li>
       <li><b>Strap it down firmly</b> — elastic bands work. It must not shift when you push the scope.</li></ol>
       <p class="muted small">Expect rougher pointing than with a dock. A phone that is crooked or slips will send you to the wrong spot, and you will need to Sync more often.</p>
+      <div class="btnrow"><button id="dq-go" class="primary">Carry on</button><button id="dq-back">Back</button></div>
+      <div class="btnrow"><button id="dq-other2">On the side of the tube instead</button></div>`;
+    $('#dq-go').onclick = () => { setMounting('top-sky'); done('no'); };
+    $('#dq-back').onclick = ask;
+    $('#dq-other2').onclick = other;
+  };
+  const other = () => {
+    card.innerHTML = `<h3 style="margin-top:0">How does your phone sit?</h3>
+      <p class="muted small">Tap the picture that matches. It has to be held firmly and lined up with the tube as squarely as you can; the two alignment stars take care of the last few degrees.</p>
+      ${mountPickerHTML()}
       <div class="btnrow"><button id="dq-go" class="primary">Carry on</button><button id="dq-back">Back</button></div>`;
-    $('#dq-go').onclick = () => done('no');
+    wireMountPicker(card, () => other());
+    $('#dq-go').onclick = () => done(state.mounting === 'top-sky' ? 'yes' : 'no');
     $('#dq-back').onclick = ask;
   };
   ask(); el.classList.remove('hidden');
@@ -2973,7 +3019,7 @@ async function startSensors(sim) {
     if (sim) {
       window.sim = sensors; // arrow keys move the simulated scope: ←/→ azimuth, ↑/↓ altitude (Shift = fine)
       // Test hook (simulator only): point the simulated scope at an object or at alt/az.
-      window.simGoto = (k, dAlt = 0, dAz = 0) => { const o = typeof k === 'string' ? sky.objects.find((x) => x.key === k || x.label === k) : null; const t = o ? sky.altAz(o) : k; if (!t) return null; sensors.beta = t.alt + dAlt; sensors.alpha = wrap360(sensors.trueOffset - (t.az + dAz)); return { alt: t.alt, az: t.az }; };
+      window.simGoto = (k, dAlt = 0, dAz = 0) => { const o = typeof k === 'string' ? sky.objects.find((x) => x.key === k || x.label === k) : null; const t = o ? sky.altAz(o) : k; if (!t) return null; const e = eulerForMounting(state.mounting, t.alt + dAlt, wrap360(sensors.trueOffset - (t.az + dAz))); sensors.alpha = e.alpha; sensors.beta = e.beta; sensors.gamma = e.gamma; return { alt: t.alt, az: t.az }; };
       window.addEventListener('keydown', (e) => {
         const st = e.shiftKey ? 0.1 : 1;
         if (e.key === 'ArrowLeft') sensors.alpha += st; else if (e.key === 'ArrowRight') sensors.alpha -= st;
