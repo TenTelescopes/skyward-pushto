@@ -106,8 +106,9 @@ export class SkyCamera {
       const src = { next: async () => { await this._next(); if (!this.alive) return null; cx.drawImage(v, 0, 0, w, h); return cx.getImageData(0, 0, w, h).data; }, canSet: !!st0.exposureTime, maxFrameTime: caps.exposureTime ? caps.exposureTime.max / 10000 : frameTime };
       const { avg, an, plan, N, reg, checks, took, collected } = await collectLight(src, w, h, frameTime, opts, status, progress);
       status('Matching the stars to the star map…'); await new Promise((r) => setTimeout(r, 30));
-      const s = solve(an.stars, w, h, opts.FIELD, opts.prior);
-      return { reg, lum: avg, w, h, an, sol: s.sol, ms: s.ms, usedPrior: s.usedPrior, plan, frameTime, source, interval, probe, N, collected, took, checks, log: this.log.slice(), settings: this.track.getSettings(), caps, label: this.track.label };
+      const sc = opts.scale && (!opts.scale.w || (opts.scale.w === w && opts.scale.h === h)) ? opts.scale : null;      // a remembered scale belongs to one picture size
+      const s = solve(an.stars, w, h, opts.FIELD, opts.prior, sc);
+      return { reg, lum: avg, w, h, an, sol: s.sol, ms: s.ms, usedPrior: s.usedPrior, usedScale: s.usedScale, scaleHint: sc, plan, frameTime, source, interval, probe, N, collected, took, checks, log: this.log.slice(), settings: this.track.getSettings(), caps, label: this.track.label };
     } finally { this.busy = false; }
   }
 }
@@ -217,8 +218,9 @@ export class NativeSkyCamera {
       const src = { next: async () => { if (!this.alive) return null; if (first) { const f = first; first = null; return f.rgba; } const f = await this._frame(); this._show(f); return f.rgba; }, canSet: true, maxFrameTime: I.maxExposure };
       const { avg, an, plan, N, reg, checks, took, collected } = await collectLight(src, w, h, frameTime, opts, status, progress);
       status('Matching the stars to the star map…'); await new Promise((r) => setTimeout(r, 30));
-      const s = solve(an.stars, w, h, opts.FIELD, opts.prior);
-      return { reg, lum: avg, w, h, an, sol: s.sol, ms: s.ms, usedPrior: s.usedPrior, plan, frameTime, source: `set by the app (ISO ${Math.round(fr.iso)}); trial: ${trial.join(' → ')}`, interval: frameTime, probe: null, N, collected, took, checks, log: this.log.slice(), settings: { width: w, height: h, exposureTime: frameTime, iso: fr.iso }, caps: { exposureTime: { min: I.minExposure, max: I.maxExposure }, iso: { min: I.minISO, max: I.maxISO } }, label: `${I.camera} (native)` };
+      const scale = (opts.scale && (!opts.scale.w || (opts.scale.w === w && opts.scale.h === h)) ? opts.scale : null) || (I.fieldOfView > 20 && I.fieldOfView < 130 ? { f: focalFromFov(I.fieldOfView, w, h), tol: 0.15, from: 'the phone' } : null);
+      const s = solve(an.stars, w, h, opts.FIELD, opts.prior, scale);
+      return { reg, lum: avg, w, h, an, sol: s.sol, ms: s.ms, usedPrior: s.usedPrior, usedScale: s.usedScale, scaleHint: scale, plan, frameTime, source: `set by the app (ISO ${Math.round(fr.iso)}); trial: ${trial.join(' → ')}`, interval: frameTime, probe: null, N, collected, took, checks, log: this.log.slice(), settings: { width: w, height: h, exposureTime: frameTime, iso: fr.iso }, caps: { exposureTime: { min: I.minExposure, max: I.maxExposure }, iso: { min: I.minISO, max: I.maxISO } }, label: `${I.camera} (native)` };
     } finally { this.busy = false; }
   }
 }
@@ -231,12 +233,23 @@ export function analyse(lum, w, h) {
   const inSky = (s) => mask.sky[Math.min(mask.th - 1, (s.y / mask.T) | 0) * mask.tw + Math.min(mask.tw - 1, (s.x / mask.T) | 0)];
   return { mask, cand: cand.filter(inSky), stars: findStars(lum, w, h, mask, 6).stars };
 }
-/** Solve near where the scope is thought to point; if that fails, look over the whole sky. */
-export function solve(stars, w, h, FIELD, prior) {
-  if (stars.length < 5) return { sol: null, ms: 0, usedPrior: false };
-  const t0 = performance.now(), ix = starIndex(FIELD); let sol = prior ? solveField(stars, w, h, ix, { prior }) : null; const usedPrior = !!sol;
-  if (!sol) sol = solveField(stars, w, h, ix);
-  return { sol, ms: performance.now() - t0, usedPrior };
+/** Diagonal field-of-view limits (degrees) for a focal length known to within `tol` (a fraction). */
+export function fovRange(f, w, h, tol) { const d = Math.hypot(w, h) / 2; return { fovMin: 2 * Math.atan(d / (f * (1 + tol))) * 180 / Math.PI, fovMax: 2 * Math.atan(d / (f / (1 + tol))) * 180 / Math.PI }; }
+/** Focal length in pixels from a lens's field of view across the picture's LONG side (what the phone reports). */
+export const focalFromFov = (fovDeg, w, h) => Math.max(w, h) / 2 / Math.tan(fovDeg * Math.PI / 360);
+/**
+ * Solve. Uses whatever is known to narrow the search, and falls back step by step if that fails:
+ *   scale: { f, tol } — the picture scale (focal length in pixels), from an earlier fix or from the phone itself;
+ *   prior: { ra, dec, radius } — roughly where the scope points.
+ * A known scale is the stronger help: the solver no longer has to consider every possible lens, so it is faster, far
+ * less likely to be fooled by a chance pattern, and can work from fewer stars.
+ */
+export function solve(stars, w, h, FIELD, prior, scale) {
+  if (stars.length < 5) return { sol: null, ms: 0, usedPrior: false, usedScale: false };
+  const t0 = performance.now(), ix = starIndex(FIELD), fov = scale && scale.f ? fovRange(scale.f, w, h, scale.tol || 0.05) : null;
+  const tries = []; if (fov && prior) tries.push([fov, prior]); if (fov) tries.push([fov, null]); if (prior) tries.push([null, prior]); tries.push([null, null]);
+  for (const [fv, pr] of tries) { const sol = solveField(stars, w, h, ix, { ...(fv || {}), ...(pr ? { prior: pr } : {}) }); if (sol) return { sol, ms: performance.now() - t0, usedPrior: !!pr, usedScale: !!fv }; }
+  return { sol: null, ms: performance.now() - t0, usedPrior: false, usedScale: false };
 }
 /** Draw the stacked picture with stripes over what was ignored, circles on the stars and a mark where the telescope points. */
 export function drawResult(canvas, r, bore) {
@@ -263,7 +276,8 @@ export function reportText(r, version) {
     `Camera: ${r.label || 'unnamed'}, ${r.w}×${r.h}`,
     ...(sol ? [`SOLVED: RA ${sol.ra.toFixed(3)}° (${hms(sol.ra)}), Dec ${sol.dec.toFixed(3)}°, roll ${sol.roll.toFixed(1)}°, ${sol.confidence} confidence${r.usedPrior ? '' : ', found without a hint'}`,
       `Matched ${sol.n} of the ${sol.of} brightest stars, fit ${sol.rms.toFixed(2)} px (${(sol.rmsDeg * 60).toFixed(1)}′), solved in ${r.ms.toFixed(0)} ms`,
-      `Field of view: ${sol.fovW.toFixed(1)}° × ${sol.fovH.toFixed(1)}°, focal length ${sol.f.toFixed(0)} px`] : [`NOT SOLVED (${r.ms.toFixed(0)} ms)`]),
+      `Field of view: ${sol.fovW.toFixed(1)}° × ${sol.fovH.toFixed(1)}°, focal length ${sol.f.toFixed(0)} px, ${(Math.atan(1 / sol.f) * 180 / Math.PI * 60).toFixed(2)}′ per pixel`,
+      `Scale hint: ${r.scaleHint ? `${r.scaleHint.f.toFixed(0)} px ±${((r.scaleHint.tol || 0.05) * 100).toFixed(0)}% from ${r.scaleHint.from || 'an earlier fix'}${r.usedScale ? ' — used' : ' — did not fit, searched every scale'}` : 'none yet (first fix at this picture size)'}`] : [`NOT SOLVED (${r.ms.toFixed(0)} ms)`]),
     `Single-frame time: ${fmtSec(r.frameTime)} (${(r.frameTime * 1000).toFixed(1)} ms), ${r.source}`,
     `Gap between frames: ${(r.interval * 1000).toFixed(1)} ms`,
     ...(r.probe ? [`Frame-rate trial (rate: gap, sky brightness, implied frame time): ${r.probe.rows.map((x) => x.refused ? `${x.rate}/s refused` : `${x.rate}/s: ${(x.gap * 1000).toFixed(0)} ms, ${x.level.toFixed(1)}, ${(x.time * 1000).toFixed(0)} ms`).join(' | ')}`] : []),

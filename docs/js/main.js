@@ -2931,9 +2931,12 @@ async function cameraFind() {
   const here = pointing(), prior = here && here.ready && alignedNow() ? { ...altAzToJ2000(sky, here.alt, here.az), radius: 25 } : null;
   try {
     let refR = null;
-    const r = await skyCam.find({ FIELD: STAR_FIELD, prior, onReference: () => { refR = avgR(0.3) || (sensors && sensors.R) || null; }, align: !/[?&]noalign/.test(location.search), status: (t) => { const s = $('#cam-status'); if (s) s.textContent = t; }, progress: (f) => { const b = $('#cam-bar'); if (b) b.style.width = `${f * 100}%`; } });
+    // The picture scale learned from an earlier fix with this camera (kept per picture size); none the first time.
+    const camKey = () => skyCam && skyCam.v ? `${skyCam.isNative ? 'n' : 'w'}` : 'w', known = (state.camScale || {})[camKey()];
+    const r = await skyCam.find({ FIELD: STAR_FIELD, prior, scale: known ? { f: known.f, tol: 0.05, from: 'an earlier fix', w: known.w, h: known.h } : null, onReference: () => { refR = avgR(0.3) || (sensors && sensors.R) || null; }, align: !/[?&]noalign/.test(location.search), status: (t) => { const s = $('#cam-status'); if (s) s.textContent = t; }, progress: (f) => { const b = $('#cam-bar'); if (b) b.style.width = `${f * 100}%`; } });
     if (!r) return;
     camLast = r; camNote = r.sol ? applyCameraFix(r.sol, refR) : '';
+    if (r.sol && r.sol.confidence === 'high') { state.camScale = { ...(state.camScale || {}), [camKey()]: { f: r.sol.f, w: r.w, h: r.h } }; save(); }
   } catch (e) { toast('Camera: ' + (e.message || e), 6000); }
   if (tab === 'camera') { renderCamera(); const c = $('#cam-pic'); if (c) c.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
 }

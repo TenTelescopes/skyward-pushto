@@ -170,3 +170,10 @@ unrelated extra star in the object-page sentence. Still open with Bryan: whether
 - `camera.js`: the stacking loop is now `collectLight(src, …)`, shared by `SkyCamera` (web) and `NativeSkyCamera` (plug-in). The native class chooses exposure and gain from the sky background (aim ~11% of full scale: long frames under a dark sky, short under a bright one, gain down if still too bright), draws its own preview into a canvas, and returns the same result shape.
 - `main.js`: `nativeCam()` = `cap('SkyCam')`; `renderCamera` uses a canvas instead of a video for the native camera.
 - Walk: `tools/walk/b80.js` runs the native path against a pretend plug-in built on Chromium's fake camera (dark sky → 0.8 s frames, bright sky → 1/20 s; both solve).
+
+## Build 81 — picture scale as a solving hint (Nov 18)
+
+- `camera.js` `solve(stars, w, h, FIELD, prior, scale)`: tries (scale + prior) → (scale) → (prior) → (nothing), so a wrong hint costs time but never a solution. `fovRange`, `focalFromFov`.
+- Sources of the scale: a previous high-confidence fix (`state.camScale` keyed 'w' web / 'n' native, with the picture size it belongs to; ±5%), or, in the native app before any fix, the lens angle the phone reports (`fieldOfView` from the plug-in, taken as the long side; ±15% because video crop is not known).
+- Report gains arcminutes per pixel and a "Scale hint" line.
+- Pixel pitch and physical focal length are not needed: the plate scale is focal length in pixels, which the stars (or the reported lens angle) give directly.

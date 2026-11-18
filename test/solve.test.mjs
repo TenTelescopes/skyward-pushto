@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { FIELD } from '../docs/data/catalog.js';
 import { makeIndex, solveField, project } from '../docs/js/solve.js';
+import { solve, fovRange, focalFromFov } from '../docs/js/camera.js';
 const ok = (name, f) => { const t = Date.now(); f(); console.log('ok  ', name, `(${Date.now() - t} ms)`); };
 const D2R = Math.PI / 180;
 let seed = 7; const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
@@ -70,4 +71,17 @@ ok('still solves a thin, light-polluted frame (eight stars, one of them a planet
 ok('project() puts a matched star back on its own pixel', () => {
   const F = FIELDS[0], im = shoot({ ...F, jitter: 0, drop: 0, junk: 0 }), sol = solveField(im.stars, im.w, im.h, ix, { prior: { ra: F.ra, dec: F.dec, radius: 20 } });
   const m = sol.matches[0], p = project(sol, im.w, im.h, m.ra, m.dec); assert.ok(Math.hypot(p.x - m.x, p.y - m.y) < 1.5);
+});
+
+ok('a known picture scale makes a thin frame solvable, faster, and a wrong one is survived', () => {
+  const F = FIELDS[1], im = shoot({ ...F, magLimit: 3.4, drop: 0, junk: 1, keep: 7 });          // seven stars and a stray: hard without help
+  globalThis.performance ??= { now: () => Date.now() };
+  const hinted = solve(im.stars, im.w, im.h, FIELD, null, { f: im.f * 1.02, tol: 0.05 });
+  assert.ok(hinted.sol && hinted.usedScale && sepDeg(hinted.sol.ra, hinted.sol.dec, F.ra, F.dec) < 0.2, 'not solved with the scale known');
+  const blind = solve(im.stars, im.w, im.h, FIELD, null, null);
+  console.log(`      thin frame, no pointing hint: with scale ${hinted.ms.toFixed(0)} ms (${hinted.sol.n} stars matched); without ${blind.sol ? `${blind.ms.toFixed(0)} ms` : `not solved (${blind.ms.toFixed(0)} ms)`}`);
+  const full = shoot(FIELDS[0]), wrong = solve(full.stars, full.w, full.h, FIELD, null, { f: full.f * 1.6, tol: 0.05 });
+  assert.ok(wrong.sol && !wrong.usedScale, 'a wrong scale hint must fall back to searching every scale');
+  const r = fovRange(1000, 1920, 1080, 0.05); assert.ok(r.fovMin < r.fovMax && r.fovMax - r.fovMin < 8);
+  assert.ok(Math.abs(focalFromFov(68, 1080, 1920) - 960 / Math.tan(34 * Math.PI / 180)) < 1e-9);
 });
