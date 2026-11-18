@@ -137,3 +137,21 @@ unrelated extra star in the object-page sentence. Still open with Bryan: whether
 ## Build 76 — picker trimmed to three (Nov 18)
 
 - The picker offers only `MOUNT_OFFERED` = on top (top edge to sky end), on the side (screen out, top edge to sky end), camera along the tube. The other four stay in `MOUNTINGS` (maths and tests unchanged) and one already saved from an older build is still shown.
+
+## Build 77 — camera plate solving, first pass (Nov 18)
+
+- `docs/js/solve.js`: plate solver for wide phone frames. `makeIndex(FIELD)`, `solveField(stars, w, h, index, { prior })`, `project`. Solves focal length along with pointing (no per-phone calibration); pair hypotheses + TRIAD + early rejection + least-squares refine; refuses rather than guesses (needs margin over the runner-up).
+- `docs/js/skycam.js`: `skyMask` (which tiles are sky: smooth-surface fit, texture, saturation, edge steps, region growing, star-vetted patches), `findStars(lum, w, h, mask, K)`, `planIntegration` (frame length from sky brightness; total stacking from the faintest needed star), `skyWord`, `drawRejected` (grey stripes).
+- `docs/camtest.html` (Test page 4): live stripes over the preview, frame-time trial judged on sky only, adaptive stacking, solve, report. Linked from More; cached by the service worker.
+- Tests: `test/solve.test.mjs`, `test/skycam.test.mjs` (synthetic skies only).
+- NOT done: no real-sky frame has been solved; the solve is not yet used for pointing (needs camera-to-tube calibration and a sync button); planets are not in the solver's catalogue; native Swift camera plug-in not written. See `IOS.md` for the Xcode/Capacitor steps.
+
+## Build 78 — camera star finder inside the app (Nov 18)
+
+- The separate test page is gone (`docs/camtest.html` is now only a redirect to the app). Camera code lives in `docs/js/camera.js` (`SkyCamera`: open/close, sky-only exposure trial, adaptive stacking, `find()`; plus `analyse`, `solve`, `drawResult`, `reportText`).
+- App screen: tab `camera` (sub-screen of More; `renderCamera`, `cameraFind`, `attachCamera`, `closeCamera` — the camera is closed whenever another screen is shown). Also offered from Star alignment when the phone position is "Looking along".
+- Using a fix (`applyCameraFix`): only when `state.mounting === 'camera'` and sensors are live. The solution gives the telescope's true alt/az (`camTruth`); it is fed to the existing machinery as an observation with its own position (`o.fix`): unaligned → alignment observation (`align.obs`, `refit`; second fix must be ≥ 20° from the first), aligned → `doSync` (altitude guard kept as a sanity check against the tilt sensor; the stray-tap swing guard is skipped).
+- Camera-to-eyepiece line-up: `profile().camBore` is a unit ray in the camera frame (default dead centre). Set from a solved picture by naming the star that is centred in the eyepiece; refused if that star is more than 12° from the middle.
+- Solver hint: when aligned, the current pointing is given as a 25° prior; if that fails it searches the whole sky.
+- Walk: `tools/walk/b78.js` (needs Chromium's fake camera fed a .y4m of a known field; see the header).
+- NOT done / unknown: no real sky frame yet; planets are not in the solver's catalogue; landscape screen rotation is untested; native exposure control (Swift) not written.

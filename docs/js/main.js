@@ -19,6 +19,9 @@ import { DAYLIGHT, STYLES, PENALTY, pickTargets, routeOrder, pathLength, tokenFo
 import { submitScore, fetchBoard, flushQueue } from './wixscores.js';
 import qrcode from '../vendor/qrcode.mjs';
 import { analyzeSwing, analyzeAltSweep, analyzeHorizonTurn, gradeCheck, guessModel, GRADE } from './check.js';
+import { SkyCamera, drawResult, reportText, hms as raHms } from './camera.js';
+import { project as projectStar } from './solve.js';
+import { FIELD as STAR_FIELD } from '../data/catalog.js';
 
 // ---------------------------------------------------------------- persistence
 const KEY = 'skyward-pushto-v1';
@@ -243,15 +246,16 @@ function guessUncertainty() { const ph = state.phonePerf; return ph && ph.compas
 
 // ---------------------------------------------------------------- tabs
 // Five tabs; Align, Log, Tests and Setup live under More.
-const PARENT = { align: 'more', log: 'more', test: 'more', setup: 'more', horizon: 'more', route: 'plan' };
+const PARENT = { align: 'more', log: 'more', test: 'more', setup: 'more', horizon: 'more', route: 'plan', camera: 'more' };
 const scrollPos = {}; let pendingScroll = null;
 function showTab(t) {
   const m = $('main'); if (tab && m) scrollPos[tab] = m.scrollTop;
   if (PARENT[t] && tab && !PARENT[tab]) backTo = tab;       // remember where a sub-screen was opened from
+  if (tab === 'camera' && t !== 'camera') closeCamera();     // never leave the camera running behind another screen
   tab = t; const top = PARENT[t] || t;
   document.querySelectorAll('nav#tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === top));
   document.querySelectorAll('.tab').forEach((s) => s.classList.toggle('on', s.id === 'tab-' + t));
-  ({ plan: renderPlan, find: renderFind, push: renderPush, align: renderAlign, game: renderGame, test: renderTest, setup: renderSetup, more: renderMore, log: renderLog, horizon: renderHorizon, route: renderRoute })[t]();
+  ({ plan: renderPlan, find: renderFind, push: renderPush, align: renderAlign, game: renderGame, test: renderTest, setup: renderSetup, more: renderMore, log: renderLog, horizon: renderHorizon, route: renderRoute, camera: renderCamera })[t]();
   // Lists reopen where you left them; every other screen starts at the top.
   pendingScroll = (t === 'find' || t === 'plan') && scrollPos[t] ? { t, y: scrollPos[t] } : null;
   m.scrollTop = pendingScroll ? pendingScroll.y : 0;
@@ -1233,7 +1237,7 @@ function drawReticle(cur, tgt, o, opt = {}) {
 
 // ---------------------------------------------------------------- ALIGN + SYNC
 function makeObs(o) {
-  const R = avgR(1.0); if (!R) return null; const truth = sky.altAz(o);
+  const R = avgR(1.0); if (!R) return null; const truth = o.fix || sky.altAz(o);      // a camera fix brings its own position
   return { key: o.key, label: o.label, R, alt: truth.alt, az: truth.az, t: Date.now(), ep: align.epoch || 0 };
 }
 function refit() {
@@ -1264,14 +1268,14 @@ function doSync(o) {
   // object's height it cannot be centred, whatever the heading says. That one is refused outright.
   const here = pointing(), meas = here ? here.alt : altAzFromVec(mulMV(ob.R, model.axis())).alt;
   const dAlt = meas - ob.alt, altTol = align.fit ? 4 : 10;
-  if (Math.abs(dAlt) > altTol) { cue.miss(); toast(`Not synced. The scope is tilted ${Math.abs(dAlt).toFixed(0)}° ${dAlt > 0 ? 'above' : 'below'} ${o.label}, so it can't be centred on it. Nothing was changed.`, 6000); return false; }
+  if (Math.abs(dAlt) > altTol) { cue.miss(); toast(o.fix ? `Not synced. The camera puts the scope ${Math.abs(dAlt).toFixed(0)}° ${dAlt > 0 ? 'lower' : 'higher'} than the tilt sensor does. Check the phone is set to “Looking along” and has not slipped. Nothing was changed.` : `Not synced. The scope is tilted ${Math.abs(dAlt).toFixed(0)}° ${dAlt > 0 ? 'above' : 'below'} ${o.label}, so it can't be centred on it. Nothing was changed.`, 6000); return false; }
   const f = fitAlignment([ob], model.d0, { p: model.p, q: model.q }, { thetaOnly: true });
   const prev = align.syncs[align.syncs.length - 1];
   const seenBefore = skyTable() ? pointing() : null;       // with sky correction on, report the error of what the arrows actually showed
   const before = align.fit ? (seenBefore && seenBefore.ready ? wrap180(ob.az - seenBefore.az) : wrap180(f.theta - model.thetaAt())) : null;
   // A big sideways correction can be real (the heading jumps if the app was put away), so that one asks for a second tap.
   const swing = before == null ? 0 : Math.abs(before) * Math.cos(ob.alt * D2R);
-  if (swing > 15 && !align.suspect && !(syncArm.key === o.key && Date.now() < syncArm.until)) {
+  if (swing > 15 && !o.fix && !align.suspect && !(syncArm.key === o.key && Date.now() < syncArm.until)) {
     syncArm = { key: o.key, until: Date.now() + 8000 }; cue.miss();
     toast(`That would swing the pointing by ${swing.toFixed(0)}°. If ${o.label} really is centred, tap again. If it was a slip, do nothing.`, 7000); return false;
   }
@@ -1329,6 +1333,7 @@ function renderAlign() {
   } else assistHTML = '<p class="muted">No bright stars above 15° right now.</p>';
   el.innerHTML = `${BACK}
     <h2>Star alignment</h2>
+    ${state.mounting === 'camera' && state.mode !== 'compass' ? '<div class="card"><b>Your phone looks along the tube</b><p class="muted small" style="margin:4px 0 8px">The camera can do this for you: no star to find or centre.</p><button id="a-cam" class="primary">Align with the camera</button></div>' : ''}
     ${state.mode === 'compass' ? `<p class="muted">Compass mode is on: azimuth comes from the magnetometer. Star alignment below uses the gyro instead and is usually more accurate — switch in Setup.</p>` : ''}
     ${assistHTML}
     <details class="more" id="a-tools" ${state.alignTools ? 'open' : ''}><summary>Details and tools</summary>
@@ -1353,6 +1358,7 @@ function renderAlign() {
   bindBack(el);
   $('#a-tools').ontoggle = (e) => { state.alignTools = e.target.open; save(); };
   if ($('#a-find')) $('#a-find').onclick = () => showTab('find');
+  if ($('#a-cam')) $('#a-cam').onclick = () => showTab('camera');
   const addStar = (o, force) => {
     const ob = makeObs(o); if (!ob) return toast('No sensor data yet');
     if (!force) {
@@ -2706,6 +2712,7 @@ function renderMore() {
     ${item('horizon', 'Blocked sky', horizonNow() ? esc(horizonSummary(state.horizon)) : 'Mark trees and buildings so the app never sends you behind them')}
     ${item('test', 'Phone check-up and sensor tests', chk ? `This phone: ${V[chk.result.verdict] || esc(chk.result.verdict)} · ${shortDate(chk.when)}` : 'Find out how accurate this phone can be — 4 minutes')}
     ${item('setup', 'Setup', `${esc(profile().name)} · eyepieces, location, phone mount`)}
+    ${item('camera', 'Camera star finder', state.mounting === 'camera' ? (profile().camBore ? 'Finds where the telescope points from the stars · lined up with the eyepiece' : 'Finds where the telescope points from the stars — no star to centre') : 'Works out where the phone’s camera is pointing from the stars')}
     ${item('backup', 'Back up or restore', state.backedUp ? `Last backup ${shortDate(state.backedUp)} · your log, plans and places` : 'Keep a copy of your log, plans and places — they live only on this phone')}
     ${item('start', 'Start screen', 'Choose what to do, and how it works')}
     <h3>Quick settings</h3>
@@ -2810,6 +2817,122 @@ function renderLaunch() {
   if ($('#l-resume')) $('#l-resume').onclick = () => launch('resume');
   applyTheme();
 }
+// ---------------------------------------------------------------- camera star finder
+// The phone's camera photographs the sky, the app recognises the stars, and that tells it where the telescope points —
+// no star to pick, find or centre. Only meaningful for pointing when the phone is mounted looking along the tube.
+let skyCam = null, camLast = null, camNote = '';
+function closeCamera() { if (skyCam) skyCam.close(); skyCam = null; }
+const camBore = () => profile().camBore || [0, 0, 1];          // where the telescope points in the camera's picture (a ray; [0,0,1] = dead centre)
+/** Sky direction (J2000, then alt/az now) of the telescope under a solution. */
+function camTruth(sol) {
+  const b = camBore(), R = sol.R, v = [R[0] * b[0] + R[1] * b[1] + R[2] * b[2], R[3] * b[0] + R[4] * b[1] + R[5] * b[2], R[6] * b[0] + R[7] * b[1] + R[8] * b[2]];
+  const ra = (Math.atan2(v[1], v[0]) * R2D + 360) % 360, dec = Math.asin(Math.max(-1, Math.min(1, v[2]))) * R2D;
+  return { ra, dec, ...sky.altAzRaDec(ra, dec) };
+}
+/** Use a camera solution for pointing: the first two fixes align the scope, later ones are syncs. Returns a sentence. */
+function applyCameraFix(sol) {
+  if (state.mounting !== 'camera') return 'Not used for pointing: the phone position is not set to “Looking along the tube”.';
+  if (!sensors || !sensors.fresh()) return 'Not used for pointing: the motion sensors are not running. Start them from the start screen.';
+  const t = camTruth(sol), o = { key: 'cam:' + Date.now(), label: 'the camera', fix: { alt: t.alt, az: t.az } };
+  if (state.mode === 'compass' || alignedNow()) return doSync(o) === false ? 'The camera fix was refused (see the message).' : 'Pointing synced to the camera.';
+  const ob = makeObs(o); if (!ob) return 'Not used for pointing: no sensor data yet.';
+  const raw = altAzFromVec(mulMV(ob.R, model.axis()));
+  if (Math.abs(raw.alt - ob.alt) > 8) return `Not used: the camera puts the scope at ${ob.alt.toFixed(0)}° up, the tilt sensor says ${raw.alt.toFixed(0)}°. Check the phone is looking along the tube.`;
+  if (align.obs.length && sepDeg(align.obs[0].alt, align.obs[0].az, ob.alt, ob.az) < 20) return 'That is too close to the first fix to align on. Swing the telescope to a different part of the sky (a quarter turn is ideal) and take another.';
+  ob.label = `camera fix ${align.obs.length + 1}`; align.obs.push(ob); align.confirm.push({ ...ob, kind: 'align' }); refit();
+  if (align.obs.length >= alignNeeded()) { cue.onTarget(); flowStepDone('align'); return 'Aligned from the camera. Pick a target and follow the arrows.'; }
+  cue.sync(); return 'First fix taken. Now swing the telescope to a different part of the sky (a quarter turn is ideal) and take another.';
+}
+function renderCamera() {
+  const el = $('#tab-camera'), along = state.mounting === 'camera', on = skyCam && skyCam.on, cal = profile().camBore;
+  const r = camLast, sol = r && r.sol;
+  let resultHTML = '';
+  if (r) {
+    const near = sol ? brightestNamedNear(sol) : null, t = sol ? camTruth(sol) : null;
+    resultHTML = `<div class="card">
+      <b class="${sol ? '' : 'warn'}" style="font-size:19px">${sol ? `Found it: ${near ? (near.d < 1.5 ? `on ${esc(near.name)}` : `${near.d.toFixed(0)}° from ${esc(near.name)}`) : `RA ${raHms(t.ra)}, Dec ${t.dec.toFixed(1)}°`}` : (r.an.stars.length < 5 ? 'Not enough stars to tell where this is' : 'Could not match these stars to the star map')}</b>
+      ${sol ? `<p class="small" style="margin:4px 0">Telescope: ${t.alt.toFixed(1)}° up, ${compassName(t.az)} (${t.az.toFixed(1)}°). Recognised ${sol.n} of the ${sol.of} brightest stars.</p>` : ''}
+      ${camNote ? `<p class="small" style="margin:4px 0"><b>${esc(camNote)}</b></p>` : ''}
+      <p class="muted small" style="margin:4px 0">Sky ${r.plan.sky}, ${(r.an.mask.fraction * 100).toFixed(0)}% of the picture used. ${r.collected.toFixed(1)} s of light in ${r.N} frame${r.N === 1 ? '' : 's'}: ${esc(r.plan.why)}${r.plan.capped ? ' (stopped at the limit)' : ''}.${r.an.mask.level > 765 * 0.5 ? ' This looks like daylight or a lit room, so it means nothing here.' : r.an.mask.fraction < 0.15 ? ' Hardly any of this is sky: aim away from trees and buildings.' : ''}</p>
+      <canvas id="cam-pic" class="campic"></canvas>
+      <p class="muted small" style="margin:4px 0">Grey stripes were ignored. Green circles are stars it recognised, yellow ones it did not. The green mark is where the telescope points.</p>
+      ${sol && along ? `<details class="more"><summary>Line the camera up with the eyepiece ${cal ? '✓' : '(recommended once)'}</summary>
+        <p class="muted small">The camera and the telescope never point in exactly the same direction. Centre a bright star in the eyepiece, take a fix, then say which star it was. From then on the green mark sits where the eyepiece looks.</p>
+        ${camStars(sol).length ? `<label class="row"><span>Star in the eyepiece</span><select id="cam-star">${camStars(sol).map((x, i) => `<option value="${i}">${esc(x.name)}</option>`).join('')}</select></label>
+        <div class="btnrow"><button id="cam-cal">This star is centred in my eyepiece</button>${cal ? '<button id="cam-uncal">Forget</button>' : ''}</div>` : '<p class="muted small">No bright named star in this picture. Point at one, centre it in the eyepiece and take another fix.</p>'}
+      </details>` : ''}
+      <details class="more"><summary>Technical report</summary><div class="btnrow"><button id="cam-copy">Copy report</button></div><pre class="camrep">${esc(reportText(r, $('#build') ? $('#build').textContent : ''))}</pre></details>
+    </div>`;
+  }
+  el.innerHTML = `${BACK}
+    <h2>Camera star finder</h2>
+    <p class="muted">The camera photographs the sky and the app recognises the stars, so it knows where the telescope points without you finding or centring anything.</p>
+    ${along ? '' : `<div class="card"><b>The camera has to look along the tube</b><p class="muted small" style="margin:4px 0 8px">In the dock on top of the tube, the camera faces the telescope and sees nothing. To use the camera for pointing, mount the phone at the back with its camera facing the sky end, then choose that position.</p><div class="btnrow"><button id="cam-along">Set phone position to “Looking along the tube”</button></div><p class="muted small" style="margin-bottom:0">Without that you can still hold the phone up to the sky and see what it recognises.</p></div>`}
+    ${on ? `<div class="camstage"><video id="cam-v" playsinline muted autoplay></video><canvas id="cam-ov"></canvas></div>
+      <p class="muted small" style="margin:4px 0">Grey stripes: not sky, ignored. Keep the phone still.</p>
+      <div class="hzbar"><i id="cam-bar" style="width:0"></i></div>
+      <p id="cam-status" class="small" style="min-height:1.4em">${along ? (alignedNow() ? 'Aligned. A fix here re-syncs the pointing.' : `Not aligned yet: ${align.obs.length ? 'one more fix, in a different part of the sky' : 'two fixes in different parts of the sky will do it'}.`) : ''}</p>
+      <div class="actionbar"><button id="cam-go" class="primary wide">Find where I’m pointing</button><button id="cam-stop">Close camera</button></div>`
+      : `<div class="btnrow"><button id="cam-start" class="primary">Start the camera</button></div><p id="cam-status" class="small"></p>`}
+    ${resultHTML}`;
+  bindBack(el);
+  if ($('#cam-along')) $('#cam-along').onclick = () => { setMounting('camera'); toast('Phone position: looking along the tube'); renderCamera(); };
+  if ($('#cam-start')) $('#cam-start').onclick = async () => {
+    $('#cam-status').textContent = 'Opening the camera…';
+    renderCameraLive(); if (!skyCam || !skyCam.on) return;
+  };
+  if (on) attachCamera();
+  if ($('#cam-stop')) $('#cam-stop').onclick = () => { closeCamera(); renderCamera(); };
+  if ($('#cam-go')) $('#cam-go').onclick = cameraFind;
+  if (r && $('#cam-pic')) drawResult($('#cam-pic'), r, camBore());
+  if ($('#cam-copy')) $('#cam-copy').onclick = async () => { try { await navigator.clipboard.writeText(reportText(r, $('#build').textContent)); toast('Report copied'); } catch (e) { toast('Could not copy; select the text instead'); } };
+  if ($('#cam-cal')) $('#cam-cal').onclick = () => {
+    const st = camStars(sol)[+$('#cam-star').value]; if (!st) return;
+    const x = (st.x - r.w / 2) / sol.f, y = (st.y - r.h / 2) / sol.f, l = Math.hypot(x, y, 1), off = Math.atan(Math.hypot(x, y)) * R2D;
+    if (off > 12) return toast(`${st.name} is ${off.toFixed(0)}° from the middle of the picture. That is too far to be the star in the eyepiece. Nothing was changed.`, 6000);
+    profile().camBore = [x / l, y / l, 1 / l]; save(); camNote = `Lined up on ${st.name}: the eyepiece looks ${off.toFixed(1)}° from the middle of the camera's picture.`; toast('Camera lined up with the eyepiece'); renderCamera();
+  };
+  if ($('#cam-uncal')) $('#cam-uncal').onclick = () => { delete profile().camBore; save(); camNote = 'Line-up forgotten: the middle of the picture is used.'; renderCamera(); };
+}
+/** Bright named stars inside a solved picture, nearest the telescope mark first. */
+function camStars(sol) {
+  if (!camLast) return []; const { w, h } = camLast, b = camBore(), bx = w / 2 + sol.f * b[0] / b[2], by = h / 2 + sol.f * b[1] / b[2], out = [];
+  for (const o of sky.objects) {
+    if (!o.key.startsWith('st:') || (o.mag ?? 9) > 3.2 || o.ra == null) continue;
+    const p = projectStar(sol, w, h, o.ra, o.dec); if (!p || p.x < 0 || p.y < 0 || p.x > w || p.y > h) continue;
+    out.push({ name: o.label, x: p.x, y: p.y, d: Math.hypot(p.x - bx, p.y - by) });
+  }
+  return out.sort((a, c) => a.d - c.d).slice(0, 12);
+}
+function brightestNamedNear(sol) {
+  const t = camTruth(sol); let best = null;
+  for (const o of sky.objects) { if (!o.key.startsWith('st:') || (o.mag ?? 9) > 2.6 || o.ra == null) continue; const d = sepDeg(t.dec, t.ra, o.dec, o.ra); if (!best || d < best.d) best = { d, name: o.label }; }
+  return best;
+}
+async function renderCameraLive() {
+  try {
+    const holder = document.createElement('video'); holder.playsInline = true; holder.muted = true;
+    skyCam = new SkyCamera(holder, null); await skyCam.open();
+  } catch (e) { skyCam = null; const st = $('#cam-status'); if (st) st.textContent = 'Could not open the camera: ' + (e.message || e.name) + '. Check that camera access is allowed.'; return; }
+  renderCamera();
+}
+// The video element lives in the page, which is redrawn; move the running stream onto the fresh element each time.
+function attachCamera() {
+  const v = $('#cam-v'), ov = $('#cam-ov'); if (!v || !skyCam) return;
+  if (skyCam.v !== v) { v.srcObject = skyCam.stream; v.play().catch(() => {}); skyCam.v = v; }
+  skyCam.ov = ov;
+}
+async function cameraFind() {
+  if (!skyCam || !skyCam.on) return; const go = $('#cam-go'); if (go) go.disabled = true;
+  const here = pointing(), prior = here && here.ready && alignedNow() ? { ...altAzToJ2000(sky, here.alt, here.az), radius: 25 } : null;
+  try {
+    const r = await skyCam.find({ FIELD: STAR_FIELD, prior, status: (t) => { const s = $('#cam-status'); if (s) s.textContent = t; }, progress: (f) => { const b = $('#cam-bar'); if (b) b.style.width = `${f * 100}%`; } });
+    if (!r) return;
+    camLast = r; camNote = r.sol ? applyCameraFix(r.sol) : '';
+  } catch (e) { toast('Camera: ' + (e.message || e), 6000); }
+  if (tab === 'camera') { renderCamera(); const c = $('#cam-pic'); if (c) c.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+}
+
 // ---- Phone position picker: a small picture of each way the phone can sit on the tube ----
 const MOUNT_OFFERED = ['top-sky', 'side-sky', 'camera'];
 function mountSVG(k) {
