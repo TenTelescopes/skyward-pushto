@@ -163,3 +163,10 @@ unrelated extra star in the object-page sentence. Still open with Bryan: whether
 - The solution describes the reference frame, so the phone attitude used for the fix is captured at that moment (`onReference` → `o.R` in `makeObs`), not at the end of the stack.
 - Walk: `tools/walk/b79.js` (needs a wandering fake-camera video).
 - Unknown: whether single short frames from a real phone show two stars to lock onto; speed on a phone.
+
+## Build 80 — native iPhone camera path (Nov 18)
+
+- `native/ios/SkyCamPlugin.swift` (Capacitor 8 local plug-in, jsName `SkyCam`: `open`, `setExposure({seconds, iso})`, `frame`, `close`; AVFoundation, Y plane as base64) and `native/ios/MyViewController.swift` (registers it). **Never compiled.** `IOS.md` has the Xcode steps (Capacitor 8 needs Xcode 26+, Node 22+, Swift Package Manager by default).
+- `camera.js`: the stacking loop is now `collectLight(src, …)`, shared by `SkyCamera` (web) and `NativeSkyCamera` (plug-in). The native class chooses exposure and gain from the sky background (aim ~11% of full scale: long frames under a dark sky, short under a bright one, gain down if still too bright), draws its own preview into a canvas, and returns the same result shape.
+- `main.js`: `nativeCam()` = `cap('SkyCam')`; `renderCamera` uses a canvas instead of a video for the native camera.
+- Walk: `tools/walk/b80.js` runs the native path against a pretend plug-in built on Chromium's fake camera (dark sky → 0.8 s frames, bright sky → 1/20 s; both solve).

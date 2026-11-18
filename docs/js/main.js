@@ -19,7 +19,7 @@ import { DAYLIGHT, STYLES, PENALTY, pickTargets, routeOrder, pathLength, tokenFo
 import { submitScore, fetchBoard, flushQueue } from './wixscores.js';
 import qrcode from '../vendor/qrcode.mjs';
 import { analyzeSwing, analyzeAltSweep, analyzeHorizonTurn, gradeCheck, guessModel, GRADE } from './check.js';
-import { SkyCamera, drawResult, reportText, hms as raHms } from './camera.js';
+import { SkyCamera, NativeSkyCamera, drawResult, reportText, hms as raHms } from './camera.js';
 import { project as projectStar } from './solve.js';
 import { FIELD as STAR_FIELD } from '../data/catalog.js';
 
@@ -2822,6 +2822,8 @@ function renderLaunch() {
 // no star to pick, find or centre. Only meaningful for pointing when the phone is mounted looking along the tube.
 let skyCam = null, camLast = null, camNote = '';
 function closeCamera() { if (skyCam) skyCam.close(); skyCam = null; }
+// In the iPhone app the camera goes through the native plug-in, which can set the exposure; on the web it is the browser's camera.
+const nativeCam = () => cap('SkyCam');
 const camBore = () => profile().camBore || [0, 0, 1];          // where the telescope points in the camera's picture (a ray; [0,0,1] = dead centre)
 /** Sky direction (J2000, then alt/az now) of the telescope under a solution. */
 function camTruth(sol) {
@@ -2866,9 +2868,9 @@ function renderCamera() {
   }
   el.innerHTML = `${BACK}
     <h2>Camera star finder</h2>
-    <p class="muted">The camera photographs the sky and the app recognises the stars, so it knows where the telescope points without you finding or centring anything.</p>
+    <p class="muted">The camera photographs the sky and the app recognises the stars, so it knows where the telescope points without you finding or centring anything.${nativeCam() ? '' : ' <span class="small">In a web browser the phone chooses the exposure; the iPhone app sets it for the sky.</span>'}</p>
     ${along ? '' : `<div class="card"><b>The camera has to look along the tube</b><p class="muted small" style="margin:4px 0 8px">In the dock on top of the tube, the camera faces the telescope and sees nothing. To use the camera for pointing, mount the phone at the back with its camera facing the sky end, then choose that position.</p><div class="btnrow"><button id="cam-along">Set phone position to “Looking along the tube”</button></div><p class="muted small" style="margin-bottom:0">Without that you can still hold the phone up to the sky and see what it recognises.</p></div>`}
-    ${on ? `<div class="camstage"><video id="cam-v" playsinline muted autoplay></video><canvas id="cam-ov"></canvas></div>
+    ${on ? `<div class="camstage">${skyCam.isNative ? '<canvas id="cam-v"></canvas>' : '<video id="cam-v" playsinline muted autoplay></video>'}<canvas id="cam-ov"></canvas></div>
       <p class="muted small" style="margin:4px 0">Grey stripes: not sky, ignored. Keep the phone still.</p>
       <div class="hzbar"><i id="cam-bar" style="width:0"></i></div>
       <p id="cam-status" class="small" style="min-height:1.4em">${along ? (alignedNow() ? 'Aligned. A fix here re-syncs the pointing.' : `Not aligned yet: ${align.obs.length ? 'one more fix, in a different part of the sky' : 'two fixes in different parts of the sky will do it'}.`) : ''}</p>
@@ -2911,15 +2913,17 @@ function brightestNamedNear(sol) {
 }
 async function renderCameraLive() {
   try {
-    const holder = document.createElement('video'); holder.playsInline = true; holder.muted = true;
-    skyCam = new SkyCamera(holder, null); await skyCam.open();
+    const plug = nativeCam();
+    if (plug) skyCam = new NativeSkyCamera(plug, null, null);
+    else { const holder = document.createElement('video'); holder.playsInline = true; holder.muted = true; skyCam = new SkyCamera(holder, null); }
+    await skyCam.open();
   } catch (e) { skyCam = null; const st = $('#cam-status'); if (st) st.textContent = 'Could not open the camera: ' + (e.message || e.name) + '. Check that camera access is allowed.'; return; }
   renderCamera();
 }
 // The video element lives in the page, which is redrawn; move the running stream onto the fresh element each time.
 function attachCamera() {
   const v = $('#cam-v'), ov = $('#cam-ov'); if (!v || !skyCam) return;
-  if (skyCam.v !== v) { v.srcObject = skyCam.stream; v.play().catch(() => {}); skyCam.v = v; }
+  if (skyCam.v !== v) { if (!skyCam.isNative) { v.srcObject = skyCam.stream; v.play().catch(() => {}); } skyCam.v = v; }
   skyCam.ov = ov;
 }
 async function cameraFind() {
