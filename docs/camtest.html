@@ -29,6 +29,7 @@
 </head>
 <body>
 <h1><b>Skyward</b> camera star test</h1>
+<p class="dim small" id="ver">Test page 3 · Nov 18 — longest single frame, and photos from the phone's own camera</p>
 <p class="dim">This page checks one thing: how many stars your phone's back camera can pick up from a web page. It finds the longest single exposure the phone will give, and counts the stars in it. Nothing is uploaded; the pictures never leave your phone.</p>
 
 <div class="card" id="how">
@@ -74,6 +75,7 @@
 <script>
 'use strict';
 const $ = (s) => document.querySelector(s);
+const VERSION = 'Test page 3 · Nov 18';
 const TARGET_SECONDS = 2;          // total light to collect
 const MAX_FRAMES = 240, MIN_FRAMES = 1;
 let stream = null, track = null, log = [], lastReport = '';
@@ -258,6 +260,7 @@ async function takeStack(single) {
   const KS = ['width', 'height', 'frameRate', 'exposureMode', 'exposureTime', 'exposureCompensation', 'iso', 'focusMode', 'focusDistance', 'whiteBalanceMode', 'zoom', 'facingMode'];
   lastReport = [
     'Skyward camera star test' + (single ? ' — longest single frame' : ' — 2-second stack'),
+    `Page version: ${VERSION}`,
     `When: ${new Date().toString()}`,
     `Phone and browser: ${navigator.userAgent}`,
     `Camera: ${track.label || 'unnamed'}`,
@@ -316,6 +319,7 @@ async function analysePhoto(file) {
   else { ver.className = 'bad'; ver.textContent = 'Too few stars, even with the phone\'s own camera (check it was aimed at a clear, dark patch and held still).'; }
   lastReport = [
     "Skyward camera star test — photo from the phone's own camera",
+    `Page version: ${VERSION}`,
     `When: ${new Date().toString()}`,
     `Phone and browser: ${navigator.userAgent}`,
     `Photo: ${im.naturalWidth}×${im.naturalHeight}, analysed at ${w}×${h}, ${file.type || 'unknown type'}, ${(file.size / 1e6).toFixed(1)} MB`,
