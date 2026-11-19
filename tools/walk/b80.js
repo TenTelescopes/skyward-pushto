@@ -34,7 +34,7 @@ const { chromium, devices } = require('playwright');
           const d = cx.getImageData(0, 0, w, h).data, gain = (st.t / REF) * (st.iso / 600), u = new Uint8Array(w * h * 2);
           for (let i = 0, j = 0; i < w * h; i++, j += 4) { const v = Math.max(0, Math.min(65535, Math.round(d[j] / 255 * 65535 * gain))); u[2 * i] = v & 255; u[2 * i + 1] = v >> 8; }
           let out = ''; for (let i = 0; i < u.length; i += 32768) out += String.fromCharCode.apply(null, u.subarray(i, i + 32768));
-          return { width: w, height: h, bits: 16, linear: true, exposure: st.t, iso: st.iso, data: btoa(out) };
+          return { width: w, height: h, bits: 16, linear: true, method: 'superpixel', black: 528, white: 4095, exposure: st.t, iso: st.iso, data: btoa(out) };
         },
         async close() { if (st.v && st.v.srcObject) for (const t of st.v.srcObject.getTracks()) t.stop(); },
       };
@@ -54,7 +54,7 @@ const { chromium, devices } = require('playwright');
     check(/set by the app/.test(rep), tag + ': report says the app set the exposure');
     check(level > 765 * 0.04 && level < 765 * 0.22, `${tag}: sky background brought into the working range (${level.toFixed(0)} of 765)`);
     const raws = await pg.evaluate(() => window.Capacitor.Plugins.SkyCam.raws || 0);
-    check(raw ? raws > 0 && /RAW, developed linearly/.test(rep) : raws === 0 && /offers no RAW/.test(rep), `${tag}: ${raw ? `measured on RAW frames (${raws} taken)` : 'fell back to preview frames'}`);
+    check(raw ? raws > 0 && /RAW, superpixel-binned/.test(rep) : raws === 0 && /offers no RAW/.test(rep), `${tag}: ${raw ? `measured on RAW frames (${raws} taken)` : 'fell back to preview frames'}`);
     const lastIso = calls[calls.length - 1][1];
     if (sky === 'dark') check(lastT > 0.3, `dark sky → long frames (${lastT.toFixed(3)} s)`); else check(lastIso < 600 && lastT >= 0.09, `bright sky, RAW → gain turned down first (ISO ${Math.round(lastIso)}), frames kept long (${lastT.toFixed(3)} s)`);
     await ctx.close();

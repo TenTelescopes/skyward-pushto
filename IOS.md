@@ -83,10 +83,15 @@ If the build fails, copy the red error lines (click the red ⊗ at the top of th
 calls to the app: `open`, `setExposure({ seconds, iso })`, `frame` (a small preview frame, shrunk by averaging),
 `raw` and `close`.
 
-`raw` takes a **Bayer RAW photo** (the sensor's own data, not Apple ProRAW, which is already processed), develops it
-**linearly** with noise reduction, sharpening, contrast and tone mapping switched off and lens distortion corrected,
-then averages every 2×2 block of pixels itself, so every pixel's light is counted by our code. It returns 16-bit
-brightness. If a phone offers no RAW, the app falls back to the preview frames and says so in the technical report.
+`raw` takes a **Bayer RAW photo** (the sensor's own data, not Apple ProRAW, which is already processed) and adds up
+each 2×2 block of photosites (one red, two green, one blue) after subtracting the sensor's black level, read from the
+photo's DNG tags: "superpixel" binning, with no demosaicing, colour matrix or white balance. It returns 16-bit
+brightness. If the RAW buffer is not in the expected layout, it falls back to having Apple develop the RAW linearly
+(processing off) and averaging 2×2. If a phone offers no RAW at all, the app uses the preview frames. The technical
+report says which happened.
+
+The app learns the sensor's hot pixels by itself: a spot that stays on the same pixel in fixes taken in different parts
+of the sky is a defect, and is ignored from then on. No dark frames are needed.
 
 The app (`docs/js/camera.js`, class `NativeSkyCamera`) reads the sky's brightness from the RAW frames, sets the gain
 and exposure to suit it (under a bright sky it turns the gain down before it shortens the exposure, so it needs fewer

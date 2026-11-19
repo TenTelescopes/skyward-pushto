@@ -2,9 +2,10 @@
 //
 // A web page cannot set a phone camera's exposure on iOS, and it only ever sees processed video. This plug-in:
 //   • opens the back camera, locks focus at infinity, and sets the exposure time and gain the app asks for;
-//   • takes RAW photos (the sensor's own data, before Apple's noise reduction, sharpening and tone curve), develops them
-//     LINEARLY with all of that switched off, and averages every 2×2 block of pixels itself, so every pixel's light is
-//     counted by code we control;
+//   • takes RAW photos (the sensor's own data, before Apple's noise reduction, sharpening and tone curve) and turns each
+//     2×2 block of photosites (one red, two green, one blue) into one brightness value by adding them, after subtracting
+//     the sensor's black level. No demosaicing, no colour matrix, no white balance: every photosite is used exactly once,
+//     by code we control. ("Superpixel" binning, as astronomy software does it.)
 //   • also hands back small preview frames from the video stream, for the live view and its grey stripes.
 // Everything clever (what is sky, lining frames up, stacking, recognising the stars) stays in the app's JavaScript:
 // docs/js/camera.js calls this through window.Capacitor.Plugins.SkyCam.
@@ -15,6 +16,7 @@ import Foundation
 import Capacitor
 import AVFoundation
 import CoreImage
+import ImageIO
 
 @objc(SkyCamPlugin)
 public class SkyCamPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapturePhotoCaptureDelegate {
@@ -163,9 +165,9 @@ public class SkyCamPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoDataOutput
         }
     }
 
-    /// raw() — one RAW photo at the current exposure, developed linearly with noise reduction, sharpening and tone curves
-    /// off, then averaged over 2×2 blocks: { width, height, exposure, iso, bits: 16, linear: true, data } where data is
-    /// brightness as 16-bit little-endian numbers (0 = black level, 65535 = the sensor's white level), as base64.
+    /// raw() — one RAW photo at the current exposure, superpixel-binned: { width, height, exposure, iso, bits: 16,
+    /// linear: true, method, black, white, data } where data is brightness as 16-bit little-endian numbers
+    /// (0 = black level, 65535 = all four photosites at the sensor's white level), as base64.
     @objc func raw(_ call: CAPPluginCall) {
         queue.async {
             guard self.session.isRunning else { call.reject("The camera is not open."); return }
@@ -230,10 +232,73 @@ public class SkyCamPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoDataOutput
             let exif = photo.metadata[kCGImagePropertyExifDictionary as String] as? [String: Any]
             let exposure = (exif?[kCGImagePropertyExifExposureTime as String] as? Double) ?? (self.device?.exposureDuration.seconds ?? 0)
             let iso = ((exif?[kCGImagePropertyExifISOSpeedRatings as String] as? [NSNumber])?.first?.doubleValue) ?? Double(self.device?.iso ?? 0)
-            self.work.async { self.develop(dng, exposure: exposure, iso: iso, call: call) }
+            let px = photo.pixelBuffer
+            self.work.async {
+                // Preferred: add up the photosites ourselves. Fallback: Apple develops it linearly, then we average 2×2.
+                if let px = px, let lv = self.levels(dng), self.superpixel(px, black: lv.black, white: lv.white, exposure: exposure, iso: iso, call: call) { return }
+                self.develop(dng, exposure: exposure, iso: iso, call: call)
+            }
         }
     }
 
+    /// Black and white levels from the photo's DNG tags. The black level may be one number or one per Bayer position;
+    /// what matters for a 2×2 sum is the total over the four.
+    private func levels(_ dng: Data) -> (black: [Double], white: Double)? {
+        guard let src = CGImageSourceCreateWithData(dng as CFData, nil),
+              let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [String: Any],
+              let d = props[kCGImagePropertyDNGDictionary as String] as? [String: Any] else { return nil }
+        var black: [Double] = []
+        if let a = d[kCGImagePropertyDNGBlackLevel as String] as? [NSNumber] { black = a.map { $0.doubleValue } }
+        else if let n = d[kCGImagePropertyDNGBlackLevel as String] as? NSNumber { black = [n.doubleValue] }
+        var white = 0.0
+        if let a = d[kCGImagePropertyDNGWhiteLevel as String] as? [NSNumber], let f = a.first { white = f.doubleValue }
+        else if let n = d[kCGImagePropertyDNGWhiteLevel as String] as? NSNumber { white = n.doubleValue }
+        guard !black.isEmpty, white > (black.max() ?? 0) else { return nil }
+        return (black, white)
+    }
+
+    /// Superpixel binning straight from the Bayer data. Returns false (so the caller falls back) if the buffer is not
+    /// the expected one-plane, 16-bits-per-photosite layout.
+    private func superpixel(_ px: CVPixelBuffer, black: [Double], white: Double, exposure: Double, iso: Double, call: CAPPluginCall) -> Bool {
+        CVPixelBufferLockBaseAddress(px, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(px, .readOnly) }
+        guard !CVPixelBufferIsPlanar(px), let base = CVPixelBufferGetBaseAddress(px) else { return false }
+        let W = CVPixelBufferGetWidth(px), H = CVPixelBufferGetHeight(px), rowBytes = CVPixelBufferGetBytesPerRow(px)
+        guard rowBytes >= W * 2, W >= 4, H >= 4 else { return false }
+        // Total black over one 2×2 block: four values given in pattern order, or one value used four times.
+        let blk4 = black.count >= 4 ? black[0] + black[1] + black[2] + black[3] : 4 * (black.reduce(0, +) / Double(black.count))
+        let span = 4 * white - blk4, scale = 65535.0 / span
+        let ow = W / 2, oh = H / 2
+        var out = [UInt16](repeating: 0, count: ow * oh)
+        for oy in 0..<oh {
+            let r0 = (base + (2 * oy) * rowBytes).assumingMemoryBound(to: UInt16.self)
+            let r1 = (base + (2 * oy + 1) * rowBytes).assumingMemoryBound(to: UInt16.self)
+            for ox in 0..<ow {
+                let s = Double(Int(r0[2 * ox]) + Int(r0[2 * ox + 1]) + Int(r1[2 * ox]) + Int(r1[2 * ox + 1])) - blk4
+                out[oy * ow + ox] = UInt16(max(0, min(65535, (s * scale).rounded())))
+            }
+        }
+        finish(out, ow, oh, exposure: exposure, iso: iso, method: "superpixel", black: blk4 / 4, white: white, call: call)
+        return true
+    }
+
+    /// Turn upright to match the preview (the sensor reads out sideways) and send.
+    private func finish(_ img: [UInt16], _ w: Int, _ h: Int, exposure: Double, iso: Double, method: String, black: Double, white: Double, call: CAPPluginCall) {
+        var out = img, rw = w, rh = h
+        if w > h {
+            var rot = [UInt16](repeating: 0, count: w * h)
+            for y in 0..<h { for x in 0..<w { rot[x * h + (h - 1 - y)] = img[y * w + x] } }
+            out = rot; rw = h; rh = w
+        }
+        let data = out.withUnsafeBufferPointer { Data(buffer: $0) }       // little-endian on every iPhone
+        call.resolve([
+            "width": rw, "height": rh, "bits": 16, "linear": true, "method": method, "black": black, "white": white,
+            "exposure": exposure, "iso": iso,
+            "data": data.base64EncodedString()
+        ])
+    }
+
+    /// Fallback: Apple develops the RAW linearly with its processing switched off, then we average 2×2.
     private func develop(_ dng: Data, exposure: Double, iso: Double, call: CAPPluginCall) {
         guard let f = CIRAWFilter(imageData: dng, identifierHint: "com.adobe.raw-image") else { call.reject("Could not read the RAW photo."); return }
         // Linear, untouched: no boost curve, no noise reduction, no sharpening, no local tone mapping, no contrast.
@@ -267,18 +332,6 @@ public class SkyCamPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoDataOutput
                 out[oy * ow + ox] = UInt16(min(65535, s / 12))
             }
         }
-        // Upright, like the preview: the sensor reads out sideways, so turn a landscape result a quarter turn clockwise.
-        var rw = ow, rh = oh
-        if ow > oh {
-            var rot = [UInt16](repeating: 0, count: ow * oh)
-            for y in 0..<oh { for x in 0..<ow { rot[x * oh + (oh - 1 - y)] = out[y * ow + x] } }
-            out = rot; rw = oh; rh = ow
-        }
-        let data = out.withUnsafeBufferPointer { Data(buffer: $0) }       // little-endian on every iPhone
-        call.resolve([
-            "width": rw, "height": rh, "bits": 16, "linear": true,
-            "exposure": exposure, "iso": iso,
-            "data": data.base64EncodedString()
-        ])
+        finish(out, ow, oh, exposure: exposure, iso: iso, method: "developed", black: 0, white: 0, call: call)
     }
 }

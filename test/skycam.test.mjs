@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { FIELD } from '../docs/data/catalog.js';
 import { makeIndex, solveField } from '../docs/js/solve.js';
-import { skyMask, isSky, findStars, planIntegration, skyWord, registerStars, addFrame, halfLum } from '../docs/js/skycam.js';
+import { skyMask, isSky, findStars, planIntegration, skyWord, registerStars, addFrame, halfLum, learnHot, dropHot } from '../docs/js/skycam.js';
 const ok = (name, f) => { const t = Date.now(); f(); console.log('ok  ', name, `(${Date.now() - t} ms)`); };
 const D2R = Math.PI / 180;
 let seed = 11; const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
@@ -112,4 +112,24 @@ ok('a shaky run of frames stacks sharp when lined up, and smears when it is not'
   const plain = run(false), lined = run(true);
   console.log(`      stars found: ${plain.n} without lining up, ${lined.n} with (${lined.used}/${N} frames used)`);
   assert.ok(lined.used >= N - 2, 'too many frames rejected'); assert.ok(lined.n >= 22, `only ${lined.n} of 30 stars after lining up`); assert.ok(lined.n >= plain.n + 5, 'lining up made no real difference');
+});
+
+ok('hot pixels are learned from spots that stay put while the sky moves, and then ignored', () => {
+  const hotA = { x: 401.2, y: 77.9 }, hotB = { x: 1000, y: 650 };
+  let list = [];
+  // Three fixes in different parts of the sky. The hot pixels are at the same place each time (with a little jitter);
+  // the other unrecognised spots (a satellite, a faint star the catalogue lacks) are somewhere new each time.
+  const fixes = [{ ra: 80, dec: 0 }, { ra: 120, dec: 30 }, { ra: 300, dec: 45 }];
+  for (const [k, where] of fixes.entries()) {
+    const spots = [{ x: hotA.x + 0.4 * k, y: hotA.y - 0.3 * k }, { x: hotB.x, y: hotB.y + 0.5 }, { x: 100 + 200 * k, y: 300 }];
+    list = learnHot(list, spots, where);
+    const hot = list.filter((e) => e.hot).length;
+    assert.equal(hot, k < 2 ? 0 : 2, `after fix ${k + 1}: ${hot} hot`);
+  }
+  // Fixes in the SAME part of the sky prove nothing: a real faint star would also stay put.
+  let same = []; for (let k = 0; k < 5; k++) same = learnHot(same, [{ x: 50, y: 50 }], { ra: 10 + 0.5 * k, dec: 20 });
+  assert.equal(same.filter((e) => e.hot).length, 0, 'repeat fixes on one field must not mark anything hot');
+  const stars = [{ x: 401.5, y: 77.5 }, { x: 999.6, y: 650.8 }, { x: 300, y: 300 }];
+  assert.deepEqual(dropHot(stars, list).map((s) => s.x), [300], 'hot spots removed, real star kept');
+  assert.deepEqual(dropHot([{ x: 200.6, y: 39 }, { x: 10, y: 10 }], list, 0.5).map((s) => s.x), [10], 'works on half-size copies too');
 });

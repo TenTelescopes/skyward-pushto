@@ -1,7 +1,7 @@
 // The phone camera as a star finder: open it, collect light, find the sky and the stars, and solve where it points.
 // Browser-side glue around skycam.js (what is sky, where are the stars, how much light) and solve.js (which stars they are).
 
-import { skyMask, findStars, planIntegration, skyWord, drawRejected, halfLum, registerStars, addFrame } from './skycam.js';
+import { skyMask, findStars, planIntegration, skyWord, drawRejected, halfLum, registerStars, addFrame, dropHot } from './skycam.js';
 import { makeIndex, solveField } from './solve.js';
 
 export const MAX_LIGHT = 12;       // most seconds of light to collect
@@ -118,11 +118,12 @@ export class SkyCamera {
  * src: { next(): Promise<RGBA Uint8ClampedArray | null>, canSet, maxFrameTime }
  */
 export async function collectLight(src, w, h, frameTime, opts, status, progress) {
+  if (opts.hotSize && (opts.hotSize.w !== w || opts.hotSize.h !== h)) opts = { ...opts, hot: null };      // the hot-pixel list belongs to one picture size
   const sum = new Float32Array(w * h), cnt = new Uint16Array(w * h), avg = new Float32Array(w * h); let N = 0, plan = null, an = null; const checks = [];
   // Lining frames up. The first frame is the reference; each later frame's brightest stars say how far it has moved.
   // When several frames in a row have not moved, the phone is steady and only every sixth frame is checked.
   const reg = { on: opts.align !== false, ref: null, seen: 0, rejected: 0, moved: 0, maxShift: 0, steady: 0, note: '' };
-  const quick = (d) => { const hl = halfLum(d, w, h); return findStars(hl.lum, hl.w, hl.h, null, 8).stars.slice(0, 14); };
+  const quick = (d) => { const hl = halfLum(d, w, h); return dropHot(findStars(hl.lum, hl.w, hl.h, null, 8).stars, opts.hot, 0.5).slice(0, 14); };      // hot pixels would vote for 'no movement'
   const mean = () => { for (let i = 0; i < sum.length; i++) avg[i] = cnt[i] ? sum[i] / cnt[i] : 0; };
   const t0 = performance.now(), batch = Math.max(1, Math.round(0.5 / frameTime));
   for (;;) {
@@ -143,7 +144,7 @@ export async function collectLight(src, w, h, frameTime, opts, status, progress)
     if (!N) { if (last) throw new Error('The picture never held still long enough to use.'); continue; }
     if ((use && N % batch === 0) || last) {
       mean();
-      an = analyse(avg, w, h);
+      an = analyse(avg, w, h, opts.hot);
       plan = planIntegration({ level: an.mask.level, noise: an.mask.noise, frameTime, collected, snrs: an.cand.map((s) => s.snr), canSetExposure: !!src.canSet, maxFrameTime: src.maxFrameTime || frameTime, maxTotal: MAX_LIGHT });
       checks.push(`${collected.toFixed(2)} s: ${plan.good} clear, ${an.cand.length} possible → ${plan.done ? 'enough' : `aim for ${plan.total.toFixed(1)} s`}`);
       status(`Sky is ${plan.sky}. ${collected.toFixed(1)} s of light, ${plan.good} clear stars${reg.moved ? ', lining up a moving picture' : ''}. ${plan.done ? 'Enough.' : `Collecting to about ${plan.total.toFixed(1)} s…`}`);
@@ -187,7 +188,7 @@ export class NativeSkyCamera {
     if (!this.info.raw) return this._frame();
     const f = await this.p.raw(), bin = atob(f.data), n = bin.length >> 1, lum = new Float32Array(n), k = 765 / 65535;
     for (let i = 0, j = 0; i < n; i++, j += 2) lum[i] = (bin.charCodeAt(j) | (bin.charCodeAt(j + 1) << 8)) * k;
-    return { lum, w: f.width, h: f.height, exposure: f.exposure, iso: f.iso, raw: true };
+    return { lum, w: f.width, h: f.height, exposure: f.exposure, iso: f.iso, raw: true, method: f.method || 'developed', black: f.black, white: f.white };
   }
   // One preview frame as RGBA (grey), so the rest of the app treats it exactly like a web-camera frame.
   async _frame() {
@@ -246,18 +247,18 @@ export class NativeSkyCamera {
       status('Matching the stars to the star map…'); await new Promise((r) => setTimeout(r, 30));
       const scale = (opts.scale && (!opts.scale.w || (opts.scale.w === w && opts.scale.h === h)) ? opts.scale : null) || (I.fieldOfView > 20 && I.fieldOfView < 130 ? { f: focalFromFov(I.fieldOfView, w, h), tol: 0.15, from: 'the phone' } : null);
       const s = solve(an.stars, w, h, opts.FIELD, opts.prior, scale);
-      return { reg, lum: avg, w, h, an, sol: s.sol, ms: s.ms, usedPrior: s.usedPrior, usedScale: s.usedScale, scaleHint: scale, plan, frameTime, source: `set by the app (ISO ${Math.round(fr.iso)})${fr.raw ? '; RAW, developed linearly with noise reduction and sharpening off, 2×2 averaged' : '; processed preview frames (this camera offers no RAW)'}; trial: ${trial.join(' → ')}`, interval: frameTime, probe: null, N, collected, took, checks, log: this.log.slice(), settings: { width: w, height: h, exposureTime: frameTime, iso: fr.iso }, caps: { exposureTime: { min: I.minExposure, max: I.maxExposure }, iso: { min: I.minISO, max: I.maxISO } }, label: `${I.camera} (native)` };
+      return { reg, lum: avg, w, h, an, sol: s.sol, ms: s.ms, usedPrior: s.usedPrior, usedScale: s.usedScale, scaleHint: scale, plan, frameTime, source: `set by the app (ISO ${Math.round(fr.iso)})${fr.raw ? (fr.method === 'superpixel' ? `; RAW, superpixel-binned from the sensor (each 2×2 block of photosites added; black level ${Math.round(fr.black)}, white ${Math.round(fr.white)}; no demosaic, no white balance)` : '; RAW, developed linearly with noise reduction and sharpening off, 2×2 averaged (superpixel not possible on this phone)') : '; processed preview frames (this camera offers no RAW)'}; trial: ${trial.join(' → ')}`, interval: frameTime, probe: null, N, collected, took, checks, log: this.log.slice(), settings: { width: w, height: h, exposureTime: frameTime, iso: fr.iso }, caps: { exposureTime: { min: I.minExposure, max: I.maxExposure }, iso: { min: I.minISO, max: I.maxISO } }, label: `${I.camera} (native)` };
     } finally { this.busy = false; }
   }
 }
 
 /** Sky mask, star candidates and trusted stars for one brightness image. */
-export function analyse(lum, w, h) {
+export function analyse(lum, w, h, hot) {
   let mask = skyMask(lum, w, h);
-  const cand = findStars(lum, w, h, mask, 3.5).stars;        // everything that might be a star: judges the plan and vets the mask
+  const cand = dropHot(findStars(lum, w, h, mask, 3.5).stars, hot);        // everything that might be a star: judges the plan and vets the mask
   mask = skyMask(lum, w, h, cand);
   const inSky = (s) => mask.sky[Math.min(mask.th - 1, (s.y / mask.T) | 0) * mask.tw + Math.min(mask.tw - 1, (s.x / mask.T) | 0)];
-  return { mask, cand: cand.filter(inSky), stars: findStars(lum, w, h, mask, 6).stars };
+  return { mask, cand: cand.filter(inSky), stars: dropHot(findStars(lum, w, h, mask, 6).stars, hot) };
 }
 /** Diagonal field-of-view limits (degrees) for a focal length known to within `tol` (a fraction). */
 export function fovRange(f, w, h, tol) { const d = Math.hypot(w, h) / 2; return { fovMin: 2 * Math.atan(d / (f * (1 + tol))) * 180 / Math.PI, fovMax: 2 * Math.atan(d / (f / (1 + tol))) * 180 / Math.PI }; }
@@ -312,6 +313,7 @@ export function reportText(r, version) {
     `Sky: ${r.plan.sky}; level ${r.an.mask.level.toFixed(1)} of 765, noise ${r.an.mask.noise.toFixed(2)}; ${(r.an.mask.fraction * 100).toFixed(0)}% of the picture counted as sky`,
     `Plan: ${r.plan.why}${r.plan.capped ? ' (capped)' : ''}; ${r.plan.frameWhy}`,
     `Checks along the way: ${r.checks.join(' | ')}`,
+    `Hot pixels: ${r.hotKnown || 0} known and ignored${r.hotNew ? `, ${r.hotNew} newly confirmed by this fix` : ''}`,
     `Stars: ${r.an.stars.length} clear, ${r.an.cand.length} possible; brightest ten (signal-to-noise): ${r.an.stars.slice(0, 10).map((s) => s.snr.toFixed(0)).join(', ') || 'none'}`,
     `What the camera was asked for: ${r.log.join('; ')}`,
     `Settings in use: ${JSON.stringify(pick(r.settings, KS))}`,

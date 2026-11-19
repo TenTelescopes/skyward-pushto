@@ -20,6 +20,7 @@ import { submitScore, fetchBoard, flushQueue } from './wixscores.js';
 import qrcode from '../vendor/qrcode.mjs';
 import { analyzeSwing, analyzeAltSweep, analyzeHorizonTurn, gradeCheck, guessModel, GRADE } from './check.js';
 import { SkyCamera, NativeSkyCamera, drawResult, reportText, hms as raHms } from './camera.js';
+import { learnHot } from './skycam.js';
 import { project as projectStar } from './solve.js';
 import { FIELD as STAR_FIELD } from '../data/catalog.js';
 
@@ -2947,9 +2948,18 @@ async function cameraFind() {
     let refR = null;
     // The picture scale learned from an earlier fix with this camera (kept per picture size); none the first time.
     const camKey = () => skyCam && skyCam.v ? `${skyCam.isNative ? 'n' : 'w'}` : 'w', known = (state.camScale || {})[camKey()];
-    const r = await skyCam.find({ FIELD: STAR_FIELD, prior, scale: known ? { f: known.f, tol: 0.05, from: 'an earlier fix', w: known.w, h: known.h } : null, onReference: () => { refR = avgR(0.3) || (sensors && sensors.R) || null; }, align: !/[?&]noalign/.test(location.search), status: (t) => { const s = $('#cam-status'); if (s) s.textContent = t; }, progress: (f) => { const b = $('#cam-bar'); if (b) b.style.width = `${f * 100}%`; } });
+    const hp = (state.hotPix || {})[camKey()];
+    const r = await skyCam.find({ FIELD: STAR_FIELD, prior, hot: hp ? hp.list : null, hotSize: hp ? { w: hp.w, h: hp.h } : null, scale: known ? { f: known.f, tol: 0.05, from: 'an earlier fix', w: known.w, h: known.h } : null, onReference: () => { refR = avgR(0.3) || (sensors && sensors.R) || null; }, align: !/[?&]noalign/.test(location.search), status: (t) => { const s = $('#cam-status'); if (s) s.textContent = t; }, progress: (f) => { const b = $('#cam-bar'); if (b) b.style.width = `${f * 100}%`; } });
     if (!r) return;
     camLast = r; camNote = r.sol ? applyCameraFix(r.sol, refR) : '';
+    // Learn hot pixels: unrecognised spots that stay on the same pixel while the sky moves. Only from confident fixes.
+    { const same = hp && hp.w === r.w && hp.h === r.h, before = same ? hp.list.filter((e) => e.hot).length : 0; r.hotKnown = before;
+      if (r.sol && r.sol.confidence === 'high') {
+        const known = new Set(r.sol.matches.map((m) => `${Math.round(m.x)},${Math.round(m.y)}`)), spots = r.an.stars.filter((s) => !known.has(`${Math.round(s.x)},${Math.round(s.y)}`));
+        const list = learnHot(same ? hp.list : [], spots, { ra: r.sol.ra, dec: r.sol.dec });
+        r.hotNew = list.filter((e) => e.hot).length - before;
+        state.hotPix = { ...(state.hotPix || {}), [camKey()]: { w: r.w, h: r.h, list } }; save();
+      } }
     if (r.sol && r.sol.confidence === 'high') { state.camScale = { ...(state.camScale || {}), [camKey()]: { f: r.sol.f, w: r.w, h: r.h } }; save(); }
   } catch (e) { toast('Camera: ' + (e.message || e), 6000); }
   if (tab === 'camera') { renderCamera(); const c = $('#cam-pic'); if (c) c.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }

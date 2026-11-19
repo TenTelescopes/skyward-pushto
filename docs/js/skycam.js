@@ -258,6 +258,36 @@ function addLum(sum, cnt, lum, w, h, tf) {
   }
 }
 
+// ---- hot pixels ---------------------------------------------------------------------------------------------------------
+// A defective pixel stays on the same spot of the sensor; a star moves across it whenever the telescope points somewhere
+// else. So a spot that turns up, unrecognised, at the same pixel in fixes taken in clearly different parts of the sky is
+// a hot pixel, and is ignored from then on. The list builds itself from ordinary use; no dark frames are needed.
+export const HOT_NEAR = 1.6;          // pixels: "the same spot"
+export const HOT_SPREAD = 5;          // degrees: fixes this far apart count as different parts of the sky
+export const HOT_TIMES = 3;           // seen in this many such fixes → hot
+const sepD = (a, b) => { const r = Math.PI / 180, c = Math.sin(a.dec * r) * Math.sin(b.dec * r) + Math.cos(a.dec * r) * Math.cos(b.dec * r) * Math.cos((a.ra - b.ra) * r); return Math.acos(Math.max(-1, Math.min(1, c))) / r; };
+/**
+ * Update the list after a solved fix. `spots` are the detections the solver did NOT recognise ({x, y}, picture pixels);
+ * `where` is the fix's centre {ra, dec}. Entries: { x, y, at: [{ra, dec}, ...], hot }. Returns the new list (≤ 400 entries).
+ */
+export function learnHot(list, spots, where) {
+  const out = (list || []).map((e) => ({ ...e, at: e.at.slice() }));
+  for (const s of spots) {
+    let e = out.find((q) => Math.abs(q.x - s.x) < HOT_NEAR && Math.abs(q.y - s.y) < HOT_NEAR);
+    if (!e) { e = { x: s.x, y: s.y, at: [], hot: false }; out.push(e); }
+    if (!e.at.some((a) => sepD(a, where) < HOT_SPREAD)) e.at.push({ ra: +where.ra.toFixed(2), dec: +where.dec.toFixed(2) });
+    if (e.at.length > 6) e.at.shift();
+    e.hot = e.hot || e.at.length >= HOT_TIMES;
+  }
+  // Keep the confirmed ones and the most recent suspects.
+  return out.filter((e) => e.hot).concat(out.filter((e) => !e.hot).slice(-300)).slice(0, 400);
+}
+/** Detections with known hot pixels removed. `k` scales picture coordinates to the list's (0.5 for half-size copies). */
+export function dropHot(stars, list, k = 1) {
+  const hot = (list || []).filter((e) => e.hot); if (!hot.length) return stars;
+  return stars.filter((s) => !hot.some((e) => Math.abs(e.x * k - s.x) < HOT_NEAR * Math.max(k, 0.75) && Math.abs(e.y * k - s.y) < HOT_NEAR * Math.max(k, 0.75)));
+}
+
 /** Words for how bright the sky background is, as a share of the camera's full range. */
 export function skyWord(level) {
   const f = level / FULL;

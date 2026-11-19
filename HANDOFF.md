@@ -192,3 +192,11 @@ unrelated extra star in the object-page sentence. Still open with Bryan: whether
 - `skycam.js`: `halfLum` and `addFrame` accept a brightness array (length w·h) as well as RGBA.
 - `camera.js` `NativeSkyCamera`: `_sci()` = RAW when offered (brightness 0..765 from 16-bit), else preview; exposure trial judged on that frame's sky (`levelOf`); under a bright sky with RAW, gain is reduced before exposure. Display of RAW frames uses a square-root stretch (display only). Report says RAW or "offers no RAW".
 - Unknowns: does RAW capture honour the custom exposure (believed yes; the report shows exposure/ISO read from the photo's EXIF); time per RAW frame on a phone (capture + develop + 6 MB over the bridge); whether the quarter-turn leaves the picture upside down (harmless to solving).
+
+## Build 84 — superpixel RAW and a learned hot-pixel list (Nov 19)
+
+- `SkyCamPlugin.swift` `raw()`: from `photo.pixelBuffer` (Bayer, 16 bits per photosite) sums each 2×2 block, subtracts the black level (DNG `BlackLevel`, one or four values, via ImageIO) and scales by `WhiteLevel` so 65535 = four photosites at white. No demosaic, colour matrix or white balance. Falls back to the Build 83 `CIRAWFilter` path if the buffer is planar/odd or the DNG tags are missing. Result carries `method`, `black`, `white`. **Never compiled.** Lens distortion and vignetting are no longer corrected on the superpixel path.
+- `skycam.js` `learnHot(list, spots, where)` / `dropHot(stars, list, k)`: an unrecognised spot at the same pixel (±1.6 px) in fixes ≥ 5° apart, three times → hot. Learned only from high-confidence fixes; stored per camera ('w'/'n') with its picture size in `state.hotPix`. Applied to candidates, trusted stars and the half-size stars used for lining frames up.
+- Report lines: RAW method with black/white levels; "Hot pixels: N known and ignored, M newly confirmed".
+- Note: a lone hot photosite is already rejected by the single-pixel test in `findStars`; the list catches small clusters and defects that a short star might otherwise be confused with.
+- Walk: `tools/walk/b84.js` (three fake skies with the same defects, persistent browser profile).
