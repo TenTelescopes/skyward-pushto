@@ -16,8 +16,7 @@ export const PAD = 2;               // stay this far above a marked obstruction
 
 /** The night a moment belongs to: from this evening's sunset to the next sunrise (before noon it is still last night). */
 export function nightOf(sky, now = new Date()) {
-  const day = now.getHours() < 12 ? new Date(now.getTime() - 12 * 3600000) : now;
-  const n = sky.night(day);
+  const n = sky.nightAt(now), ref = n.set || n.naut || n.astro || now, day = new Date(ref.getTime());   // named after the evening it starts
   return { ...n, id: `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}` };
 }
 

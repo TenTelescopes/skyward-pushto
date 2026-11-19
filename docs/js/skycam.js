@@ -180,6 +180,10 @@ export function findStars(lum, w, h, mask, K = 6) {
 /** Half-size brightness image straight from canvas RGBA data (each output pixel is the mean of a 2×2 block). */
 export function halfLum(rgba, w, h) {
   const w2 = w >> 1, h2 = h >> 1, out = new Float32Array(w2 * h2);
+  if (rgba.length === w * h) {                       // already brightness (a RAW frame from the native camera)
+    for (let y = 0; y < h2; y++) { const i = 2 * y * w, j = i + w; for (let x = 0; x < w2; x++) out[y * w2 + x] = (rgba[i + 2 * x] + rgba[i + 2 * x + 1] + rgba[j + 2 * x] + rgba[j + 2 * x + 1]) / 4; }
+    return { lum: out, w: w2, h: h2 };
+  }
   for (let y = 0; y < h2; y++) { let i = (2 * y * w) * 4, j = i + w * 4; for (let x = 0; x < w2; x++, i += 8, j += 8) out[y * w2 + x] = (rgba[i] + rgba[i + 1] + rgba[i + 2] + rgba[i + 4] + rgba[i + 5] + rgba[i + 6] + rgba[j] + rgba[j + 1] + rgba[j + 2] + rgba[j + 4] + rgba[j + 5] + rgba[j + 6]) / 4; }
   return { lum: out, w: w2, h: h2 };
 }
@@ -229,6 +233,7 @@ export function registerStars(ref, cur, w, h, tol = 2.5) {
  * `sum` collects brightness, `cnt` how many frames reached each pixel (the edges get fewer once frames are shifted).
  */
 export function addFrame(sum, cnt, rgba, w, h, tf) {
+  if (rgba.length === sum.length) return addLum(sum, cnt, rgba, w, h, tf);      // a brightness frame, not RGBA
   if (!tf || (Math.abs(tf.dx) < 0.25 && Math.abs(tf.dy) < 0.25 && Math.abs(tf.rot) < 1e-4)) {
     for (let i = 0, j = 0; i < sum.length; i++, j += 4) { sum[i] += rgba[j] + rgba[j + 1] + rgba[j + 2]; cnt[i]++; }
     return;
@@ -241,6 +246,15 @@ export function addFrame(sum, cnt, rgba, w, h, tf) {
       const u = sx | 0, v = sy | 0; if (sx < 0 || sy < 0 || u >= w || v >= h) continue;
       const j = (v * w + u) * 4; sum[i] += rgba[j] + rgba[j + 1] + rgba[j + 2]; cnt[i]++;
     }
+  }
+}
+
+function addLum(sum, cnt, lum, w, h, tf) {
+  if (!tf || (Math.abs(tf.dx) < 0.25 && Math.abs(tf.dy) < 0.25 && Math.abs(tf.rot) < 1e-4)) { for (let i = 0; i < sum.length; i++) { sum[i] += lum[i]; cnt[i]++; } return; }
+  const c = Math.cos(tf.rot), s = Math.sin(tf.rot), cx = w / 2, cy = h / 2;
+  for (let y = 0; y < h; y++) {
+    const ry = y - cy - tf.dy; let sx = cx + c * (0 - cx - tf.dx) + s * ry + 0.5, sy = cy - s * (0 - cx - tf.dx) + c * ry + 0.5;
+    for (let x = 0, i = y * w; x < w; x++, i++, sx += c, sy -= s) { const u = sx | 0, v = sy | 0; if (sx < 0 || sy < 0 || u >= w || v >= h) continue; sum[i] += lum[v * w + u]; cnt[i]++; }
   }
 }
 

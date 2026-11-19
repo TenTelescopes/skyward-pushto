@@ -160,18 +160,36 @@ export async function collectLight(src, w, h, frameTime, opts, status, progress)
  * plugin: window.Capacitor.Plugins.SkyCam — open(), setExposure({seconds, iso}), frame(), close().
  * Draws its own preview into a canvas, because there is no <video> for a native camera.
  */
+/** Sky level and noise of a frame (RGBA or brightness), from a reduced copy, judged on the sky only. */
+function levelOf(fr) {
+  const k = Math.max(1, Math.round(Math.max(fr.w, fr.h) / 480)), w = Math.floor(fr.w / k), h = Math.floor(fr.h / k), lum = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    let s = 0; for (let yy = 0; yy < k; yy++) for (let xx = 0; xx < k; xx++) { const i = (y * k + yy) * fr.w + x * k + xx; s += fr.lum ? fr.lum[i] : fr.rgba[4 * i] + fr.rgba[4 * i + 1] + fr.rgba[4 * i + 2]; }
+    lum[y * w + x] = s / (k * k);
+  }
+  return skyMask(lum, w, h);
+}
+
 export class NativeSkyCamera {
   constructor(plugin, canvas, overlay) { this.p = plugin; this.v = canvas; this.ov = overlay; this.stream = null; this.isNative = true; this.log = []; this.busy = false; this.alive = false; this.opened = false; this.info = null; this.set = null; }
   get on() { return this.opened; }
   async open() {
     this.info = await this.p.open(); this.opened = true; this.alive = true;
-    this.log = [`native camera: ${this.info.camera}, exposure ${fmtSec(this.info.minExposure)} to ${fmtSec(this.info.maxExposure)}, ISO ${Math.round(this.info.minISO)}–${Math.round(this.info.maxISO)}, lens ${Number(this.info.fieldOfView).toFixed(0)}° wide`];
+    this.log = [`native camera: ${this.info.camera}${this.info.raw ? ', RAW' : ', no RAW (processed frames)'}, exposure ${fmtSec(this.info.minExposure)} to ${fmtSec(this.info.maxExposure)}, ISO ${Math.round(this.info.minISO)}–${Math.round(this.info.maxISO)}, lens ${Number(this.info.fieldOfView).toFixed(0)}° wide`];
     await this._expose(Math.min(this.info.maxExposure, 0.1), this.info.maxISO * 0.6);
     this._live();
   }
   async close() { this.alive = false; this.opened = false; try { await this.p.close(); } catch (e) {} }
   async _expose(seconds, iso) { this.set = await this.p.setExposure({ seconds, iso }); this.log.push(`set exposure ${fmtSec(this.set.exposure)}, ISO ${Math.round(this.set.iso)}`); return this.set; }
-  // One frame as RGBA (grey), so the rest of the app treats it exactly like a web-camera frame.
+  // A frame for measuring: RAW when the camera offers it (linear, no noise reduction or sharpening, averaged 2×2 by the
+  // plug-in), returned as brightness 0..765 so the rest of the app reads it like any other frame. Otherwise a preview frame.
+  async _sci() {
+    if (!this.info.raw) return this._frame();
+    const f = await this.p.raw(), bin = atob(f.data), n = bin.length >> 1, lum = new Float32Array(n), k = 765 / 65535;
+    for (let i = 0, j = 0; i < n; i++, j += 2) lum[i] = (bin.charCodeAt(j) | (bin.charCodeAt(j + 1) << 8)) * k;
+    return { lum, w: f.width, h: f.height, exposure: f.exposure, iso: f.iso, raw: true };
+  }
+  // One preview frame as RGBA (grey), so the rest of the app treats it exactly like a web-camera frame.
   async _frame() {
     const f = await this.p.frame(), bin = atob(f.data), n = bin.length, rgba = new Uint8ClampedArray(n * 4);
     for (let i = 0, j = 0; i < n; i++, j += 4) { const y = bin.charCodeAt(i); rgba[j] = y; rgba[j + 1] = y; rgba[j + 2] = y; rgba[j + 3] = 255; }
@@ -180,7 +198,11 @@ export class NativeSkyCamera {
   _show(fr) {
     const cv = this.v; if (!cv || !cv.isConnected) return;
     const k = 480 / Math.max(fr.w, fr.h), w = Math.round(fr.w * k), h = Math.round(fr.h * k), big = this._bc || (this._bc = document.createElement('canvas'));
-    big.width = fr.w; big.height = fr.h; big.getContext('2d').putImageData(new ImageData(fr.rgba, fr.w, fr.h), 0, 0);
+    let rgba = fr.rgba;
+    if (!rgba) {                                        // a linear RAW frame: brighten for the eye (square root), for display only
+      rgba = new Uint8ClampedArray(fr.w * fr.h * 4); for (let i = 0, j = 0; i < fr.lum.length; i++, j += 4) { const g = 255 * Math.sqrt(Math.min(1, fr.lum[i] / 765)); rgba[j] = rgba[j + 1] = rgba[j + 2] = g; rgba[j + 3] = 255; }
+    }
+    big.width = fr.w; big.height = fr.h; big.getContext('2d').putImageData(new ImageData(rgba, fr.w, fr.h), 0, 0);
     cv.width = w; cv.height = h; const cx = cv.getContext('2d', { willReadFrequently: true }); cx.drawImage(big, 0, 0, w, h);
     const d = cx.getImageData(0, 0, w, h).data, lum = new Float32Array(w * h); for (let i = 0, j = 0; i < lum.length; i++, j += 4) lum[i] = d[j] + d[j + 1] + d[j + 2];
     const m = skyMask(lum, w, h);
@@ -205,22 +227,26 @@ export class NativeSkyCamera {
       const I = this.info; let exp = this.set.exposure, iso = this.set.iso, fr = null; const trial = [];
       for (let k = 0; k < 5; k++) {
         status(`Reading the sky to choose the exposure (${fmtSec(exp)})…`);
-        fr = await this._frame(); const m = this._show(fr) || skyMask(new Float32Array(1), 1, 1), frac = m.level / 765;
+        fr = await this._sci(); this._show(fr); const m = levelOf(fr), frac = m.level / 765;
         trial.push(`${fmtSec(fr.exposure)} ISO ${Math.round(fr.iso)}: sky ${m.level.toFixed(1)}`);
         const p = planIntegration({ level: m.level, noise: m.noise, frameTime: fr.exposure, collected: fr.exposure, canSetExposure: true, maxFrameTime: I.maxExposure });
         let want = Math.min(I.maxExposure, Math.max(I.minExposure, p.wantedFrameTime)), wantIso = iso;
-        if (frac > 0.20 && want <= 1 / 25) wantIso = Math.max(I.minISO, iso * 0.11 / frac);          // already short and still bright: turn the gain down
+        if (fr.raw && frac > 0.20) {
+          // RAW frames each cost a photo, so under a bright sky turn the GAIN down first and keep frames long (fewer of them,
+          // and more room before stars saturate); only shorten the exposure once the gain is as low as it goes.
+          const need = 0.11 / frac; wantIso = Math.max(I.minISO, iso * need); want = Math.min(I.maxExposure, Math.max(I.minExposure, fr.exposure * need * iso / wantIso));
+        } else if (frac > 0.20 && want <= 1 / 25) wantIso = Math.max(I.minISO, iso * 0.11 / frac);          // already short and still bright: turn the gain down
         if (frac < 0.06 && fr.exposure >= I.maxExposure * 0.98) wantIso = Math.min(I.maxISO, iso * Math.min(2, 0.11 / Math.max(frac, 0.01)));   // as long as it goes and still dark: turn it up
         if (Math.abs(want / fr.exposure - 1) < 0.25 && Math.abs(wantIso / iso - 1) < 0.2) break;
         const s = await this._expose(want, wantIso); exp = s.exposure; iso = s.iso;
       }
       const frameTime = fr.exposure, w = fr.w, h = fr.h; let first = fr;
-      const src = { next: async () => { if (!this.alive) return null; if (first) { const f = first; first = null; return f.rgba; } const f = await this._frame(); this._show(f); return f.rgba; }, canSet: true, maxFrameTime: I.maxExposure };
+      const src = { next: async () => { if (!this.alive) return null; if (first) { const f = first; first = null; return f.lum || f.rgba; } const f = await this._sci(); this._show(f); return f.lum || f.rgba; }, canSet: true, maxFrameTime: I.maxExposure };
       const { avg, an, plan, N, reg, checks, took, collected } = await collectLight(src, w, h, frameTime, opts, status, progress);
       status('Matching the stars to the star map…'); await new Promise((r) => setTimeout(r, 30));
       const scale = (opts.scale && (!opts.scale.w || (opts.scale.w === w && opts.scale.h === h)) ? opts.scale : null) || (I.fieldOfView > 20 && I.fieldOfView < 130 ? { f: focalFromFov(I.fieldOfView, w, h), tol: 0.15, from: 'the phone' } : null);
       const s = solve(an.stars, w, h, opts.FIELD, opts.prior, scale);
-      return { reg, lum: avg, w, h, an, sol: s.sol, ms: s.ms, usedPrior: s.usedPrior, usedScale: s.usedScale, scaleHint: scale, plan, frameTime, source: `set by the app (ISO ${Math.round(fr.iso)}); trial: ${trial.join(' → ')}`, interval: frameTime, probe: null, N, collected, took, checks, log: this.log.slice(), settings: { width: w, height: h, exposureTime: frameTime, iso: fr.iso }, caps: { exposureTime: { min: I.minExposure, max: I.maxExposure }, iso: { min: I.minISO, max: I.maxISO } }, label: `${I.camera} (native)` };
+      return { reg, lum: avg, w, h, an, sol: s.sol, ms: s.ms, usedPrior: s.usedPrior, usedScale: s.usedScale, scaleHint: scale, plan, frameTime, source: `set by the app (ISO ${Math.round(fr.iso)})${fr.raw ? '; RAW, developed linearly with noise reduction and sharpening off, 2×2 averaged' : '; processed preview frames (this camera offers no RAW)'}; trial: ${trial.join(' → ')}`, interval: frameTime, probe: null, N, collected, took, checks, log: this.log.slice(), settings: { width: w, height: h, exposureTime: frameTime, iso: fr.iso }, caps: { exposureTime: { min: I.minExposure, max: I.maxExposure }, iso: { min: I.minISO, max: I.maxISO } }, label: `${I.camera} (native)` };
     } finally { this.busy = false; }
   }
 }

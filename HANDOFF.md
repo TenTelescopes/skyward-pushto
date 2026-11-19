@@ -177,3 +177,18 @@ unrelated extra star in the object-page sentence. Still open with Bryan: whether
 - Sources of the scale: a previous high-confidence fix (`state.camScale` keyed 'w' web / 'n' native, with the picture size it belongs to; ±5%), or, in the native app before any fix, the lens angle the phone reports (`fieldOfView` from the plug-in, taken as the long side; ±15% because video crop is not known).
 - Report gains arcminutes per pixel and a "Scale hint" line.
 - Pixel pitch and physical focal length are not needed: the plate scale is focal length in pixels, which the stars (or the reported lens angle) give directly.
+
+## Build 82 — times follow the calendar (Nov 19)
+
+- Bug: an app left open in the background kept showing the day it was drawn (sunset, darkness, Moon) until a screen was redrawn; the start screen in the morning used last night's numbers ("Daylight", Moon set from the night before); a plan starting after midnight showed the next day's sunset.
+- `sky.nightAt(when)` (astro.js): last night until sunrise, tonight after. Used by the plan header, `defaultStart`, the start-screen line, and `nightOf` (marathon; ids are still named after the evening).
+- Plans roll forward when their night is over (after that night's sunrise), not "two hours after the session".
+- `refreshForTime()` redraws the open screen (and the start screen if showing) when the app comes back after 10+ minutes or on a new date, and a once-a-minute check catches the date turning while it sits open. Skipped while the plan is being edited.
+- Walk: `tools/walk/b82.js`.
+
+## Build 83 — RAW frames from the native camera (Nov 19)
+
+- `SkyCamPlugin.swift`: session preset `.photo` (full 4:3 sensor); `AVCapturePhotoOutput` with the first Bayer RAW format; new `raw()` — capture, `CIRAWFilter` with boost/noise reduction/sharpness/contrast/detail/local tone map at 0 and lens correction on, rendered linear (linear sRGB, RGBA16), 2×2 block average of (R+G+B)/3, turned upright if landscape, returned as 16-bit LE base64 (`bits: 16, linear: true`). Preview `frame()` now block-averages down to ≤ ~1000 px (the `.photo` preset can deliver large preview frames). `open()` reports `raw` and `binned`. **Never compiled.**
+- `skycam.js`: `halfLum` and `addFrame` accept a brightness array (length w·h) as well as RGBA.
+- `camera.js` `NativeSkyCamera`: `_sci()` = RAW when offered (brightness 0..765 from 16-bit), else preview; exposure trial judged on that frame's sky (`levelOf`); under a bright sky with RAW, gain is reduced before exposure. Display of RAW frames uses a square-root stretch (display only). Report says RAW or "offers no RAW".
+- Unknowns: does RAW capture honour the custom exposure (believed yes; the report shows exposure/ISO read from the photo's EXIF); time per RAW frame on a phone (capture + develop + 6 MB over the bridge); whether the quarter-turn leaves the picture upside down (harmless to solving).

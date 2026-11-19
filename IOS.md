@@ -79,7 +79,18 @@ If the build fails, copy the red error lines (click the red ⊗ at the top of th
 
 ## What the plug-in does
 
-`SkyCamPlugin.swift` opens the back wide camera at 1920×1080, locks focus at infinity and offers four calls to the
-app: `open`, `setExposure({ seconds, iso })`, `frame` (one frame of plain brightness) and `close`. The app
-(`docs/js/camera.js`, class `NativeSkyCamera`) reads the sky's brightness, sets the exposure and gain to suit it,
-then collects frames, lines them up, and recognises the stars exactly as the web version does.
+`SkyCamPlugin.swift` opens the back wide camera using the whole 4:3 sensor, locks focus at infinity and offers five
+calls to the app: `open`, `setExposure({ seconds, iso })`, `frame` (a small preview frame, shrunk by averaging),
+`raw` and `close`.
+
+`raw` takes a **Bayer RAW photo** (the sensor's own data, not Apple ProRAW, which is already processed), develops it
+**linearly** with noise reduction, sharpening, contrast and tone mapping switched off and lens distortion corrected,
+then averages every 2×2 block of pixels itself, so every pixel's light is counted by our code. It returns 16-bit
+brightness. If a phone offers no RAW, the app falls back to the preview frames and says so in the technical report.
+
+The app (`docs/js/camera.js`, class `NativeSkyCamera`) reads the sky's brightness from the RAW frames, sets the gain
+and exposure to suit it (under a bright sky it turns the gain down before it shortens the exposure, so it needs fewer
+photos), then collects frames, lines them up, and recognises the stars exactly as the web version does.
+
+If you added the Swift files before Build 83, copy the new `native/ios/SkyCamPlugin.swift` over the one in Xcode's
+App folder (or delete it there and drag the new one in again).

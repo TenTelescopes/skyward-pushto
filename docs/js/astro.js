@@ -127,6 +127,14 @@ export class Sky {
     const mrise = d(A.SearchRiseSet('Moon', obs, +1, t0, 1)), mset = d(A.SearchRiseSet('Moon', obs, -1, t0, 1));
     return { set, naut, astro, astroAm, nautAm, rise, moonRise: mrise, moonSet: mset, moonFrac: A.Illumination('Moon', A.MakeTime(astro || naut || set || noon)).phase_fraction };
   }
+  /**
+   * The night that `when` belongs to: last night until the Sun has risen, tonight after that.
+   * (night(day) is keyed to a calendar date, so a time after midnight or in the morning needs this to pick the right one.)
+   */
+  nightAt(when = new Date()) {
+    const prev = this.night(new Date(when.getTime() - 864e5)), end = prev.rise || prev.astroAm || prev.nautAm;
+    return end && when < end ? prev : this.night(when);
+  }
   sunAltAz(date = new Date()) { const t = A.MakeTime(date), obs = this.observer(); const eq = A.Equator('Sun', t, obs, true, true); const h = A.Horizon(t, obs, eq.ra, eq.dec, 'normal'); return { alt: h.altitude, az: h.azimuth }; }
   sunAlt(date = new Date()) { const t = A.MakeTime(date), obs = this.observer(); const eq = A.Equator('Sun', t, obs, true, true); return A.Horizon(t, obs, eq.ra, eq.dec, 'normal').altitude; }
 }

@@ -366,8 +366,9 @@ function planState() {
   return state.plan;
 }
 function defaultStart() {
-  const now = new Date(), n = sky.night(now), dark = n.astro || n.naut || n.set;
+  const now = new Date(), n = sky.nightAt(now), dark = n.astro || n.naut || n.set;
   if (dark && now < dark) return dark;
+  if (n.rise && now > n.rise) { const t = sky.night(now), d2 = t.astro || t.naut || t.set; if (d2 && now < d2) return d2; }      // daytime: tonight
   const r = new Date(Math.ceil(now.getTime() / 900000) * 900000);
   return r;
 }
@@ -385,8 +386,9 @@ function dayLabel(d) {
 }
 function renderPlan() {
   const el = $('#tab-plan'), P = planState();
-  if (new Date(P.start).getTime() + P.hours * 3600000 < Date.now() - 2 * 3600000) { P.start = defaultStart().toISOString(); planRows = null; save(); }   // last session is over: plan for the next one
-  const start = new Date(P.start), end = new Date(start.getTime() + P.hours * 3600000), n = sky.night(start);
+  { const pn = sky.nightAt(new Date(P.start)), over = pn.rise ? Date.now() > pn.rise.getTime() : new Date(P.start).getTime() + P.hours * 3600000 < Date.now() - 2 * 3600000;
+    if (over) { P.start = defaultStart().toISOString(); planRows = null; save(); } }   // that night is over: plan for the next one
+  const start = new Date(P.start), end = new Date(start.getTime() + P.hours * 3600000), n = sky.nightAt(start);
   const moonTxt = `${Math.round(n.moonFrac * 100)}% lit${n.moonRise ? ', rises ' + hm(n.moonRise) : ''}${n.moonSet ? ', sets ' + hm(n.moonSet) : ''}`;
   const T = P.items.filter((x) => !x.sync), nSync = P.items.length - T.length, nDone = T.filter((x) => P.done && P.done[x.key]).length;
   const skyName = state.skyq ? state.skyq.label : 'Suburban sky (a guess)';
@@ -2566,6 +2568,17 @@ function updateStatus() {
 
 // ---------------------------------------------------------------- keep the screen awake; notice when the app was put away
 let wakeLock = null, awake = 'unknown', hiddenAt = 0;
+// Times on screen (sunset, darkness, what is up) are worked out when a screen is drawn. A phone keeps the app open in
+// the background for days, so redraw when it comes back after a while or the date has changed, and once a minute
+// check whether the day has turned while it sat open.
+const dayKey = () => { const d = new Date(); return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`; };
+let shownDay = dayKey();
+function refreshForTime() {
+  shownDay = dayKey(); planRows = null; rateCache.clear();
+  if (!$('#gate').classList.contains('hidden')) renderLaunch();
+  if (['plan', 'find', 'game', 'more'].includes(tab) && !(planEdit || planReorder)) showTab(tab);
+}
+setInterval(() => { if (document.visibilityState === 'visible' && dayKey() !== shownDay) refreshForTime(); }, 60000);
 async function keepAwake() {
   try { const K = cap('KeepAwake'); if (K) { await K.keepAwake(); awake = 'on'; return; } } catch (e) { /* fall through to the web API */ }
   if (!('wakeLock' in navigator)) { awake = 'unsupported'; return; }
@@ -2581,6 +2594,7 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') { hiddenAt = Date.now(); return; }
   if (sensors) keepAwake();
   const away = hiddenAt ? (Date.now() - hiddenAt) / 1000 : 0; hiddenAt = 0;
+  if (away > 600 || dayKey() !== shownDay) refreshForTime();
   if (away > 20 && align.fit && state.mode === 'gyro') {
     align.suspect = true; align.epoch = (align.epoch || 0) + 1;      // the heading may have jumped: objects from now on get their own offset
     toast('Welcome back. The phone may have lost track while the screen was off — centre a bright star and tap Sync before trusting the arrows.', 7000);
@@ -2764,7 +2778,7 @@ const stepsFor = (dest) => (PATH[dest] || []).filter((k) => stepOn(k) && !(k ===
 /** "Dark from 6:32 PM · Moon 27% lit, sets 8:58 PM · Saturn and Jupiter are up" */
 function tonightLine() {
   try {
-    const now = new Date(), sun = sky.sunAlt(now), n = sky.night(now.getHours() < 12 ? new Date(now.getTime() - 12 * 3600000) : now);
+    const now = new Date(), sun = sky.sunAlt(now), n = sky.nightAt(now);
     const dark = n.astro || n.naut, m = sky.moonInfo(now);
     const when = sun > -18 && dark && now < dark ? `${sun > 0 ? 'Daylight now — dark' : 'Getting dark — fully dark'} from ${hm(dark)}`
       : sun <= -18 ? `Dark now${n.astroAm ? ', until ' + hm(n.astroAm) : ''}` : sun > 0 ? 'Daylight' : 'Twilight';
