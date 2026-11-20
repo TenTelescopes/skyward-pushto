@@ -4,8 +4,8 @@
 import { skyMask, findStars, planIntegration, skyWord, drawRejected, halfLum, registerStars, addFrame, dropHot } from './skycam.js';
 import { makeIndex, solveField } from './solve.js';
 
-export const MAX_LIGHT = 12;       // most seconds of light to collect
-export const MAX_WAIT = 30;        // most seconds to keep the user waiting
+export const MAX_LIGHT = 12;       // most seconds of light to collect, unless the caller sets opts.maxLight (the app's setting: 1–10 s, 3 by default)
+export const MAX_WAIT = 30;        // most seconds to keep the user waiting (scaled down with a shorter opts.maxLight)
 export const fmtSec = (s) => s >= 0.1 ? `${s.toFixed(2)} s` : `1/${Math.round(1 / s)} s`;
 export const hms = (ra) => { const t = ra / 15, hh = Math.floor(t), mm = Math.floor((t - hh) * 60); return `${hh}h ${String(mm).padStart(2, '0')}m`; };
 
@@ -128,6 +128,7 @@ export async function collectLight(src, w, h, frameTime, opts, status, progress)
   const quick = (d) => { const hl = halfLum(d, w, h); return dropHot(findStars(hl.lum, hl.w, hl.h, null, 8).stars, opts.hot, 0.5).slice(0, 14); };      // hot pixels would vote for 'no movement'
   const mean = () => { for (let i = 0; i < sum.length; i++) avg[i] = cnt[i] ? sum[i] / cnt[i] : 0; };
   const t0 = performance.now(), batch = Math.max(1, Math.round(0.5 / frameTime));
+  const maxLight = opts.maxLight || MAX_LIGHT, maxWait = Math.min(MAX_WAIT, 6 + 2.5 * maxLight);
   for (;;) {
     const d = await src.next(); if (!d) throw new Error('The camera was closed.');
     let tf = null, use = true; reg.seen++;
@@ -141,13 +142,13 @@ export async function collectLight(src, w, h, frameTime, opts, status, progress)
       } else tf = null;
     }
     if (use) { addFrame(sum, cnt, d, w, h, tf); N++; }
-    const collected = N * frameTime, waited = (performance.now() - t0) / 1000, last = collected >= MAX_LIGHT || waited >= MAX_WAIT;
+    const collected = N * frameTime, waited = (performance.now() - t0) / 1000, last = collected >= maxLight - 1e-6 || waited >= maxWait || !!(opts.shouldStop && opts.shouldStop());
     progress(Math.min(1, collected / (plan ? Math.max(plan.total, collected) : 2)));
     if (!N) { if (last) throw new Error('The picture never held still long enough to use.'); continue; }
     if ((use && N % batch === 0) || last) {
       mean();
       an = analyse(avg, w, h, opts.hot);
-      plan = planIntegration({ level: an.mask.level, noise: an.mask.noise, frameTime, collected, snrs: an.cand.map((s) => s.snr), canSetExposure: !!src.canSet, maxFrameTime: src.maxFrameTime || frameTime, maxTotal: MAX_LIGHT });
+      plan = planIntegration({ level: an.mask.level, noise: an.mask.noise, frameTime, collected, snrs: an.cand.map((s) => s.snr), canSetExposure: !!src.canSet, maxFrameTime: src.maxFrameTime || frameTime, maxTotal: maxLight });
       checks.push(`${collected.toFixed(2)} s: ${plan.good} clear, ${an.cand.length} possible → ${plan.done ? 'enough' : `aim for ${plan.total.toFixed(1)} s`}`);
       status(`Sky is ${plan.sky}. ${collected.toFixed(1)} s of light, ${plan.good} clear stars${reg.moved ? ', lining up a moving picture' : ''}. ${plan.done ? 'Enough.' : `Collecting to about ${plan.total.toFixed(1)} s…`}`);
       if (plan.done || collected >= plan.total - 1e-6 || last) break;
@@ -246,10 +247,13 @@ export class NativeSkyCamera {
     const status = opts.status || (() => {}), progress = opts.progress || (() => {});
     if (this.busy) return null; this.busy = true;
     try {
-      const I = this.info; let exp = this.set.exposure, iso = this.set.iso, fr = null; const trial = [];
+      const I0 = this.info, cap = Math.min(I0.maxExposure, opts.maxLight || MAX_LIGHT);
+      const I = { ...I0, maxExposure: cap };                // no single frame longer than all the light asked for
+      let exp = Math.min(this.set.exposure, cap), iso = this.set.iso, fr = null; const trial = [];
       for (let k = 0; k < 5; k++) {
         status(`Reading the sky to choose the exposure (${fmtSec(exp)})…`);
-        try { fr = await this._sci(true); }
+        if (opts.shouldStop && opts.shouldStop() && fr) break;
+        try { fr = await this._sci(false); }
         catch (e) {
           // A RAW photo that fails is not the end: carry on with the camera's preview frames (processed, but they work).
           if (!this.info.raw) throw e;

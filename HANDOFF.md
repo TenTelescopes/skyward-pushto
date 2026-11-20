@@ -302,3 +302,15 @@ unrelated extra star in the object-page sentence. Still open with Bryan: whether
 - More, grouped by when you need it: Each night (Star alignment, Camera star finder, Sky darkness check) · Now and
   then (Collimate, Blocked sky, Phone check-up) · Your records (Observing log, Back up) · Setup (telescope, eyepieces,
   location and phone mount) · Quick settings. b75 walk now opens Setup by `[data-go=setup]`.
+
+## Build 90 — floating progress, user-set light (Nov 20)
+- While the camera collects light, a panel floats above the camera buttons (`camFloat`, `#cam-float`) with the
+  status line, a progress bar and "Stop and use what I have" (`camStop` → `opts.shouldStop`: collectLight finishes
+  with what it has and still solves; the native exposure trial also stops early). Removed when done or when the
+  camera closes.
+- "Light to collect" slider on the camera screen, 1–10 s, default 3 (`state.camLight` → `opts.maxLight`): caps the
+  total light (`planIntegration` maxTotal), the waiting time (6 + 2.5 × light, at most 30 s) and, natively, the single
+  frame length. Collection still stops early once there are 12 clear stars.
+- Native exposure trial no longer runs Apple's own RAW development per trial frame (`raw({check:false})`); the cheap
+  RAW-number line stays in the log. Both were diagnostics for the 14-bit black-level problem, now fixed.
+- Walk b90 (= b80 + the floating panel): passes; b87, b78 pass. "Stop" itself is not yet exercised by a walk.

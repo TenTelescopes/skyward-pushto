@@ -2844,7 +2844,7 @@ function renderLaunch() {
 // The phone's camera photographs the sky, the app recognises the stars, and that tells it where the telescope points —
 // no star to pick, find or centre. Only meaningful for pointing when the phone is mounted looking along the tube.
 let skyCam = null, camLast = null, camNote = '', camErr = '';
-function closeCamera() { if (skyCam) skyCam.close(); skyCam = null; }
+function closeCamera() { camStop = true; camFloat(false); if (skyCam) skyCam.close(); skyCam = null; }
 // In the iPhone app the camera goes through the native plug-in, which can set the exposure; on the web it is the browser's camera.
 const nativeCam = () => cap('SkyCam');
 const camBore = () => profile().camBore || [0, 0, 1];          // where the telescope points in the camera's picture (a ray; [0,0,1] = dead centre)
@@ -2897,6 +2897,7 @@ function renderCamera() {
     ${wizardHTML(along)}
     ${on ? `<div class="camstage">${skyCam.isNative ? '<canvas id="cam-v"></canvas>' : '<video id="cam-v" playsinline muted autoplay></video>'}<canvas id="cam-ov"></canvas></div>
       <p class="muted small" style="margin:4px 0">Grey stripes: not sky, ignored. Keep the phone still.</p>
+      <label class="row"><span>Light to collect: <b id="cam-light-v">${state.camLight || 3} s</b> <span class="muted small">— more finds fainter stars but takes longer; it stops early once there are enough stars</span></span><input id="cam-light" type="range" min="1" max="10" step="1" value="${state.camLight || 3}"></label>
       <div class="hzbar"><i id="cam-bar" style="width:0"></i></div>
       <p id="cam-status" class="small" style="min-height:1.4em">${along ? (alignedNow() ? 'Aligned. A fix here re-syncs the pointing.' : `Not aligned yet: ${align.obs.length ? 'one more fix, in a different part of the sky' : 'two fixes in different parts of the sky will do it'}.`) : ''}</p>
       <div class="actionbar"><button id="cam-go" class="primary wide" ${camWiz && camWiz.step === 'finder' ? 'disabled' : ''}>${camWiz && camWiz.step === 'shoot' ? 'It’s centred' : 'Find where I’m pointing'}</button><button id="cam-stop">Close camera</button></div>`
@@ -2911,6 +2912,7 @@ function renderCamera() {
   };
   if (on) attachCamera();
   if ($('#cam-stop')) $('#cam-stop').onclick = () => { closeCamera(); renderCamera(); };
+  if ($('#cam-light')) $('#cam-light').oninput = (e) => { state.camLight = +e.target.value; $('#cam-light-v').textContent = `${state.camLight} s`; save(); };
   if ($('#cam-go')) $('#cam-go').onclick = cameraFind;
   if ($('#cam-errcopy')) $('#cam-errcopy').onclick = async () => { try { await navigator.clipboard.writeText(`${$('#build').textContent}\n${camErr}`); toast('Copied'); } catch (e) { toast('Could not copy; select the text instead'); } };
   if (r && $('#cam-pic')) {
@@ -3139,15 +3141,29 @@ function attachCamera() {
   if (skyCam.v !== v) { if (!skyCam.isNative) { v.srcObject = skyCam.stream; v.play().catch(() => {}); } skyCam.v = v; }
   skyCam.ov = ov;
 }
+// While the camera collects light: a small panel that floats above the buttons, so the progress stays in view however
+// the page is scrolled. "Stop" finishes with the light collected so far and still tries to solve.
+let camStop = false;
+function camFloat(on) {
+  let f = $('#cam-float');
+  if (!on) { if (f) f.remove(); return; }
+  if (!f) { f = document.createElement('div'); f.id = 'cam-float'; f.className = 'camfloat'; f.innerHTML = '<div id="camf-text" class="small">Starting…</div><div class="hzbar"><i id="camf-bar" style="width:0"></i></div><button id="camf-stop" class="small">Stop and use what I have</button>'; document.body.appendChild(f);
+    $('#camf-stop').onclick = () => { camStop = true; $('#camf-stop').disabled = true; $('#camf-text').textContent = 'Finishing with the light collected so far…'; }; }
+  const ab = $('#tab-camera .actionbar'), nav = $('nav#tabs'), top = ab && ab.getBoundingClientRect().top > 0 ? ab.getBoundingClientRect().top : nav.getBoundingClientRect().top;
+  f.style.bottom = `${window.innerHeight - top + 8}px`;
+}
 async function cameraFind() {
   if (!skyCam || !skyCam.on) return; const go = $('#cam-go'); if (go) go.disabled = true;
+  camStop = false; camFloat(true);
   const here = pointing(), prior = here && here.ready && alignedNow() ? { ...altAzToJ2000(sky, here.alt, here.az), radius: 25 } : null;
   try {
     let refR = null;
     // The picture scale learned from an earlier fix with this camera (kept per picture size); none the first time.
     const camKey = () => skyCam && skyCam.v ? `${skyCam.isNative ? 'n' : 'w'}` : 'w', known = (state.camScale || {})[camKey()];
     const hp = (state.hotPix || {})[camKey()];
-    const r = await skyCam.find({ FIELD: STAR_FIELD, prior, hot: hp ? hp.list : null, hotSize: hp ? { w: hp.w, h: hp.h } : null, scale: known ? { f: known.f, tol: 0.05, from: 'an earlier fix', w: known.w, h: known.h } : null, onReference: () => { refR = avgR(0.3) || (sensors && sensors.R) || null; }, align: !/[?&]noalign/.test(location.search), status: (t) => { const s = $('#cam-status'); if (s) s.textContent = t; }, progress: (f) => { const b = $('#cam-bar'); if (b) b.style.width = `${f * 100}%`; } });
+    const r = await skyCam.find({ FIELD: STAR_FIELD, prior, hot: hp ? hp.list : null, hotSize: hp ? { w: hp.w, h: hp.h } : null, scale: known ? { f: known.f, tol: 0.05, from: 'an earlier fix', w: known.w, h: known.h } : null, onReference: () => { refR = avgR(0.3) || (sensors && sensors.R) || null; }, align: !/[?&]noalign/.test(location.search), maxLight: state.camLight || 3, shouldStop: () => camStop,
+      status: (t) => { for (const id of ['#cam-status', '#camf-text']) { const s = $(id); if (s && !(id === '#camf-text' && camStop)) s.textContent = t; } },
+      progress: (f) => { for (const id of ['#cam-bar', '#camf-bar']) { const b = $(id); if (b) b.style.width = `${f * 100}%`; } } });
     if (!r) return;
     camLast = r; camErr = ''; camNote = r.sol ? (camWiz && camWiz.step !== 'done' ? wizardFix(r, refR) : applyCameraFix(r.sol, refR)) : '';
     // Learn hot pixels: unrecognised spots that stay on the same pixel while the sky moves. Only from confident fixes.
@@ -3163,7 +3179,7 @@ async function cameraFind() {
     // Keep the error on screen (with what the camera was doing) so it can be read and copied, not just a passing toast.
     camLast = null; camErr = `Camera: ${e.message || e}` + (skyCam && skyCam.log && skyCam.log.length ? `\n\nWhat the camera was asked for:\n${skyCam.log.join('\n')}` : '');
     toast('Camera: ' + (e.message || e), 6000);
-  }
+  } finally { camFloat(false); }
   if (tab === 'camera') { renderCamera(); const c = $('#cam-pic'); if (c) c.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
 }
 
