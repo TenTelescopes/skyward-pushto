@@ -44,6 +44,10 @@ if (fs.existsSync('ios/App/App')) {
   // Capacitor 8 builds its window in SceneDelegate; use our view controller there so the plug-in gets registered.
   edit('ios/App/App/SceneDelegate.swift', (s) => s.replace('window?.rootViewController = CAPBridgeViewController()', 'window?.rootViewController = MyViewController()    // registers the Skyward camera plug-in'));
   // Older templates use the storyboard instead.
+  // Home-screen icon and launch picture (the Skyward on a night sky): replace Capacitor's placeholders.
+  const copyBin = (from, to) => { if (!fs.existsSync(from) || !fs.existsSync(to.replace(/\/[^/]+$/, ''))) return log(`skip ${to}`); const a = fs.readFileSync(from), b = fs.existsSync(to) ? fs.readFileSync(to) : null; if (!b || !a.equals(b)) { fs.writeFileSync(to, a); log(`copied ${from} → ${to}`); } else log(`ok ${to}`); };
+  copyBin('native/ios/AppIcon-1024.png', 'ios/App/App/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png');
+  for (const s of ['', '-1', '-2']) copyBin('native/ios/splash-2732.png', `ios/App/App/Assets.xcassets/Splash.imageset/splash-2732x2732${s}.png`);
   edit('ios/App/App/Base.lproj/Main.storyboard', (s) => s.replace('customClass="CAPBridgeViewController" customModule="Capacitor"', 'customClass="MyViewController" customModuleProvider="target"'));
 }
 

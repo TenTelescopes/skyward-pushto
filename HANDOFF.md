@@ -290,3 +290,7 @@ unrelated extra star in the object-page sentence. Still open with Bryan: whether
   the original 150 design, the Compact may differ). "Collimated today" saves `profile().collimated` (shown in More).
   Bryan said "laser like in the build manual", but manual v0.1f in the Skyward150 repo has no laser pages; the 150
   Compact sourcing guide and the SW200 RASC packing list both include a laser collimator. Ask for the newer manual.
+- iOS home-screen icon and launch picture: `native/ios/AppIcon-1024.png` (the Skyward render from docs/icons/
+  skyward.webp on a starry navy-to-violet gradient) and `native/ios/splash-2732.png` (same, smaller, centred);
+  `scripts/patch-native.mjs` copies them over Capacitor's placeholders in Assets.xcassets. App name already
+  "Skyward Push-To" (capacitor.config.json appName / CFBundleDisplayName).
