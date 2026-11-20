@@ -107,8 +107,8 @@ export class SkyCamera {
       const { avg, an, plan, N, reg, checks, took, collected } = await collectLight(src, w, h, frameTime, opts, status, progress);
       status('Matching the stars to the star map…'); await new Promise((r) => setTimeout(r, 30));
       const sc = opts.scale && (!opts.scale.w || (opts.scale.w === w && opts.scale.h === h)) ? opts.scale : null;      // a remembered scale belongs to one picture size
-      const s = solve(an.stars, w, h, opts.FIELD, opts.prior, sc);
-      return { reg, lum: avg, w, h, an, sol: s.sol, ms: s.ms, usedPrior: s.usedPrior, usedScale: s.usedScale, scaleHint: sc, plan, frameTime, source, interval, probe, N, collected, took, checks, log: this.log.slice(), settings: this.track.getSettings(), caps, label: this.track.label };
+      const s = await solveInBackground(an, w, h, opts.FIELD, opts.prior, sc);
+      return { reg, lum: avg, w, h, an, sol: s.sol, ms: s.ms, usedPrior: s.usedPrior, usedScale: s.usedScale, skipped: s.skipped, timedOut: s.timedOut, workerError: s.workerError, inWorker: s.inWorker, scaleHint: sc, plan, frameTime, source, interval, probe, N, collected, took, checks, log: this.log.slice(), settings: this.track.getSettings(), caps, label: this.track.label };
     } finally { this.busy = false; }
   }
 }
@@ -175,24 +175,39 @@ export class NativeSkyCamera {
   constructor(plugin, canvas, overlay) { this.p = plugin; this.v = canvas; this.ov = overlay; this.stream = null; this.isNative = true; this.log = []; this.busy = false; this.alive = false; this.opened = false; this.info = null; this.set = null; }
   get on() { return this.opened; }
   async open() {
-    this.info = await this.p.open(); this.opened = true; this.alive = true;
-    this.log = [`native camera: ${this.info.camera}${this.info.raw ? ', RAW' : ', no RAW (processed frames)'}, exposure ${fmtSec(this.info.minExposure)} to ${fmtSec(this.info.maxExposure)}, ISO ${Math.round(this.info.minISO)}–${Math.round(this.info.maxISO)}, lens ${Number(this.info.fieldOfView).toFixed(0)}° wide`];
+    this.info = await this._call('open', {}, 20000); this.opened = true; this.alive = true;
+    this.log = [`native camera: ${this.info.camera}${this.info.raw ? ', RAW' : ', no RAW (processed frames)'}, exposure ${fmtSec(this.info.minExposure)} to ${fmtSec(this.info.maxExposure)}, ISO ${Math.round(this.info.minISO)}–${Math.round(this.info.maxISO)}, lens ${Number(this.info.fieldOfView).toFixed(0)}° wide${this.info.formatInfo ? `; format ${this.info.formatInfo}` : ''}`];
     await this._expose(Math.min(this.info.maxExposure, 0.1), this.info.maxISO * 0.6);
     this._live();
   }
   async close() { this.alive = false; this.opened = false; try { await this.p.close(); } catch (e) {} }
-  async _expose(seconds, iso) { this.set = await this.p.setExposure({ seconds, iso }); this.log.push(`set exposure ${fmtSec(this.set.exposure)}, ISO ${Math.round(this.set.iso)}`); return this.set; }
+  // Every call into the plug-in gets a time limit, so a frame that never arrives shows an error instead of hanging.
+  // On a time-out, ask the camera how it is doing and add that to the message (and to the log for the report).
+  async _call(name, args, ms) {
+    let timer = null;
+    try { return await Promise.race([this.p[name](args), new Promise((_, rej) => { timer = setTimeout(() => rej(Object.assign(new Error(`the camera did not answer (${name}) within ${Math.round(ms / 1000)} s`), { timeout: true })), ms); })]); }
+    catch (e) {
+      let st = '';
+      if (e.timeout && this.p.status) { try { const s = await Promise.race([this.p.status(), new Promise((r) => setTimeout(() => r(null), 3000))]); st = s ? ` [${s.state}]` : ' [the camera did not answer a status check either]'; } catch (x) {} }
+      const m = `${e.message || e}${st}`; this.log.push(`${name} FAILED: ${m}`); throw new Error(m);
+    } finally { clearTimeout(timer); }
+  }
+  async _expose(seconds, iso) {
+    this.set = await this._call('setExposure', { seconds, iso }, 8000 + 2000 * seconds);
+    this.log.push(`set exposure ${fmtSec(this.set.exposure)}, ISO ${Math.round(this.set.iso)}${this.set.confirmed === false ? ` (NOT confirmed by the camera: ${this.set.state})` : ''}`); return this.set;
+  }
   // A frame for measuring: RAW when the camera offers it (linear, no noise reduction or sharpening, averaged 2×2 by the
   // plug-in), returned as brightness 0..765 so the rest of the app reads it like any other frame. Otherwise a preview frame.
   async _sci() {
     if (!this.info.raw) return this._frame();
-    const f = await this.p.raw(), bin = atob(f.data), n = bin.length >> 1, lum = new Float32Array(n), k = 765 / 65535;
+    const f = await this._call('raw', { bin: 4 }, 1000 * ((this.set && this.set.exposure) || 1) + 15000), bin = atob(f.data), n = bin.length >> 1, lum = new Float32Array(n), k = 765 / 65535;
     for (let i = 0, j = 0; i < n; i++, j += 2) lum[i] = (bin.charCodeAt(j) | (bin.charCodeAt(j + 1) << 8)) * k;
-    return { lum, w: f.width, h: f.height, exposure: f.exposure, iso: f.iso, raw: true, method: f.method || 'developed', black: f.black, white: f.white };
+    await new Promise((r) => setTimeout(r, 0));              // let the screen catch up between frames
+    return { lum, w: f.width, h: f.height, exposure: f.exposure, iso: f.iso, raw: true, method: f.method || 'developed', bin: f.bin || 2, black: f.black, white: f.white, stats: f.stats || '' };
   }
   // One preview frame as RGBA (grey), so the rest of the app treats it exactly like a web-camera frame.
   async _frame() {
-    const f = await this.p.frame(), bin = atob(f.data), n = bin.length, rgba = new Uint8ClampedArray(n * 4);
+    const f = await this._call('frame', {}, 1000 * ((this.set && this.set.exposure) || 1) + 8000), bin = atob(f.data), n = bin.length, rgba = new Uint8ClampedArray(n * 4);
     for (let i = 0, j = 0; i < n; i++, j += 4) { const y = bin.charCodeAt(i); rgba[j] = y; rgba[j + 1] = y; rgba[j + 2] = y; rgba[j + 3] = 255; }
     return { rgba, w: f.width, h: f.height, exposure: f.exposure, iso: f.iso };
   }
@@ -228,8 +243,16 @@ export class NativeSkyCamera {
       const I = this.info; let exp = this.set.exposure, iso = this.set.iso, fr = null; const trial = [];
       for (let k = 0; k < 5; k++) {
         status(`Reading the sky to choose the exposure (${fmtSec(exp)})…`);
-        fr = await this._sci(); this._show(fr); const m = levelOf(fr), frac = m.level / 765;
+        try { fr = await this._sci(); }
+        catch (e) {
+          // A RAW photo that fails is not the end: carry on with the camera's preview frames (processed, but they work).
+          if (!this.info.raw) throw e;
+          this.info.raw = false; this.log.push(`RAW photos failed, so using preview frames instead`); status('RAW photos failed; using the preview frames instead…');
+          fr = await this._sci();
+        }
+        this._show(fr); const m = levelOf(fr), frac = m.level / 765;
         trial.push(`${fmtSec(fr.exposure)} ISO ${Math.round(fr.iso)}: sky ${m.level.toFixed(1)}`);
+        if (fr.stats) this.log.push(`RAW check at ${fmtSec(fr.exposure)} ISO ${Math.round(fr.iso)}: ${fr.stats}`);
         const p = planIntegration({ level: m.level, noise: m.noise, frameTime: fr.exposure, collected: fr.exposure, canSetExposure: true, maxFrameTime: I.maxExposure });
         let want = Math.min(I.maxExposure, Math.max(I.minExposure, p.wantedFrameTime)), wantIso = iso;
         if (fr.raw && frac > 0.20) {
@@ -246,8 +269,8 @@ export class NativeSkyCamera {
       const { avg, an, plan, N, reg, checks, took, collected } = await collectLight(src, w, h, frameTime, opts, status, progress);
       status('Matching the stars to the star map…'); await new Promise((r) => setTimeout(r, 30));
       const scale = (opts.scale && (!opts.scale.w || (opts.scale.w === w && opts.scale.h === h)) ? opts.scale : null) || (I.fieldOfView > 20 && I.fieldOfView < 130 ? { f: focalFromFov(I.fieldOfView, w, h), tol: 0.15, from: 'the phone' } : null);
-      const s = solve(an.stars, w, h, opts.FIELD, opts.prior, scale);
-      return { reg, lum: avg, w, h, an, sol: s.sol, ms: s.ms, usedPrior: s.usedPrior, usedScale: s.usedScale, scaleHint: scale, plan, frameTime, source: `set by the app (ISO ${Math.round(fr.iso)})${fr.raw ? (fr.method === 'superpixel' ? `; RAW, superpixel-binned from the sensor (each 2×2 block of photosites added; black level ${Math.round(fr.black)}, white ${Math.round(fr.white)}; no demosaic, no white balance)` : '; RAW, developed linearly with noise reduction and sharpening off, 2×2 averaged (superpixel not possible on this phone)') : '; processed preview frames (this camera offers no RAW)'}; trial: ${trial.join(' → ')}`, interval: frameTime, probe: null, N, collected, took, checks, log: this.log.slice(), settings: { width: w, height: h, exposureTime: frameTime, iso: fr.iso }, caps: { exposureTime: { min: I.minExposure, max: I.maxExposure }, iso: { min: I.minISO, max: I.maxISO } }, label: `${I.camera} (native)` };
+      const s = await solveInBackground(an, w, h, opts.FIELD, opts.prior, scale);
+      return { reg, lum: avg, w, h, an, sol: s.sol, ms: s.ms, usedPrior: s.usedPrior, usedScale: s.usedScale, skipped: s.skipped, timedOut: s.timedOut, workerError: s.workerError, inWorker: s.inWorker, scaleHint: scale, plan, frameTime, source: `set by the app (ISO ${Math.round(fr.iso)})${fr.raw ? (fr.method === 'superpixel' ? `; RAW, superpixel-binned from the sensor (each ${fr.bin}×${fr.bin} block of photosites added; black level ${Math.round(fr.black)}, white ${Math.round(fr.white)}; no demosaic, no white balance)` : `; RAW, developed linearly with noise reduction and sharpening off, ${fr.bin}×${fr.bin} averaged (superpixel not possible on this phone)`) : '; processed preview frames (this camera offers no RAW)'}; trial: ${trial.join(' → ')}`, interval: frameTime, probe: null, N, collected, took, checks, log: this.log.slice(), settings: { width: w, height: h, exposureTime: frameTime, iso: fr.iso }, caps: { exposureTime: { min: I.minExposure, max: I.maxExposure }, iso: { min: I.minISO, max: I.maxISO } }, label: `${I.camera} (native)` };
     } finally { this.busy = false; }
   }
 }
@@ -271,12 +294,32 @@ export const focalFromFov = (fovDeg, w, h) => Math.max(w, h) / 2 / Math.tan(fovD
  * A known scale is the stronger help: the solver no longer has to consider every possible lens, so it is faster, far
  * less likely to be fooled by a chance pattern, and can work from fewer stars.
  */
-export function solve(stars, w, h, FIELD, prior, scale) {
+export function solve(stars, w, h, FIELD, prior, scale, budget = 20000) {
   if (stars.length < 5) return { sol: null, ms: 0, usedPrior: false, usedScale: false };
+  const deadline = Date.now() + budget;
   const t0 = performance.now(), ix = starIndex(FIELD), fov = scale && scale.f ? fovRange(scale.f, w, h, scale.tol || 0.05) : null;
   const tries = []; if (fov && prior) tries.push([fov, prior]); if (fov) tries.push([fov, null]); if (prior) tries.push([null, prior]); tries.push([null, null]);
-  for (const [fv, pr] of tries) { const sol = solveField(stars, w, h, ix, { ...(fv || {}), ...(pr ? { prior: pr } : {}) }); if (sol) return { sol, ms: performance.now() - t0, usedPrior: !!pr, usedScale: !!fv }; }
-  return { sol: null, ms: performance.now() - t0, usedPrior: false, usedScale: false };
+  for (const [fv, pr] of tries) { if (Date.now() > deadline) break; const sol = solveField(stars, w, h, ix, { ...(fv || {}), ...(pr ? { prior: pr } : {}), deadline }); if (sol) return { sol, ms: performance.now() - t0, usedPrior: !!pr, usedScale: !!fv }; }
+  return { sol: null, ms: performance.now() - t0, usedPrior: false, usedScale: false, timedOut: Date.now() > deadline };
+}
+/**
+ * Solve without freezing the screen: in a background worker when the browser allows it, otherwise right here.
+ * Pictures that are plainly not a night sky (a lit room, daylight, hardly any sky) are not searched at all.
+ */
+let worker = null, wid = 0;
+const pending = new Map();
+export async function solveInBackground(an, w, h, FIELD, prior, scale) {
+  if (an.mask.level > 765 * 0.5 || an.mask.fraction < 0.1) return { sol: null, ms: 0, usedPrior: false, usedScale: false, skipped: an.mask.level > 765 * 0.5 ? 'too bright to be a night sky' : 'hardly any sky in the picture' };
+  const stars = an.stars.map((s) => ({ x: s.x, y: s.y, flux: s.flux, snr: s.snr }));
+  if (stars.length < 5) return { sol: null, ms: 0, usedPrior: false, usedScale: false };
+  try {
+    if (!worker) { worker = new Worker(new URL('./solve-worker.js', import.meta.url), { type: 'module' }); worker.onmessage = (e) => { const p = pending.get(e.data.id); if (p) { pending.delete(e.data.id); e.data.ok ? p.res(e.data.r) : p.rej(new Error(e.data.error)); } }; worker.onerror = (e) => { for (const p of pending.values()) p.rej(new Error(e.message || 'worker failed')); pending.clear(); worker = null; }; }
+    const id = ++wid;
+    const r = await new Promise((res, rej) => { pending.set(id, { res, rej }); worker.postMessage({ id, stars, w, h, prior: prior || null, scale: scale || null, budget: 20000 }); setTimeout(() => { if (pending.has(id)) { pending.delete(id); rej(new Error('timed out')); } }, 30000); });
+    return { ...r, inWorker: true };
+  } catch (e) {
+    return { ...solve(stars, w, h, FIELD, prior, scale, 6000), inWorker: false, workerError: String(e.message || e) };
+  }
 }
 /** Draw the stacked picture with stripes over what was ignored, circles on the stars and a mark where the telescope points. */
 export function drawResult(canvas, r, bore) {
@@ -302,9 +345,9 @@ export function reportText(r, version) {
     `Phone and browser: ${navigator.userAgent}`,
     `Camera: ${r.label || 'unnamed'}, ${r.w}×${r.h}`,
     ...(sol ? [`SOLVED: RA ${sol.ra.toFixed(3)}° (${hms(sol.ra)}), Dec ${sol.dec.toFixed(3)}°, roll ${sol.roll.toFixed(1)}°, ${sol.confidence} confidence${r.usedPrior ? '' : ', found without a hint'}`,
-      `Matched ${sol.n} of the ${sol.of} brightest stars, fit ${sol.rms.toFixed(2)} px (${(sol.rmsDeg * 60).toFixed(1)}′), solved in ${r.ms.toFixed(0)} ms`,
+      `Matched ${sol.n} of the ${sol.of} brightest stars, fit ${sol.rms.toFixed(2)} px (${(sol.rmsDeg * 60).toFixed(1)}′), solved in ${r.ms.toFixed(0)} ms${r.inWorker ? ' in the background' : ''}`,
       `Field of view: ${sol.fovW.toFixed(1)}° × ${sol.fovH.toFixed(1)}°, focal length ${sol.f.toFixed(0)} px, ${(Math.atan(1 / sol.f) * 180 / Math.PI * 60).toFixed(2)}′ per pixel`,
-      `Scale hint: ${r.scaleHint ? `${r.scaleHint.f.toFixed(0)} px ±${((r.scaleHint.tol || 0.05) * 100).toFixed(0)}% from ${r.scaleHint.from || 'an earlier fix'}${r.usedScale ? ' — used' : ' — did not fit, searched every scale'}` : 'none yet (first fix at this picture size)'}`] : [`NOT SOLVED (${r.ms.toFixed(0)} ms)`]),
+      `Scale hint: ${r.scaleHint ? `${r.scaleHint.f.toFixed(0)} px ±${((r.scaleHint.tol || 0.05) * 100).toFixed(0)}% from ${r.scaleHint.from || 'an earlier fix'}${r.usedScale ? ' — used' : ' — did not fit, searched every scale'}` : 'none yet (first fix at this picture size)'}`] : [`NOT SOLVED (${r.ms.toFixed(0)} ms${r.skipped ? `; not searched: ${r.skipped}` : ''}${r.timedOut ? '; gave up after 20 s' : ''}${r.workerError ? `; background search unavailable: ${r.workerError}` : ''})`]),
     `Single-frame time: ${fmtSec(r.frameTime)} (${(r.frameTime * 1000).toFixed(1)} ms), ${r.source}`,
     `Gap between frames: ${(r.interval * 1000).toFixed(1)} ms`,
     ...(r.probe ? [`Frame-rate trial (rate: gap, sky brightness, implied frame time): ${r.probe.rows.map((x) => x.refused ? `${x.rate}/s refused` : `${x.rate}/s: ${(x.gap * 1000).toFixed(0)} ms, ${x.level.toFixed(1)}, ${(x.time * 1000).toFixed(0)} ms`).join(' | ')}`] : []),

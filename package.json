@@ -11,19 +11,20 @@
     "native:add": "npm run copy:core && npx cap add ios; npx cap add android; node scripts/patch-native.mjs",
     "native:icons": "npx @capacitor/assets generate --iconBackgroundColor '#000000' --iconBackgroundColorDark '#000000' --splashBackgroundColor '#000000' --splashBackgroundColorDark '#000000'",
     "sync": "npm run copy:core && npx cap sync && node scripts/patch-native.mjs",
+    "ios:sync": "npm run copy:core && npx cap sync ios && node scripts/patch-native.mjs",
     "ios": "npm run sync && npx cap open ios",
     "android": "npm run sync && npx cap open android",
     "copy:core": "node -e \"require('fs').copyFileSync('node_modules/@capacitor/core/dist/capacitor.js','docs/vendor/capacitor.js')\""
   },
   "dependencies": {
     "@capacitor/android": "^8.6.0",
-    "@capacitor/core": "^8.6.0",
+    "@capacitor/core": "^8.6.2",
     "@capacitor/geolocation": "^8.2.4",
-    "@capacitor/ios": "^8.6.0",
+    "@capacitor/ios": "^8.6.2",
     "@capacitor/preferences": "^8.0.1"
   },
   "devDependencies": {
     "@capacitor/assets": "^3.0.5",
-    "@capacitor/cli": "^8.6.0"
+    "@capacitor/cli": "^8.6.2"
   }
 }

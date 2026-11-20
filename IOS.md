@@ -21,58 +21,45 @@ the red text back.
 In Terminal:
 
     cd ~/Documents/GitHub/skyward-pushto      # wherever GitHub Desktop cloned it
-    npm install @capacitor/core @capacitor/cli @capacitor/ios
+    npm install
     npx cap add ios
-    npx cap sync ios
+    npm run ios:sync
+
+`npx cap add ios` creates the `ios/` folder holding the Xcode project. `npm run ios:sync` copies the app into it and
+runs `scripts/patch-native.mjs`, which does all the native set-up for you:
+
+- the permission texts (camera, motion sensors, location) and portrait-only screen in `Info.plist`;
+- keeping the screen awake while the app is open;
+- copying `native/ios/SkyCamPlugin.swift` and `MyViewController.swift` into the project, adding them to the Xcode
+  project file, and making the app start with `MyViewController` (Capacitor 8 creates the first screen in
+  `SceneDelegate.swift`), which registers the camera plug-in.
+
+The script is safe to run any number of times. Run `npm run ios:sync` after every change to the app.
+
+## 3. Open it in Xcode and run it on your iPhone
+
     npx cap open ios
-
-`npx cap add ios` creates an `ios/` folder holding the Xcode project; the last command opens it in Xcode.
-`capacitor.config.json` (already in the repository) supplies the app's name, its identifier and the `docs/` folder.
-
-## 3. Permissions (once)
-
-In Xcode's left-hand list open **App › App › Info** (the file `Info.plist`) and add two rows with the + button:
-
-| Key | Value |
-|---|---|
-| Privacy - Camera Usage Description | Skyward uses the camera to find stars and work out where the telescope is pointing. |
-| Privacy - Motion Usage Description | Skyward uses the motion sensors to follow where the telescope is pointing. |
-
-Without the camera row, iOS closes the app the moment it asks for the camera.
-
-## 4. Signing, and a first run without the native camera
 
 1. Click **App** at the very top of the left-hand list, then the **Signing & Capabilities** tab. Tick *Automatically
    manage signing* and pick your Apple ID as the Team (add it under Xcode › Settings › Accounts if it is not listed).
-2. Plug the iPhone in and unlock it. On the phone, turn on **Settings › Privacy & Security › Developer Mode**
-   (the switch appears after the phone has been connected to Xcode once) and restart when asked.
+2. Plug the iPhone in and unlock it; tap **Trust** on the phone if asked. Turn on **Settings › Privacy & Security ›
+   Developer Mode** on the phone (the switch appears after the phone has been connected to Xcode once) and restart
+   when asked.
 3. Choose the iPhone in the device menu at the top of the Xcode window and press the **Run** triangle.
-4. The first time, the phone refuses to open the app: go to **Settings › General › VPN & Device Management**, tap
-   your Apple ID and trust it. Press Run again.
+4. The first time, the phone refuses to open the app: go to **Settings › General › VPN & Device Management**, tap your
+   Apple ID and trust it. Press Run again.
 
-You should see the normal start screen with the build number. **Stop here and check it works** before step 5.
-At this stage More › Camera star finder uses the same camera a web page gets.
+If the build fails, click the red ⊗ at the top of the Xcode window to list the errors, and send them.
 
-## 5. Add the native camera
-
-1. In Finder, open the repository's `native/ios/` folder. Drag **SkyCamPlugin.swift** and **MyViewController.swift**
-   onto the yellow **App** folder (the inner one, next to `AppDelegate.swift`) in Xcode's left-hand list. In the
-   sheet that appears, tick **Copy items if needed** and make sure the **App** target is ticked.
-2. In the left-hand list click **Main** (the file `Main.storyboard`). In the outline that opens, click
-   **Bridge View Controller**. Open the right-hand panel (View › Inspectors › Identity) and change **Class** from
-   `CAPBridgeViewController` to `MyViewController`. Tick **Inherit Module From Target** if it is not ticked.
-3. Press **Run**.
-
-In the app, open **More › Camera star finder › Start the camera**. If the native camera is in use, the sentence
-about "In a web browser the phone chooses the exposure" is gone, and after a fix the technical report's
-"Single-frame time" line ends with **set by the app**.
-
-If the build fails, copy the red error lines (click the red ⊗ at the top of the Xcode window to list them).
+In the app, **More › Camera star finder › Start the camera**. If the native camera is in use, the sentence about "In
+a web browser the phone chooses the exposure" is gone, and after a fix the technical report's "Single-frame time"
+line mentions RAW.
 
 ## Day-to-day
 
-- Change the app as before (files under `docs/`), then in Terminal `npx cap sync ios`, then Run in Xcode.
-- If `native/ios/*.swift` changes in the repository, copy the new version over the one inside `ios/App/App/`.
+- Change the app as before (files under `docs/`), then in Terminal `npm run ios:sync`, then Run in Xcode.
+- `npm run ios:sync` also copies any new version of `native/ios/*.swift` into the project.
+- Before working on either computer, pull in GitHub Desktop; afterwards, commit and push.
 - Commit the `ios/` folder so the project is not lost. `node_modules/` stays out of the repository.
 - With a free Apple ID the installed app stops opening after 7 days; press Run again to renew it. The paid
   developer programme removes that limit and adds TestFlight.
@@ -97,5 +84,3 @@ The app (`docs/js/camera.js`, class `NativeSkyCamera`) reads the sky's brightnes
 and exposure to suit it (under a bright sky it turns the gain down before it shortens the exposure, so it needs fewer
 photos), then collects frames, lines them up, and recognises the stars exactly as the web version does.
 
-If you added the Swift files before Build 83, copy the new `native/ios/SkyCamPlugin.swift` over the one in Xcode's
-App folder (or delete it there and drag the new one in again).

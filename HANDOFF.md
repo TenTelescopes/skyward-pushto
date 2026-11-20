@@ -200,3 +200,26 @@ unrelated extra star in the object-page sentence. Still open with Bryan: whether
 - Report lines: RAW method with black/white levels; "Hot pixels: N known and ignored, M newly confirmed".
 - Note: a lone hot photosite is already rejected by the single-pixel test in `findStars`; the list catches small clusters and defects that a short star might otherwise be confused with.
 - Walk: `tools/walk/b84.js` (three fake skies with the same defects, persistent browser profile).
+
+## Build 85 — the native camera stops freezing the app (Nov 20)
+- First run on an iPhone 16 Pro: frames started, then the app stopped responding. Cause: 2×2-binned RAW frames (~3 MP)
+  analysed on the main thread, plus blind solves of several seconds each.
+- Plug-in bins RAW 4×4 by default (`raw({bin})`, even 2–8); preview frames at most ~480 px.
+- Every plug-in call has a time limit (`NativeSkyCamera._call`); a yield after each RAW frame.
+- Solving runs in a Web Worker (`docs/js/solve-worker.js`, `solveInBackground`), with a 20 s budget (deadline checked
+  inside `solveField`). Pictures brighter than half scale or with <10% sky are not searched at all.
+
+## Build 86 — the camera explains itself (Nov 20)
+- On the phone, Build 84/85 sat on `setExposure` for minutes, then failed with "Cannot Record". Cause not yet known:
+  frames appear to stop arriving (setExposure only answers once a frame with the new settings arrives).
+- Plug-in: watches session interruptions and runtime errors (logged as `SkyCam:` lines in the Xcode console, restarts
+  after an error), counts preview frames, new `status()` method; `setExposure` answers anyway after 2×exposure + 2 s with
+  `confirmed: false`; error messages carry the AVFoundation code and the camera state.
+- Photo output: zero-shutter-lag and responsive capture off, quality priority `.speed`, no rotation on the photo
+  connection (RAW is turned in `finish()`), all suspected of interfering with long manual exposures. Untested.
+- JS: a RAW failure during the exposure trial switches to preview frames for the rest of that fix; a failed fix leaves
+  the error and the camera log on screen with a Copy button (`camErr`).
+- Found on the phone (Build 86 first run): iOS stopped the app with "setActiveVideoMinFrameDuration: Unsupported frame
+  duration" for a 1/100 s exposure. The frame duration was computed via frames-per-second (1/30 → 33333 µs, i.e. just
+  over 30 fps) and fell outside Apple's range. Now clamped with CMTime to the ranges' own min/max durations
+  (`frameLimits`), and the exposure likewise to the format's own CMTime limits. Probably the cause of the earlier hang too.

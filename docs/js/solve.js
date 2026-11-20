@@ -102,6 +102,7 @@ function matchAll(R, f, pts, ix, tol, magMax, limit) {
  * stars: [{x, y, flux?}] in pixels, any order (brightest are used first if flux/snr is present).
  * opts.prior: { ra, dec, radius } in degrees — roughly where the camera points (from the gyro); omit for a blind solve.
  * opts.fovMin / fovMax: limits on the diagonal field of view in degrees (default 35–110, which covers phone main cameras).
+ * opts.deadline: a Date.now() time to give up by (the best candidate found so far is still checked).
  * Returns null, or { ra, dec, roll, f, fovW, fovH, n, of, rms, rmsDeg, matches, R, confidence }.
  */
 export function solveField(stars, w, h, ix, opts = {}) {
@@ -126,6 +127,7 @@ export function solveField(stars, w, h, ix, opts = {}) {
     const cMin = Math.min(cLo, cHi) - 1e-4, cMax = Math.max(cLo, cHi) + 1e-4;
     // a few more picture stars for early rejection: two of them must land on catalogue stars (the rest may be planets, planes, junk)
     const others = []; for (let t = 0; t < Math.min(pts.length, 10) && others.length < 5; t++) if (t !== i && t !== j) others.push(t);
+    if (opts.deadline && Date.now() > opts.deadline) { done = true; break; }        // out of time: keep the best found so far
     for (let a = 0; a < cand.length && !done; a++) {
       const ka = cand[a], ax = ix.V[3 * ka], ay = ix.V[3 * ka + 1], az = ix.V[3 * ka + 2];
       for (let b = 0; b < cand.length; b++) {

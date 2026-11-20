@@ -2835,7 +2835,7 @@ function renderLaunch() {
 // ---------------------------------------------------------------- camera star finder
 // The phone's camera photographs the sky, the app recognises the stars, and that tells it where the telescope points —
 // no star to pick, find or centre. Only meaningful for pointing when the phone is mounted looking along the tube.
-let skyCam = null, camLast = null, camNote = '';
+let skyCam = null, camLast = null, camNote = '', camErr = '';
 function closeCamera() { if (skyCam) skyCam.close(); skyCam = null; }
 // In the iPhone app the camera goes through the native plug-in, which can set the exposure; on the web it is the browser's camera.
 const nativeCam = () => cap('SkyCam');
@@ -2864,6 +2864,7 @@ function renderCamera() {
   const el = $('#tab-camera'), along = state.mounting === 'camera', on = skyCam && skyCam.on, cal = profile().camBore;
   const r = camLast, sol = r && r.sol;
   let resultHTML = '';
+  if (!r && camErr) resultHTML = `<div class="card"><b class="warn">The camera stopped with an error</b><div class="btnrow"><button id="cam-errcopy">Copy this</button></div><pre class="camrep">${esc(camErr)}</pre></div>`;
   if (r) {
     const near = sol ? brightestNamedNear(sol) : null, t = sol ? camTruth(sol) : null;
     resultHTML = `<div class="card">
@@ -2901,6 +2902,7 @@ function renderCamera() {
   if (on) attachCamera();
   if ($('#cam-stop')) $('#cam-stop').onclick = () => { closeCamera(); renderCamera(); };
   if ($('#cam-go')) $('#cam-go').onclick = cameraFind;
+  if ($('#cam-errcopy')) $('#cam-errcopy').onclick = async () => { try { await navigator.clipboard.writeText(`${$('#build').textContent}\n${camErr}`); toast('Copied'); } catch (e) { toast('Could not copy; select the text instead'); } };
   if (r && $('#cam-pic')) drawResult($('#cam-pic'), r, camBore());
   if ($('#cam-copy')) $('#cam-copy').onclick = async () => { try { await navigator.clipboard.writeText(reportText(r, $('#build').textContent)); toast('Report copied'); } catch (e) { toast('Could not copy; select the text instead'); } };
   if ($('#cam-cal')) $('#cam-cal').onclick = () => {
@@ -2951,7 +2953,7 @@ async function cameraFind() {
     const hp = (state.hotPix || {})[camKey()];
     const r = await skyCam.find({ FIELD: STAR_FIELD, prior, hot: hp ? hp.list : null, hotSize: hp ? { w: hp.w, h: hp.h } : null, scale: known ? { f: known.f, tol: 0.05, from: 'an earlier fix', w: known.w, h: known.h } : null, onReference: () => { refR = avgR(0.3) || (sensors && sensors.R) || null; }, align: !/[?&]noalign/.test(location.search), status: (t) => { const s = $('#cam-status'); if (s) s.textContent = t; }, progress: (f) => { const b = $('#cam-bar'); if (b) b.style.width = `${f * 100}%`; } });
     if (!r) return;
-    camLast = r; camNote = r.sol ? applyCameraFix(r.sol, refR) : '';
+    camLast = r; camErr = ''; camNote = r.sol ? applyCameraFix(r.sol, refR) : '';
     // Learn hot pixels: unrecognised spots that stay on the same pixel while the sky moves. Only from confident fixes.
     { const same = hp && hp.w === r.w && hp.h === r.h, before = same ? hp.list.filter((e) => e.hot).length : 0; r.hotKnown = before;
       if (r.sol && r.sol.confidence === 'high') {
@@ -2961,7 +2963,11 @@ async function cameraFind() {
         state.hotPix = { ...(state.hotPix || {}), [camKey()]: { w: r.w, h: r.h, list } }; save();
       } }
     if (r.sol && r.sol.confidence === 'high') { state.camScale = { ...(state.camScale || {}), [camKey()]: { f: r.sol.f, w: r.w, h: r.h } }; save(); }
-  } catch (e) { toast('Camera: ' + (e.message || e), 6000); }
+  } catch (e) {
+    // Keep the error on screen (with what the camera was doing) so it can be read and copied, not just a passing toast.
+    camLast = null; camErr = `Camera: ${e.message || e}` + (skyCam && skyCam.log && skyCam.log.length ? `\n\nWhat the camera was asked for:\n${skyCam.log.join('\n')}` : '');
+    toast('Camera: ' + (e.message || e), 6000);
+  }
   if (tab === 'camera') { renderCamera(); const c = $('#cam-pic'); if (c) c.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
 }
 
