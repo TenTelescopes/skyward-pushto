@@ -41,6 +41,7 @@ public class SkyCamPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoDataOutput
     private let work = DispatchQueue(label: "com.tentelescopes.skyward.develop", qos: .userInitiated)    // developing RAW
     private var waiting: [CAPPluginCall] = []          // frame() calls not yet answered; touched only on `queue`
     private var rawCalls: [Int64: CAPPluginCall] = [:] // raw() calls by capture id; touched only on `queue`
+    private var checkFor: [Int64: Bool] = [:]          // raw() calls that asked for the full check (slower); only on `queue`
     private var binFor: [Int64: Int] = [:]             // block size asked for, by capture id; only on `queue`
     private var skip = 0                               // preview frames to drop after a settings change; only on `queue`
     private var configured = false
@@ -48,6 +49,7 @@ public class SkyCamPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoDataOutput
     private var lastFrameAt = Date.distantPast          // when the latest one arrived; only on `queue`
     private var events: [String] = []                  // what happened to the camera session, newest last; only on `queue`
     private var observing = false
+    private var previewMean = -1.0                     // average brightness (0–255) of the latest preview frame; only on `queue`
 
     private func note(_ s: String) {
         let f = DateFormatter(); f.dateFormat = "HH:mm:ss"
@@ -270,6 +272,7 @@ public class SkyCamPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoDataOutput
             settings.photoQualityPrioritization = .speed
             self.rawCalls[settings.uniqueID] = call
             self.binFor[settings.uniqueID] = bin
+            self.checkFor[settings.uniqueID] = call.getBool("check") ?? false
             self.photoOut.capturePhoto(with: settings, delegate: self)
         }
     }
@@ -293,6 +296,16 @@ public class SkyCamPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoDataOutput
     // ---- preview frames (called on `queue` for every frame the camera produces)
     public func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         frames += 1; lastFrameAt = Date()
+        if let p = CMSampleBufferGetImageBuffer(sampleBuffer) {     // a quick average (every 16th pixel) for the RAW check
+            CVPixelBufferLockBaseAddress(p, .readOnly)
+            if let b = CVPixelBufferGetBaseAddressOfPlane(p, 0) {
+                let w = CVPixelBufferGetWidthOfPlane(p, 0), h = CVPixelBufferGetHeightOfPlane(p, 0), st = CVPixelBufferGetBytesPerRowOfPlane(p, 0)
+                let s = b.assumingMemoryBound(to: UInt8.self); var sum = 0, n = 0
+                for y in stride(from: 0, to: h, by: 16) { for x in stride(from: 0, to: w, by: 16) { sum += Int(s[y * st + x]); n += 1 } }
+                previewMean = n > 0 ? Double(sum) / Double(n) : -1
+            }
+            CVPixelBufferUnlockBaseAddress(p, .readOnly)
+        }
         if skip > 0 { skip -= 1; return }
         if waiting.isEmpty { return }
         guard let px = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
@@ -336,9 +349,12 @@ public class SkyCamPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoDataOutput
             let exposure = (exif?[kCGImagePropertyExifExposureTime as String] as? Double) ?? (self.device?.exposureDuration.seconds ?? 0)
             let iso = ((exif?[kCGImagePropertyExifISOSpeedRatings as String] as? [NSNumber])?.first?.doubleValue) ?? Double(self.device?.iso ?? 0)
             let px = photo.pixelBuffer
+            let check = self.checkFor.removeValue(forKey: id) ?? false
+            let pm = self.previewMean, rawW = Int(photo.resolvedSettings.rawPhotoDimensions.width)
             self.work.async {
                 // Preferred: add up the photosites ourselves. Fallback: Apple develops it linearly, then we average 2×2.
-                if let px = px, let lv = self.levels(dng), self.superpixel(px, bin: bin, black: lv.black, white: lv.white, exposure: exposure, iso: iso, call: call) { return }
+                if let px = px, let lv = self.levels(dng), self.superpixel(px, bin: bin, black: lv.black, white: lv.white, exposure: exposure, iso: iso, call: call,
+                                                                                  extra: check ? String(format: "; preview frame at the time: mean %.1f of 255; ", pm) + self.appleMean(dng) : "", activeW: rawW) { return }
                 self.develop(dng, bin: bin, exposure: exposure, iso: iso, call: call)
             }
         }
@@ -362,7 +378,13 @@ public class SkyCamPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoDataOutput
 
     /// Superpixel binning straight from the Bayer data. Returns false (so the caller falls back) if the buffer is not
     /// the expected one-plane, 16-bits-per-photosite layout.
-    private func superpixel(_ px: CVPixelBuffer, bin k: Int, black: [Double], white: Double, exposure: Double, iso: Double, call: CAPPluginCall) -> Bool {
+    private func superpixel(_ px: CVPixelBuffer, bin k: Int, black blackTag: [Double], white whiteTag: Double, exposure: Double, iso: Double, call: CAPPluginCall, extra: String = "", activeW: Int = 0) -> Bool {
+        // The DNG tags give black and white on a 12-bit scale (e.g. 528 and 4095), but on iPhone 16 Pro the buffer itself
+        // is 14-bit ('bgg4' and friends end in 4): measured dark level ~2100 = 4 × 528. Put the levels on the buffer's scale.
+        let ft0 = CVPixelBufferGetPixelFormatType(px)
+        let is14 = (ft0 & 0xff) == UInt32(UInt8(ascii: "4"))
+        let f = (is14 && whiteTag <= 4095.5) ? 4.0 : 1.0
+        let black = blackTag.map { $0 * f }, white = f > 1 ? (whiteTag + 1) * f - 1 : whiteTag
         CVPixelBufferLockBaseAddress(px, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(px, .readOnly) }
         guard !CVPixelBufferIsPlanar(px), let base = CVPixelBufferGetBaseAddress(px) else { return false }
@@ -389,12 +411,22 @@ public class SkyCamPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoDataOutput
                 }
             }
         }
+        // Spread of values (every 16th pair of rows) and, if the buffer is wider than the picture, the extra columns.
+        var hist = [Int](repeating: 0, count: 65536), hn = 0, mSum = 0.0, mN = 0
+        for y in stride(from: 0, to: H - 1, by: 16) {
+            let r = (base + y * rowBytes).assumingMemoryBound(to: UInt16.self)
+            for x in 0..<W { let v = Int(r[x]); if activeW > 0 && W > activeW && x >= activeW { mSum += Double(v); mN += 1 } else { hist[v] += 1; hn += 1 } }
+        }
+        func pct(_ q: Double) -> Int { var acc = 0; let target = Int(Double(hn) * q); for (v, c) in hist.enumerated() { acc += c; if acc > target { return v } }; return 65535 }
+        let spread = String(format: "; values 0.1%% %d, 1%% %d, median %d, 99%% %d, 99.9%% %d", pct(0.001), pct(0.01), pct(0.5), pct(0.99), pct(0.999))
+            + (mN > 0 ? String(format: "; the %d extra columns average %.0f", W - activeW, mSum / Double(mN)) : String(format: "; picture %d wide", activeW))
         let ft = CVPixelBufferGetPixelFormatType(px)
         let fourcc = String([24, 16, 8, 0].map { Character(UnicodeScalar(UInt8((ft >> UInt32($0)) & 0xff))) })
         let stats = String(format: "raw %dx%d '%@', %d bytes per row; mean by Bayer position %.0f %.0f %.0f %.0f; max %d; %.1f%% at or above white (%.0f); black %@",
                            W, H, fourcc, rowBytes, sum[0] / Double(max(cnt[0], 1)), sum[1] / Double(max(cnt[1], 1)), sum[2] / Double(max(cnt[2], 1)), sum[3] / Double(max(cnt[3], 1)),
-                           mx, 100.0 * Double(clip) / Double(max(n, 1)), white, black.map { String(format: "%.0f", $0) }.joined(separator: "/"))
-        let ow = W / k, oh = H / k
+                           mx, 100.0 * Double(clip) / Double(max(n, 1)), white, black.map { String(format: "%.0f", $0) }.joined(separator: "/")) + (f > 1 ? " (DNG tags ×4: 14-bit buffer)" : "") + spread + extra
+        let usable = activeW > 0 && activeW < W ? activeW : W          // the buffer has empty (zero) columns on the right
+        let ow = usable / k, oh = H / k
         var out = [UInt16](repeating: 0, count: ow * oh)
         var rowSum = [Int](repeating: 0, count: ow)
         for oy in 0..<oh {
@@ -414,6 +446,24 @@ public class SkyCamPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoDataOutput
         }
         finish(out, ow, oh, exposure: exposure, iso: iso, method: "superpixel", bin: k, black: blk4 / 4, white: white, call: call, stats: stats)
         return true
+    }
+
+    /// Apple's own linear development of the same photo, as a check on what light the photo really caught.
+    private func appleMean(_ dng: Data) -> String {
+        guard let f = CIRAWFilter(imageData: dng, identifierHint: "com.adobe.raw-image") else { return "Apple could not read the RAW photo" }
+        f.boostAmount = 0; f.boostShadowAmount = 0; f.exposure = 0; f.localToneMapAmount = 0
+        guard let img = f.outputImage else { return "Apple could not develop the RAW photo" }
+        let small = img.transformed(by: CGAffineTransform(scaleX: 0.0625, y: 0.0625))
+        let ext = small.extent.integral, W = Int(ext.width), H = Int(ext.height)
+        guard W > 0, H > 0 else { return "Apple's development came back empty" }
+        var px = [Float](repeating: 0, count: W * H * 4)
+        px.withUnsafeMutableBytes { b in
+            ciContext.render(small, toBitmap: b.baseAddress!, rowBytes: W * 16, bounds: ext, format: .RGBAf, colorSpace: CGColorSpace(name: CGColorSpace.linearSRGB)!)
+        }
+        var s = [Double](repeating: 0, count: 3); var mx: Float = 0
+        for i in 0..<(W * H) { for c in 0..<3 { let v = px[i * 4 + c]; s[c] += Double(v); mx = max(mx, v) } }
+        let n = Double(W * H)
+        return String(format: "Apple's own development of this photo (linear, 0–1): mean R %.4f G %.4f B %.4f, brightest %.3f", s[0] / n, s[1] / n, s[2] / n, mx)
     }
 
     /// Turn upright to match the preview (the sensor reads out sideways) and send.

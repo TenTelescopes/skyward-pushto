@@ -247,7 +247,7 @@ function guessUncertainty() { const ph = state.phonePerf; return ph && ph.compas
 
 // ---------------------------------------------------------------- tabs
 // Five tabs; Align, Log, Tests and Setup live under More.
-const PARENT = { align: 'more', log: 'more', test: 'more', setup: 'more', horizon: 'more', route: 'plan', camera: 'more' };
+const PARENT = { align: 'more', log: 'more', test: 'more', setup: 'more', horizon: 'more', route: 'plan', camera: 'more', collim: 'more' };
 const scrollPos = {}; let pendingScroll = null;
 function showTab(t) {
   const m = $('main'); if (tab && m) scrollPos[tab] = m.scrollTop;
@@ -256,7 +256,7 @@ function showTab(t) {
   tab = t; const top = PARENT[t] || t;
   document.querySelectorAll('nav#tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === top));
   document.querySelectorAll('.tab').forEach((s) => s.classList.toggle('on', s.id === 'tab-' + t));
-  ({ plan: renderPlan, find: renderFind, push: renderPush, align: renderAlign, game: renderGame, test: renderTest, setup: renderSetup, more: renderMore, log: renderLog, horizon: renderHorizon, route: renderRoute, camera: renderCamera })[t]();
+  ({ plan: renderPlan, find: renderFind, push: renderPush, align: renderAlign, game: renderGame, test: renderTest, setup: renderSetup, more: renderMore, log: renderLog, horizon: renderHorizon, route: renderRoute, camera: renderCamera, collim: renderCollim })[t]();
   // Lists reopen where you left them; every other screen starts at the top.
   pendingScroll = (t === 'find' || t === 'plan') && scrollPos[t] ? { t, y: scrollPos[t] } : null;
   m.scrollTop = pendingScroll ? pendingScroll.y : 0;
@@ -1328,6 +1328,7 @@ function renderAlign() {
       <p style="margin:2px 0">${esc(cap1(starHelp(s)))}. Look ${esc(whereWords(s.alt, s.az))}.</p>
       <p class="infield" id="a-live"></p>
       <canvas id="a-chart" class="chart" width="600" height="600"></canvas>
+      ${done === 0 ? finderHowHTML(s.label, !profile().finder, 'a-finck') : ''}
       <p class="muted small">Get it in the red-dot finder first, then centre it in the eyepiece and tap <b>It's centred</b>. Not sure it's the right star? Tap <b>Different star</b>.</p>`;
   } else if (done >= need) {
     assistHTML = `<div class="card"><b>✓ Aligned on ${align.obs.map((o) => esc(o.label)).join(' and ')}.</b>
@@ -1336,7 +1337,7 @@ function renderAlign() {
   } else assistHTML = '<p class="muted">No bright stars above 15° right now.</p>';
   el.innerHTML = `${BACK}
     <h2>Star alignment</h2>
-    ${state.mounting === 'camera' && state.mode !== 'compass' ? '<div class="card"><b>Your phone looks along the tube</b><p class="muted small" style="margin:4px 0 8px">The camera can do this for you: no star to find or centre.</p><button id="a-cam" class="primary">Align with the camera</button></div>' : ''}
+    ${state.mounting === 'camera' && state.mode !== 'compass' ? `<div class="card"><b>Your phone looks along the tube</b><p class="muted small" style="margin:4px 0 8px">The camera can do this for you: no star to find or centre.</p><button id="a-cam" class="primary">${profile().camBore ? 'Align with the camera' : 'Line up and align with the camera'}</button></div>` : ''}
     ${state.mode === 'compass' ? `<p class="muted">Compass mode is on: azimuth comes from the magnetometer. Star alignment below uses the gyro instead and is usually more accurate — switch in Setup.</p>` : ''}
     ${assistHTML}
     <details class="more" id="a-tools" ${state.alignTools ? 'open' : ''}><summary>Details and tools</summary>
@@ -1361,7 +1362,7 @@ function renderAlign() {
   bindBack(el);
   $('#a-tools').ontoggle = (e) => { state.alignTools = e.target.open; save(); };
   if ($('#a-find')) $('#a-find').onclick = () => showTab('find');
-  if ($('#a-cam')) $('#a-cam').onclick = () => showTab('camera');
+  if ($('#a-cam')) $('#a-cam').onclick = () => { if (!camWiz && !profile().camBore) camWiz = { step: 'start', star: null }; showTab('camera'); };
   const addStar = (o, force) => {
     const ob = makeObs(o); if (!ob) return toast('No sensor data yet');
     if (!force) {
@@ -1375,6 +1376,7 @@ function renderAlign() {
       }
     }
     assist.pending = null; align.obs.push(ob); align.confirm.push({ ...ob, kind: 'align' }); refit();
+    if (align.obs.length === 1 && $('#a-finck') && $('#a-finck').checked) { profile().finder = { star: o.label, t: Date.now() }; save(); }
     if (align.obs.length === alignNeeded()) {
       cue.onTarget(); toast(`Aligned on ${align.obs.map((x) => x.label).join(' and ')}`, 3000);
       if (!flowStepDone('align')) showTab(state.target ? 'push' : 'find');
@@ -2728,6 +2730,7 @@ function renderMore() {
     ${item('test', 'Phone check-up and sensor tests', chk ? `This phone: ${V[chk.result.verdict] || esc(chk.result.verdict)} · ${shortDate(chk.when)}` : 'Find out how accurate this phone can be — 4 minutes')}
     ${item('setup', 'Setup', `${esc(profile().name)} · eyepieces, location, phone mount`)}
     ${item('camera', 'Camera star finder', state.mounting === 'camera' ? (profile().camBore ? 'Finds where the telescope points from the stars · lined up with the eyepiece' : 'Finds where the telescope points from the stars — no star to centre') : 'Works out where the phone’s camera is pointing from the stars')}
+    ${item('collim', 'Collimate your Skyward', profile().collimated ? `Last done ${shortDate(profile().collimated)} · laser, about 10 minutes` : 'Line up the mirrors with the laser — sharper views, about 10 minutes')}
     ${item('backup', 'Back up or restore', state.backedUp ? `Last backup ${shortDate(state.backedUp)} · your log, plans and places` : 'Keep a copy of your log, plans and places — they live only on this phone')}
     ${item('start', 'Start screen', 'Choose what to do, and how it works')}
     <h3>Quick settings</h3>
@@ -2874,7 +2877,7 @@ function renderCamera() {
       <p class="muted small" style="margin:4px 0">Sky ${r.plan.sky}, ${(r.an.mask.fraction * 100).toFixed(0)}% of the picture used. ${r.collected.toFixed(1)} s of light in ${r.N} frame${r.N === 1 ? '' : 's'}: ${esc(r.plan.why)}${r.plan.capped ? ' (stopped at the limit)' : ''}.${r.reg && (r.reg.moved || r.reg.rejected) ? ` The picture was moving: ${r.reg.moved} frame${r.reg.moved === 1 ? '' : 's'} lined up, ${r.reg.rejected} left out.` : ''}${r.an.mask.level > 765 * 0.5 ? ' This looks like daylight or a lit room, so it means nothing here.' : r.an.mask.fraction < 0.15 ? ' Hardly any of this is sky: aim away from trees and buildings.' : ''}</p>
       <canvas id="cam-pic" class="campic"></canvas>
       <p class="muted small" style="margin:4px 0">Grey stripes were ignored. Green circles are stars it recognised, yellow ones it did not. The green mark is where the telescope points.</p>
-      ${sol && along ? `<details class="more"><summary>Line the camera up with the eyepiece ${cal ? '✓' : '(recommended once)'}</summary>
+      ${sol && along && !camWiz ? `<details class="more"><summary>Line the camera up with the eyepiece by hand ${cal ? '✓' : '(recommended once)'}</summary>
         <p class="muted small">The camera and the telescope never point in exactly the same direction. Centre a bright star in the eyepiece, take a fix, then say which star it was. From then on the green mark sits where the eyepiece looks.</p>
         ${camStars(sol).length ? `<label class="row"><span>Star in the eyepiece</span><select id="cam-star">${camStars(sol).map((x, i) => `<option value="${i}">${esc(x.name)}</option>`).join('')}</select></label>
         <div class="btnrow"><button id="cam-cal">This star is centred in my eyepiece</button>${cal ? '<button id="cam-uncal">Forget</button>' : ''}</div>` : '<p class="muted small">No bright named star in this picture. Point at one, centre it in the eyepiece and take another fix.</p>'}
@@ -2886,14 +2889,16 @@ function renderCamera() {
     <h2>Camera star finder</h2>
     <p class="muted">The camera photographs the sky and the app recognises the stars, so it knows where the telescope points without you finding or centring anything.${nativeCam() ? '' : ' <span class="small">In a web browser the phone chooses the exposure; the iPhone app sets it for the sky.</span>'}</p>
     ${along ? '' : `<div class="card"><b>The camera has to look along the tube</b><p class="muted small" style="margin:4px 0 8px">In the dock on top of the tube, the camera faces the telescope and sees nothing. To use the camera for pointing, mount the phone at the back with its camera facing the sky end, then choose that position.</p><div class="btnrow"><button id="cam-along">Set phone position to “Looking along the tube”</button></div><p class="muted small" style="margin-bottom:0">Without that you can still hold the phone up to the sky and see what it recognises.</p></div>`}
+    ${wizardHTML(along)}
     ${on ? `<div class="camstage">${skyCam.isNative ? '<canvas id="cam-v"></canvas>' : '<video id="cam-v" playsinline muted autoplay></video>'}<canvas id="cam-ov"></canvas></div>
       <p class="muted small" style="margin:4px 0">Grey stripes: not sky, ignored. Keep the phone still.</p>
       <div class="hzbar"><i id="cam-bar" style="width:0"></i></div>
       <p id="cam-status" class="small" style="min-height:1.4em">${along ? (alignedNow() ? 'Aligned. A fix here re-syncs the pointing.' : `Not aligned yet: ${align.obs.length ? 'one more fix, in a different part of the sky' : 'two fixes in different parts of the sky will do it'}.`) : ''}</p>
-      <div class="actionbar"><button id="cam-go" class="primary wide">Find where I’m pointing</button><button id="cam-stop">Close camera</button></div>`
+      <div class="actionbar"><button id="cam-go" class="primary wide" ${camWiz && camWiz.step === 'finder' ? 'disabled' : ''}>${camWiz && camWiz.step === 'shoot' ? 'It’s centred' : 'Find where I’m pointing'}</button><button id="cam-stop">Close camera</button></div>`
       : `<div class="btnrow"><button id="cam-start" class="primary">Start the camera</button></div><p id="cam-status" class="small"></p>`}
     ${resultHTML}`;
   bindBack(el);
+  wireWizard();
   if ($('#cam-along')) $('#cam-along').onclick = () => { setMounting('camera'); toast('Phone position: looking along the tube'); renderCamera(); };
   if ($('#cam-start')) $('#cam-start').onclick = async () => {
     $('#cam-status').textContent = 'Opening the camera…';
@@ -2903,7 +2908,11 @@ function renderCamera() {
   if ($('#cam-stop')) $('#cam-stop').onclick = () => { closeCamera(); renderCamera(); };
   if ($('#cam-go')) $('#cam-go').onclick = cameraFind;
   if ($('#cam-errcopy')) $('#cam-errcopy').onclick = async () => { try { await navigator.clipboard.writeText(`${$('#build').textContent}\n${camErr}`); toast('Copied'); } catch (e) { toast('Could not copy; select the text instead'); } };
-  if (r && $('#cam-pic')) drawResult($('#cam-pic'), r, camBore());
+  if (r && $('#cam-pic')) {
+    drawResult($('#cam-pic'), r, camBore());
+    const ws = camWiz && camWiz.star && sol ? wizWhere(sol, camWiz.star) : null;      // ring the star to centre
+    if (ws) { const c = $('#cam-pic').getContext('2d'), q = Math.max(30, r.w / 25); c.strokeStyle = '#ffd66e'; c.lineWidth = Math.max(3, r.w / 300); c.beginPath(); c.arc(ws.x, ws.y, q, 0, 6.283); c.stroke(); c.fillStyle = '#ffd66e'; c.font = `bold ${Math.round(q * 0.8)}px system-ui`; c.textAlign = 'center'; c.fillText(camWiz.star.name, ws.x, ws.y - q - 8); }
+  }
   if ($('#cam-copy')) $('#cam-copy').onclick = async () => { try { await navigator.clipboard.writeText(reportText(r, $('#build').textContent)); toast('Report copied'); } catch (e) { toast('Could not copy; select the text instead'); } };
   if ($('#cam-cal')) $('#cam-cal').onclick = () => {
     const st = camStars(sol)[+$('#cam-star').value]; if (!st) return;
@@ -2922,6 +2931,188 @@ function camStars(sol) {
     out.push({ name: o.label, x: p.x, y: p.y, d: Math.hypot(p.x - bx, p.y - by) });
   }
   return out.sort((a, c) => a.d - c.d).slice(0, 12);
+}
+// ---- Collimating with the laser (Build 88). Drawings are made here; the photos of the screws and knobs are from the
+// Skyward 150 build manual (original design). Steps follow the usual laser method: secondary first (the dot onto the
+// primary's centre ring), then the primary (the return beam into the laser's centre hole), repeat, then a star test.
+function collimSVG(kind) {
+  const ring = (cx, cy, r, c, w = 2, o = 1) => `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${c}" stroke-width="${w}" opacity="${o}"/>`;
+  const dot = (cx, cy, r = 5) => `<circle cx="${cx}" cy="${cy}" r="${r + 5}" fill="#ff3030" opacity="0.25"/><circle cx="${cx}" cy="${cy}" r="${r}" fill="#ff3030"/>`;
+  const lab = (x, y, s, c = '#c9cff0') => `<text x="${x}" y="${y}" fill="${c}" font-size="13" text-anchor="middle">${s}</text>`;
+  if (kind === 'primary-view') {          // looking down the front of the tube at the big mirror
+    const one = (cx, ok) => `<circle cx="${cx}" cy="78" r="62" fill="#20263f" stroke="#8a93c9" stroke-width="3"/>
+      <rect x="${cx - 62}" y="75" width="124" height="6" fill="#3a4266"/><rect x="${cx - 3}" y="16" width="6" height="124" fill="#3a4266"/>
+      <circle cx="${cx}" cy="78" r="17" fill="#3a4266"/>${ring(cx, 78, 7, '#fff', 2.5)}${dot(ok ? cx : cx + 22, ok ? 78 : 64, 4)}
+      ${lab(cx, 166, ok ? '✓ dot in the ring' : '✗ dot beside the ring', ok ? '#7ee0a0' : '#ffb0a0')}`;
+    return `<svg class="finderart" viewBox="0 0 340 176" role="img" aria-label="The big mirror seen down the front of the tube: the red dot should land in the small centre ring">${one(86, false)}${one(254, true)}</svg>`;
+  }
+  if (kind === 'target') {                // the laser's own target face, where the beam comes back
+    const one = (cx, ok) => `<circle cx="${cx}" cy="78" r="58" fill="#e9e6dc" stroke="#8a93c9" stroke-width="3"/>
+      ${ring(cx, 78, 40, '#9a958a', 1.5)}${ring(cx, 78, 22, '#9a958a', 1.5)}<circle cx="${cx}" cy="78" r="4.5" fill="#222"/>
+      ${ok ? `<circle cx="${cx}" cy="78" r="9" fill="#ff3030" opacity="0.3"/>` : dot(cx - 20, 92, 4)}
+      ${lab(cx, 166, ok ? '✓ back in the hole' : '✗ spot off centre', ok ? '#7ee0a0' : '#ffb0a0')}`;
+    return `<svg class="finderart" viewBox="0 0 340 176" role="img" aria-label="The laser's target face: the returning spot should go back into the centre hole">${one(86, false)}${one(254, true)}</svg>`;
+  }
+  // star test: a bright star slightly out of focus
+  const one = (cx, ok) => `<rect x="${cx - 64}" y="14" width="128" height="128" rx="10" fill="#05070f"/>
+    ${[22, 16, 10].map((r, i) => ring(cx + (ok ? 0 : 6 - 2 * i), 78 + (ok ? 0 : 3 - i), r, '#fff', 2, 0.55 + 0.15 * i)).join('')}
+    <circle cx="${cx + (ok ? 0 : 9)}" cy="${78 + (ok ? 0 : 5)}" r="6" fill="#05070f"/>
+    ${lab(cx, 166, ok ? '✓ rings centred' : '✗ rings lopsided', ok ? '#7ee0a0' : '#ffb0a0')}`;
+  return `<svg class="finderart" viewBox="0 0 340 176" role="img" aria-label="A bright star slightly out of focus: the rings should be centred">${one(86, false)}${one(254, true)}</svg>`;
+}
+function renderCollim() {
+  const el = $('#tab-collim'), P = profile(), fr = (P.name || '').match(/200/) ? 4 : 5;
+  el.innerHTML = `${BACK}<h2>Collimate your Skyward</h2>
+    <p>Collimating lines up the two mirrors so stars come to a sharp point. With the laser it takes about ten minutes, indoors or out. ${fr === 4 ? 'Your Skyward 200 is f/4: it shows small errors, so check it every time you set up.' : 'Check it every few sessions, and after the telescope has been bumped or moved in a car.'}</p>
+    <div class="card"><b>Before you start</b>
+      <ul class="small" style="margin:6px 0 0 18px;padding:0">
+        <li><b>Never look into the laser beam</b>, or at its reflection in the mirrors. Look at where the dot lands. Switch the laser off between steps.</li>
+        <li>Point the tube level, so nothing you drop can land on the big mirror.</li>
+        <li>Slide the laser into the focuser and tighten the thumbscrew gently: the same way every time.</li>
+        <li>The laser method aims for the small ring marked in the centre of the big (primary) mirror. If yours has none, get in touch before going further.</li>
+      </ul></div>
+    <div class="card"><div class="muted small">Step 1 of 3</div><b style="font-size:18px">The small mirror: dot into the ring</b>
+      <p class="small">Switch the laser on. Look down the <b>front</b> of the tube at the big mirror at the bottom. The red dot should sit inside the small centre ring.</p>
+      ${collimSVG('primary-view')}
+      <p class="small">If it doesn't, adjust the small (secondary) mirror with the <b>three small screws</b> around the centre of its holder, in the middle of the spider. Make small turns: loosen one a little, then tighten the other two, until the dot moves into the ring. Keep the screws snug at the end.</p>
+      <img class="findermount" src="img/secondary-screws.png" alt="The three adjusting screws in the centre of the secondary holder">
+      <p class="muted small" style="text-align:center;margin:0">The secondary holder’s three screws (from the Skyward 150 build manual).</p></div>
+    <div class="card"><div class="muted small">Step 2 of 3</div><b style="font-size:18px">The big mirror: spot back into the hole</b>
+      <p class="small">Now look at the laser’s own <b>target face</b>, the angled window on its side. The beam comes back from the big mirror and makes a spot there. It should go back into the centre hole.</p>
+      ${collimSVG('target')}
+      <p class="small">If it doesn't, turn the <b>knobs at the back</b> of the telescope, behind the big mirror. They come in pairs: one adjusts, the other locks. Loosen the locks a little, turn the adjusting knobs until the spot goes into the hole, then tighten the locks gently and check the spot didn’t move.</p>
+      <img class="findermount" src="img/primary-knobs.jpg" alt="The pairs of knobs at the back of the telescope that tilt the big mirror" style="background:none">
+      <p class="muted small" style="text-align:center;margin:0">The knobs behind the big mirror (Skyward 150 build manual; your model may look a little different).</p></div>
+    <div class="card"><div class="muted small">Step 3 of 3</div><b style="font-size:18px">Check both again</b>
+      <p class="small">Adjusting the big mirror can move the dot from step 1 a little. Go back and forth between steps 1 and 2 until both hold without changes, usually two or three rounds.</p>
+      <p class="small"><b>If the dot draws a small circle</b> when you turn the laser in the focuser, the laser itself is off. Adjust it as its instructions say, or turn it so the dot sits in the middle of that circle and use that position every time.</p>
+      <label class="row"><span>Collimated today</span><input type="checkbox" id="co-done" ${P.collimated && new Date(P.collimated).toDateString() === new Date().toDateString() ? 'checked' : ''}></label></div>
+    <details class="more"><summary>At night: check on a star (optional)</summary>
+      <p class="small">The laser gets you close. A star shows what is left. Let the telescope cool for half an hour. Centre a bright star high in the sky, use your highest-power eyepiece (the 4 mm), and turn the focuser so the star is slightly out of focus. The rings should be centred, like a target.</p>
+      ${collimSVG('star')}
+      <p class="small">If the rings are lopsided, make a tiny turn of one adjusting knob at the back, re-centre the star, and look again. Better? Keep going a little. Worse? Turn it back and try another knob. Small steps, re-centring each time.</p></details>`;
+  bindBack(el);
+  $('#co-done').onchange = (e) => { if (e.target.checked) { P.collimated = Date.now(); toast('Noted: collimated today'); } else delete P.collimated; save(); };
+}
+
+// ---- Red-dot finder: drawings and instructions shared by the star alignment and the camera line-up
+/** Left: the view through a red-dot finder with the dot on the star, and its two knobs. Right: the same star in the
+ *  middle of the eyepiece. */
+function finderArtSVG(name) {
+  const n = esc(name), st = (x, y, r, o = 1) => `<circle cx="${x}" cy="${y}" r="${r}" fill="#fff" opacity="${o}"/>`;
+  return `<svg class="finderart" viewBox="0 0 360 190" role="img" aria-label="Red dot on ${n} in the finder; ${n} in the middle of the eyepiece">
+    <g transform="translate(90,92)">
+      <circle r="60" fill="#0b1030" stroke="#8a93c9" stroke-width="3"/>
+      ${st(-34, -22, 1.4, 0.7)}${st(30, 30, 1.2, 0.7)}${st(-18, 38, 1, 0.6)}${st(36, -34, 1, 0.6)}${st(10, -8, 3.4)}
+      <circle cx="10" cy="-8" r="6.5" fill="none" stroke="#ff4040" stroke-width="2.5"/><circle cx="10" cy="-8" r="2.2" fill="#ff4040"/>
+      <rect x="-9" y="-78" width="18" height="12" rx="3" fill="#8a93c9"/><text x="16" y="-68" fill="#c9cff0" font-size="12">↕ knob</text>
+      <rect x="64" y="-9" width="12" height="18" rx="3" fill="#8a93c9"/><text x="70" y="26" fill="#c9cff0" font-size="12" text-anchor="middle">↔ knob</text>
+    </g>
+    <text x="90" y="182" fill="#c9cff0" font-size="13" text-anchor="middle">Red-dot finder</text>
+    <g transform="translate(270,92)">
+      <circle r="60" fill="#0b1030" stroke="#8a93c9" stroke-width="3"/>
+      ${st(-26, 30, 1.4, 0.7)}${st(34, -20, 1.2, 0.7)}${st(-40, -18, 1, 0.6)}${st(0, 0, 5)}
+      <circle r="60" fill="none" stroke="#000" stroke-opacity="0.35" stroke-width="10"/>
+    </g>
+    <text x="270" y="182" fill="#c9cff0" font-size="13" text-anchor="middle">Eyepiece: in the middle</text>
+  </svg>`;
+}
+/** The finder steps for a named star, with the drawings. `open`: start expanded. `check`: id of an "I set it" box. */
+function finderHowHTML(name, open, check) {
+  const n = esc(name);
+  return `<details class="finderbox" ${open ? 'open' : ''}><summary>Use the red-dot finder to get ${n} in the eyepiece</summary>
+    ${finderArtSVG(name)}
+    <ol class="small">
+      <li><b>Finder already lined up?</b> Put the red dot on ${n}. It should then be in the eyepiece: centre it.</li>
+      <li><b>Not lined up, or not sure?</b> With your lowest-power eyepiece, sweep slowly until ${n} shows up and centre it. Then, without moving the telescope, turn the finder’s two knobs (one moves the dot up and down, the other side to side) until the dot sits on ${n}.</li>
+      <li><b>Look again.</b> Turning the knobs can nudge the telescope: re-centre ${n} in the eyepiece if it moved.</li>
+    </ol>
+    <img class="findermount" src="img/finder-mount.png" alt="The red-dot finder on its mount on top of the tube">
+    <p class="muted small" style="text-align:center;margin:0">The finder on its mount (from the Skyward build manual). Lining it up is easiest on the Moon or a bright planet, or in daylight on a far-off treetop.</p>
+    ${check ? `<label class="row"><span>I set the red-dot finder on ${n}</span><input type="checkbox" id="${check}"></label>` : ''}
+  </details>`;
+}
+
+// ---- Lining up: camera, telescope and red-dot finder, all on one star
+// 1. a rough fix tells the app which bright star the telescope is near; 2. the user gets that star into the eyepiece
+// with the red-dot finder (or lines the finder up on it, if it was off); 3. with the star re-checked in the middle of the
+// eyepiece, another fix: where the star sits in that picture is where the eyepiece looks (the camera line-up), and the
+// same fix aligns the pointing; 4. one more fix elsewhere finishes the alignment (unless one is enough).
+// The finder comes before the picture because it is how the star gets into the eyepiece, and because turning its knobs
+// can nudge the telescope: the picture is taken after the last nudge.
+let camWiz = null;   // { step: 'start' | 'finder' | 'shoot' | 'second' | 'done', star: { key, name, ra, dec } }
+/** The bright star the telescope is most likely nearest: close to the telescope mark, and bright. */
+function wizPick(sol) {
+  const { w, h } = camLast, b = camBore(), bx = w / 2 + sol.f * b[0] / b[2], by = h / 2 + sol.f * b[1] / b[2]; let best = null;
+  for (const o of sky.objects) {
+    if (!o.key.startsWith('st:') || (o.mag ?? 9) > 2.5 || o.ra == null) continue;
+    const p = projectStar(sol, w, h, o.ra, o.dec); if (!p || p.x < 0 || p.y < 0 || p.x > w || p.y > h) continue;
+    const off = Math.atan(Math.hypot(p.x - bx, p.y - by) / sol.f) * R2D; if (off > 15) continue;
+    const score = off + 4 * (o.mag ?? 2);
+    if (!best || score < best.score) best = { key: o.key, name: o.label, ra: o.ra, dec: o.dec, off, score };
+  }
+  return best;
+}
+/** Where a star is in the current picture, or null. */
+function wizWhere(sol, s) {
+  if (!camLast || !s) return null; const { w, h } = camLast, p = projectStar(sol, w, h, s.ra, s.dec);
+  return p && p.x >= 0 && p.y >= 0 && p.x <= w && p.y <= h ? p : null;
+}
+/** A camera fix taken while lining up. Returns the sentence shown with the result. */
+function wizardFix(r, refR) {
+  const sol = r.sol, W = camWiz;
+  if (W.step === 'start' || W.step === 'shoot') {
+    if (W.step === 'shoot' && W.star) {
+      const p = wizWhere(sol, W.star);
+      if (!p) return `${W.star.name} is not in this picture. Centre ${W.star.name} in the eyepiece and try again, or tap “Pick another star”.`;
+      const x = (p.x - r.w / 2) / sol.f, y = (p.y - r.h / 2) / sol.f, off = Math.atan(Math.hypot(x, y)) * R2D;
+      if (off > 15) return `${W.star.name} is ${off.toFixed(0)}° from the middle of the picture: too far to be the star in the eyepiece. Is the right star centred? Nothing was changed.`;
+      const l = Math.hypot(x, y, 1); profile().camBore = [x / l, y / l, 1 / l]; save();
+      // Earlier camera fixes assumed the old line-up, so the alignment starts again from this one.
+      align = { obs: [], fit: null, syncs: [], confirm: [] }; model.rate = 0;
+      const a = applyCameraFix(sol, refR);
+      W.step = alignedNow() ? 'done' : 'second'; if (W.step === 'done') { cue.onTarget(); flowStepDone('align'); }
+      return `Camera lined up: the eyepiece looks ${off.toFixed(1)}° from the middle of the camera’s picture. ${a}`;
+    }
+    const s = wizPick(sol);
+    if (!s) return 'No bright star near where the telescope points. Aim at one of the brightest stars you can see and take another picture.';
+    W.star = s; W.step = 'finder';
+    return `The telescope is near ${s.name} (circled). Next: get it into the eyepiece.`;
+  }
+  // Second part of the sky (or a later check): an ordinary camera fix.
+  const a = applyCameraFix(sol, refR);
+  if (alignedNow()) W.step = 'done';
+  return a;
+}
+function wizardHTML(along) {
+  if (!along) return '';
+  const W = camWiz, cal = profile().camBore, fin = profile().finder;
+  if (!W) return `<div class="card"><b>${cal ? 'Camera, telescope and finder' : 'Line up the camera, telescope and red-dot finder'}</b>
+    <p class="muted small" style="margin:4px 0 8px">${cal ? `Lined up${fin ? `, finder set on ${esc(fin.star)} ${new Date(fin.t).toLocaleDateString()}` : ''}. Do it again if the phone or finder was moved.` : 'Once per setup, about two minutes: one bright star makes all three point at the same place, and aligns the pointing at the same time.'}</p>
+    <div class="btnrow"><button id="wiz-go" class="${cal ? '' : 'primary'}">${cal ? 'Line up again' : 'Start lining up'}</button></div></div>`;
+  const S = W.star ? esc(W.star.name) : 'the star';
+  const steps = {
+    start: ['1 of 4', 'Point the telescope at a bright star', 'Aim roughly at one of the brightest stars you can see — sighting along the tube is fine. Then tap <b>Find where I’m pointing</b>.'],
+    finder: ['2 of 4', `Get ${S} in the eyepiece`, `${S} is circled in the picture below.${W.star ? finderHowHTML(W.star.name, true, '') : ''}`],
+    shoot: ['3 of 4', `Check ${S} is centred, then take the picture`, `Look in the eyepiece once more: ${S} should be in the middle (re-centre it if the finder’s knobs nudged the telescope). Keep the telescope still and tap <b>It’s centred</b>. Where ${S} lands in the camera’s picture is where the eyepiece looks.`],
+    second: ['4 of 4', 'One more part of the sky', 'Swing the telescope a quarter turn or more to another part of the sky, hold it still and tap <b>Find where I’m pointing</b>. Any stars will do.'],
+    done: ['Done', 'All three agree', `The camera, the eyepiece${fin ? ' and the red-dot finder' : ''} point at the same place, and the arrows are aligned. The green cross in each picture is where the eyepiece looks. Check now and then with any star: centre it, take a picture, and the pointing re-syncs.`]
+  }[W.step];
+  return `<div class="card" style="border-color:var(--hi)"><div class="muted small">Lining up · step ${steps[0]}</div><b style="font-size:18px">${steps[1]}</b>
+    <div class="small" style="margin:4px 0 8px">${steps[2]}</div>
+    ${W.step === 'finder' ? `<div class="btnrow"><button id="wiz-fin" class="primary">It’s centred and the dot is on it</button><button id="wiz-nofin">It’s centred — no finder</button></div>` : ''}
+    <div class="btnrow">${W.step === 'finder' || W.step === 'shoot' ? '<button id="wiz-other">Pick another star</button>' : ''}<button id="wiz-stop">${W.step === 'done' ? 'Close' : 'Stop lining up'}</button></div></div>`;
+}
+function wireWizard() {
+  if ($('#wiz-go')) $('#wiz-go').onclick = () => { camWiz = { step: 'start', star: null }; camLast = null; camNote = ''; renderCamera(); };
+  if ($('#wiz-stop')) $('#wiz-stop').onclick = () => { camWiz = null; renderCamera(); };
+  if ($('#wiz-other')) $('#wiz-other').onclick = () => { camWiz = { step: 'start', star: null }; camNote = 'Aim at a different bright star and take another picture.'; renderCamera(); };
+  const fin = (has) => {
+    const W = camWiz; if (has) { profile().finder = { star: W.star ? W.star.name : '', t: Date.now() }; save(); toast('Red-dot finder set'); }
+    W.step = 'shoot'; renderCamera();
+  };
+  if ($('#wiz-fin')) $('#wiz-fin').onclick = () => fin(true);
+  if ($('#wiz-nofin')) $('#wiz-nofin').onclick = () => fin(false);
 }
 function brightestNamedNear(sol) {
   const t = camTruth(sol); let best = null;
@@ -2953,7 +3144,7 @@ async function cameraFind() {
     const hp = (state.hotPix || {})[camKey()];
     const r = await skyCam.find({ FIELD: STAR_FIELD, prior, hot: hp ? hp.list : null, hotSize: hp ? { w: hp.w, h: hp.h } : null, scale: known ? { f: known.f, tol: 0.05, from: 'an earlier fix', w: known.w, h: known.h } : null, onReference: () => { refR = avgR(0.3) || (sensors && sensors.R) || null; }, align: !/[?&]noalign/.test(location.search), status: (t) => { const s = $('#cam-status'); if (s) s.textContent = t; }, progress: (f) => { const b = $('#cam-bar'); if (b) b.style.width = `${f * 100}%`; } });
     if (!r) return;
-    camLast = r; camErr = ''; camNote = r.sol ? applyCameraFix(r.sol, refR) : '';
+    camLast = r; camErr = ''; camNote = r.sol ? (camWiz && camWiz.step !== 'done' ? wizardFix(r, refR) : applyCameraFix(r.sol, refR)) : '';
     // Learn hot pixels: unrecognised spots that stay on the same pixel while the sky moves. Only from confident fixes.
     { const same = hp && hp.w === r.w && hp.h === r.h, before = same ? hp.list.filter((e) => e.hot).length : 0; r.hotKnown = before;
       if (r.sol && r.sol.confidence === 'high') {

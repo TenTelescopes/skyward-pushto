@@ -405,3 +405,10 @@ canvas.campic { width: 100%; height: auto; display: block; border-radius: 10px; 
 pre.camrep { white-space: pre-wrap; word-break: break-word; font-size: 12px; line-height: 1.4; max-height: 260px; overflow: auto; background: #0006; border-radius: 8px; padding: 8px; }
 .hzbar { height: 8px; border-radius: 4px; background: #0006; overflow: hidden; margin: 8px 0; } .hzbar i { display: block; height: 100%; background: var(--hi); }
 .camstage canvas#cam-v { position: static; width: 100%; height: auto; display: block; max-height: 46vh; }
+/* Red-dot finder illustrations (Build 88) */
+.finderart { width: 100%; max-width: 380px; display: block; margin: 6px auto; }
+.findermount { width: 100%; max-width: 220px; display: block; margin: 6px auto 2px; background: #fff; border-radius: 8px; }
+.finderbox { margin: 8px 0; }
+.finderbox summary { font-weight: 600; }
+.finderbox ol { margin: 6px 0 6px 18px; padding: 0; }
+.finderbox li { margin: 4px 0; }

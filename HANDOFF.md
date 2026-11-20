@@ -223,3 +223,70 @@ unrelated extra star in the object-page sentence. Still open with Bryan: whether
   duration" for a 1/100 s exposure. The frame duration was computed via frames-per-second (1/30 → 33333 µs, i.e. just
   over 30 fps) and fell outside Apple's range. Now clamped with CMTime to the ranges' own min/max durations
   (`frameLimits`), and the exposure likewise to the format's own CMTime limits. Probably the cause of the earlier hang too.
+- First complete run on the phone (indoors, Build 86): no crash, RAW superpixel works, 17 RAW frames of 0.1 s took
+  31 s (~1.8 s overhead per RAW photo — too slow for stacking as is). Sky level stayed ~345–363 of 765 while ISO went
+  8000 → 80 (photo EXIF confirms those ISOs), noise only 0.27: the RAW numbers look clipped or mis-scaled. Added a
+  "RAW check" line per trial frame (mean per Bayer position, max, % at white, pixel format) and the format's frame/
+  exposure limits to the report. Also seen: after a few RAW photos the longest allowed frame dropped to 1/24 s.
+- Second RAW check (dark room): buffer 'bgg4' (14-bit Bayer BGGR in 16 bits), 4224×3024, while the DNG tags say black
+  528 / white 4095 (12-bit). Mean ~2018 in all four Bayer positions at every ISO from 8000 to 50, max ~2277. Either the
+  photos are nearly unexposed, or the buffer is on a different scale from the DNG tags (14-bit black ≈ 4×528?) so the
+  black subtraction is wrong — which would also explain the constant "sky level" ~340 that drove the gain DOWN in the
+  dark. Added to the trial RAW check: value percentiles, the buffer's extra columns, the preview's mean at that moment,
+  and Apple's own linear development of the same DNG (`raw({check:true})`, trial frames only).
+- Third RAW check (lamp/room, ISO 8000 → 50): Apple's own development scales properly with ISO (G 0.34 → 0.0005),
+  so the photos do catch light. The buffer is 14-bit: dark median 2120 ≈ 4 × the DNG's 528, and the right-hand 192
+  columns are zero padding. Fix: superpixel puts black/white on the buffer's scale (×4 when the format's fourcc ends
+  in '4' and the DNG white ≤ 4095) and bins only the picture's own width. Also: raw signal above black was 114 at
+  ISO 400, 134 at 1600, 133 at 8000 — RAW gain is analogue only up to roughly ISO 400–1600; above that Apple only
+  multiplies in development. RAW ISO now capped at 800 (`_isoMax`); longer exposures instead.
+- To do (asked Nov 20): let the user save the stacked picture (e.g. PNG of the stretched stack with the overlay, and
+  perhaps the linear 16-bit data as FITS/TIFF for astronomy software). Not started.
+- FIRST REAL-SKY FIX ON THE PHONE (Nov 20, 01:31, Guelph): native RAW, one 1 s frame at ISO 800, sky level 4.3/765,
+  20 clear stars; solved blind (no pointing hint) at RA 5h29m, Dec −5.2° (Orion), 18 of 20 matched, fit 1.94 px
+  (9.5′) at 701 px focal length (phone's own hint 693 px ±15%, used), 3 ms in the worker. Fit is loose for the
+  number of stars: likely lens distortion (72° lens, no correction on raw data) — a radial distortion term in the
+  solver's refine step is the next accuracy improvement. Collection also stopped after one frame (20 stars = enough).
+
+## Build 87 — camera, eyepiece and red-dot finder lined up together (Nov 20)
+- Context: first real-sky native fix (handheld, Orion) solved blind; Bryan asked for an alignment flow in which the
+  red-dot finder, the telescope and the phone all agree.
+- Camera screen, phone looking along the tube: "Line up the camera, telescope and red-dot finder" (`camWiz`,
+  `wizardFix`, `wizardHTML`, `wireWizard`). Steps: 1 rough fix → `wizPick` names the bright star (mag ≤ 2.5, within 15°
+  of the telescope mark, score = offset + 4×mag) and rings it; 2 user centres it in the eyepiece, "It's centred" takes a
+  fix → where that star sits in the picture becomes `profile().camBore`, the alignment restarts and this same fix is
+  the first alignment fix (`applyCameraFix`, which still refuses if the tilt sensor disagrees); 3 without moving, the
+  user sets the red-dot finder on the star (`profile().finder = {star, t}`) or says there is none; 4 one more fix
+  elsewhere unless one is enough (saved mount tilt / calibrate off). "Align with the camera" on the alignment screen
+  starts it when the camera has never been lined up. The by-hand line-up (pick a star from a list) stays, hidden while
+  the guided one runs.
+- Classic star alignment (any phone position): after the first star is centred, a "Red-dot finder check" card asks
+  to set the dot on that star (once a session, `finderAsked`); if that star completes the alignment, the app waits for
+  the answer before moving on.
+- Native camera in this build: 14-bit black/white fix and RAW ISO cap 800 (see Build 86 notes).
+- Walks: b78 (now with the guided line-up, sensors aligned via simGoto), b87 (pretend native plug-in), b80, b75 pass.
+  The older walks b58–b66 stop at a dialog that later builds added before the sensor gate; they need updating, not
+  related to this build.
+
+## Build 88 — red-dot finder first, with drawings (Nov 20)
+- Bryan: the finder should come first — it is how the star gets into the eyepiece, and turning its knobs nudges the
+  telescope, so the camera picture must come after the last nudge.
+- Camera line-up steps now: 1 rough fix names the star → 2 `finder`: get it in the eyepiece with the finder (or line
+  the finder up on it), buttons "It's centred and the dot is on it" / "It's centred — no finder"; the picture button is
+  disabled in this step → 3 `shoot`: re-check centred, "It's centred" takes the fix that sets `camBore` and is the first
+  alignment fix → 4 `second` (or done).
+- Star alignment: the same finder help (`finderHowHTML`) sits under the first star, open until a finder has been set,
+  with a "I set the red-dot finder on X" box read when that star is confirmed. The post-confirmation card is gone.
+- Drawings: `finderArtSVG` (dot on the star in the finder with its two knobs; star in the middle of the eyepiece) and
+  `docs/img/finder-mount.png`, cropped from page 28 of the Skyward 150 Assembly Manual v0.1f (finder on its mount).
+  The manual has no finder-alignment or collimation pages; it is assembly only.
+- Web camera: `find()` waits up to 5 s for the first video frame (a redraw creates a new video element; tapping right
+  after gave "has not produced a picture yet").
+- Collimation page (More → "Collimate your Skyward", tab `collim`, `renderCollim`, `collimSVG`): laser method —
+  safety and set-up, 1 secondary (dot into the primary's centre ring; the three screws in the secondary holder),
+  2 primary (return spot into the laser's centre hole; the knob pairs at the back, adjust + lock), 3 repeat both; the
+  laser's own error (dot circling as it turns); optional star test at night. Drawings made in code; photos cropped from
+  the Skyward 150 build manual (p24 secondary screws → img/secondary-screws.png, p30 render → img/primary-knobs.jpg;
+  the original 150 design, the Compact may differ). "Collimated today" saves `profile().collimated` (shown in More).
+  Bryan said "laser like in the build manual", but manual v0.1f in the Skyward150 repo has no laser pages; the 150
+  Compact sourcing guide and the SW200 RASC packing list both include a laser collimator. Ask for the newer manual.

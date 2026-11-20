@@ -39,7 +39,7 @@ const OUT = process.argv[2] || '.', VIDEO = process.argv[3];
   { // 2. looking along, not aligned: the alignment screen offers the camera; first fix accepted, same spot refused as second
     const { ctx, pg } = await open({ ...base, mounting: 'camera' });      // default: two fixes needed
     check(await pg.isVisible('#a-cam'), 'alignment screen offers "Align with the camera"');
-    await pg.click('#a-cam'); await pg.waitForTimeout(300);
+    await pg.click('#a-cam'); await pg.waitForTimeout(300); if (await pg.$('#wiz-stop')) { await pg.click('#wiz-stop'); await pg.waitForTimeout(200); }
     await pg.click('#cam-start'); await pg.waitForSelector('#cam-go', { timeout: 15000 }); await pg.waitForTimeout(1500);
     await pg.screenshot({ path: OUT + '/b78-live.png' });
     let t = await fix(pg); truth = where(t); check(!!truth, 'reports where the telescope points: ' + JSON.stringify(truth));
@@ -49,15 +49,34 @@ const OUT = process.argv[2] || '.', VIDEO = process.argv[3];
     t = await fix(pg); check(/too close to the first fix/.test(t), 'second fix at the same spot refused');
     await pg.screenshot({ path: OUT + '/b78-result.png', fullPage: true });
     // line the camera up with the eyepiece on the nearest star, then forget
-    await pg.evaluate(() => { const d = [...document.querySelectorAll('#tab-camera details')].find((x) => /Line the camera up/.test(x.innerText)); d.open = true; });
+    await pg.evaluate(() => { const d = [...document.querySelectorAll('#tab-camera details')].find((x) => /Line the camera up with the eyepiece/.test(x.innerText)); d.open = true; });
     const star = await pg.evaluate(() => document.querySelector('#cam-star').selectedOptions[0].textContent); await pg.click('#cam-cal'); await pg.waitForTimeout(300);
     check(/Lined up on/.test(await pg.evaluate(() => document.querySelector('#tab-camera').innerText)), 'lined up with the eyepiece on ' + star);
     check(await pg.evaluate(() => { const s = JSON.parse(localStorage.getItem('skyward-pushto-v1')); return Object.values(s.profiles).some((p) => Array.isArray(p.camBore)); }), 'line-up saved with the telescope profile');
     await ctx.close();
   }
+  { // 2c. guided line-up: finder first (it gets the star into the eyepiece), then the picture that lines up the camera and aligns
+    const { ctx, pg } = await open({ ...base, mounting: 'camera' });
+    await pg.click('#a-cam'); await pg.waitForTimeout(300);
+    const T = () => pg.evaluate(() => document.querySelector('#tab-camera').innerText);
+    check(/step 1 of 4/.test(await T()), 'guided: "Align with the camera" starts the line-up when the camera was never lined up');
+    await pg.click('#cam-start'); await pg.waitForSelector('#cam-go', { timeout: 15000 }); await pg.waitForTimeout(1500);
+    let t = await fix(pg); const tr = where(t); let all = await T(); const star = (/Get (\S+) in the eyepiece/.exec(all) || [])[1];
+    check(!!star && !/First fix taken/.test(t), `guided: rough fix names ${star} and is not used to align`);
+    check(/step 2 of 4/.test(all) && /Finder already lined up/.test(all) && await pg.isVisible('#tab-camera .finderart') && await pg.isVisible('#tab-camera .findermount'), 'guided: step 2 is the red-dot finder, with drawings and the manual picture');
+    check(await pg.isDisabled('#cam-go'), 'guided: no picture until the star is in the eyepiece');
+    await pg.screenshot({ path: OUT + '/b78-finder.png', fullPage: true });
+    await pg.click('#wiz-fin'); await pg.waitForTimeout(300); all = await T();
+    check(/step 3 of 4/.test(all) && /It’s centred/.test(await pg.textContent('#cam-go')), 'guided: step 3 re-check centred, then the picture');
+    await pg.evaluate((p) => window.simGoto(p), tr); await pg.waitForTimeout(1500);
+    t = await fix(pg); all = await T();
+    check(/Camera lined up/.test(all) && /First fix taken/.test(all), 'guided: that picture lines up the camera AND is the first alignment fix');
+    check(/step 4 of 4/.test(all), 'guided: then one more part of the sky');
+    await ctx.close();
+  }
   { // 2b. one-fix alignment ("solve how the phone sits" switched off): a single camera fix aligns and the start-up path moves on
     const { ctx, pg } = await open({ ...base, mounting: 'camera', calibrate: false });
-    await pg.click('#a-cam'); await pg.waitForTimeout(300); await pg.click('#cam-start'); await pg.waitForSelector('#cam-go', { timeout: 15000 }); await pg.waitForTimeout(1500);
+    await pg.click('#a-cam'); await pg.waitForTimeout(300); if (await pg.$('#wiz-stop')) { await pg.click('#wiz-stop'); await pg.waitForTimeout(200); } await pg.click('#cam-start'); await pg.waitForSelector('#cam-go', { timeout: 15000 }); await pg.waitForTimeout(1500);
     await pg.evaluate((p) => window.simGoto(p), truth); await pg.waitForTimeout(1500);
     await pg.click('#cam-go'); await pg.waitForFunction(() => !document.querySelector('#tab-camera').classList.contains('on'), null, { timeout: 60000 }); await pg.waitForTimeout(400);
     check(await pg.evaluate(() => document.querySelector('#tab-find').classList.contains('on') || document.querySelector('#tab-push').classList.contains('on')), 'one fix aligned the scope and moved on to choosing a target');

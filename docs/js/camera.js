@@ -91,6 +91,8 @@ export class SkyCamera {
     const v = this.v, status = opts.status || (() => {}), progress = opts.progress || (() => {});
     if (this.busy) return null; this.busy = true;
     try {
+      // The screen may have just been redrawn (a new video element): give the picture a few seconds to arrive.
+      for (let i = 0; i < 50 && !(v.videoWidth && v.videoHeight); i++) await new Promise((r) => setTimeout(r, 100));
       const w = v.videoWidth, h = v.videoHeight; if (!w || !h) throw new Error('The camera has not produced a picture yet. Wait a second and try again.');
       const cv = document.createElement('canvas'); cv.width = w; cv.height = h; const cx = cv.getContext('2d', { willReadFrequently: true });
       status('Measuring the frame time…');
@@ -177,9 +179,13 @@ export class NativeSkyCamera {
   async open() {
     this.info = await this._call('open', {}, 20000); this.opened = true; this.alive = true;
     this.log = [`native camera: ${this.info.camera}${this.info.raw ? ', RAW' : ', no RAW (processed frames)'}, exposure ${fmtSec(this.info.minExposure)} to ${fmtSec(this.info.maxExposure)}, ISO ${Math.round(this.info.minISO)}–${Math.round(this.info.maxISO)}, lens ${Number(this.info.fieldOfView).toFixed(0)}° wide${this.info.formatInfo ? `; format ${this.info.formatInfo}` : ''}`];
-    await this._expose(Math.min(this.info.maxExposure, 0.1), this.info.maxISO * 0.6);
+    await this._expose(Math.min(this.info.maxExposure, 0.1), Math.min(this._isoMax(), this.info.maxISO * 0.6));
     this._live();
   }
+  // In RAW, the sensor's own (analogue) gain stops somewhere between ISO 400 and 1600 on an iPhone 16 Pro: higher
+  // settings only change a label that Apple's developer multiplies by later, so the numbers we read do not grow.
+  // Measured Nov 20: signal above black 114 at ISO 400, 134 at 1600, 133 at 8000. Longer exposures, not more ISO.
+  _isoMax() { return this.info.raw ? Math.min(this.info.maxISO, 800) : this.info.maxISO; }
   async close() { this.alive = false; this.opened = false; try { await this.p.close(); } catch (e) {} }
   // Every call into the plug-in gets a time limit, so a frame that never arrives shows an error instead of hanging.
   // On a time-out, ask the camera how it is doing and add that to the message (and to the log for the report).
@@ -198,9 +204,9 @@ export class NativeSkyCamera {
   }
   // A frame for measuring: RAW when the camera offers it (linear, no noise reduction or sharpening, averaged 2×2 by the
   // plug-in), returned as brightness 0..765 so the rest of the app reads it like any other frame. Otherwise a preview frame.
-  async _sci() {
+  async _sci(check = false) {
     if (!this.info.raw) return this._frame();
-    const f = await this._call('raw', { bin: 4 }, 1000 * ((this.set && this.set.exposure) || 1) + 15000), bin = atob(f.data), n = bin.length >> 1, lum = new Float32Array(n), k = 765 / 65535;
+    const f = await this._call('raw', { bin: 4, check }, 1000 * ((this.set && this.set.exposure) || 1) + 15000), bin = atob(f.data), n = bin.length >> 1, lum = new Float32Array(n), k = 765 / 65535;
     for (let i = 0, j = 0; i < n; i++, j += 2) lum[i] = (bin.charCodeAt(j) | (bin.charCodeAt(j + 1) << 8)) * k;
     await new Promise((r) => setTimeout(r, 0));              // let the screen catch up between frames
     return { lum, w: f.width, h: f.height, exposure: f.exposure, iso: f.iso, raw: true, method: f.method || 'developed', bin: f.bin || 2, black: f.black, white: f.white, stats: f.stats || '' };
@@ -243,7 +249,7 @@ export class NativeSkyCamera {
       const I = this.info; let exp = this.set.exposure, iso = this.set.iso, fr = null; const trial = [];
       for (let k = 0; k < 5; k++) {
         status(`Reading the sky to choose the exposure (${fmtSec(exp)})…`);
-        try { fr = await this._sci(); }
+        try { fr = await this._sci(true); }
         catch (e) {
           // A RAW photo that fails is not the end: carry on with the camera's preview frames (processed, but they work).
           if (!this.info.raw) throw e;
@@ -260,7 +266,7 @@ export class NativeSkyCamera {
           // and more room before stars saturate); only shorten the exposure once the gain is as low as it goes.
           const need = 0.11 / frac; wantIso = Math.max(I.minISO, iso * need); want = Math.min(I.maxExposure, Math.max(I.minExposure, fr.exposure * need * iso / wantIso));
         } else if (frac > 0.20 && want <= 1 / 25) wantIso = Math.max(I.minISO, iso * 0.11 / frac);          // already short and still bright: turn the gain down
-        if (frac < 0.06 && fr.exposure >= I.maxExposure * 0.98) wantIso = Math.min(I.maxISO, iso * Math.min(2, 0.11 / Math.max(frac, 0.01)));   // as long as it goes and still dark: turn it up
+        if (frac < 0.06 && fr.exposure >= I.maxExposure * 0.98) wantIso = Math.min(this._isoMax(), iso * Math.min(2, 0.11 / Math.max(frac, 0.01)));   // as long as it goes and still dark: turn it up
         if (Math.abs(want / fr.exposure - 1) < 0.25 && Math.abs(wantIso / iso - 1) < 0.2) break;
         const s = await this._expose(want, wantIso); exp = s.exposure; iso = s.iso;
       }
