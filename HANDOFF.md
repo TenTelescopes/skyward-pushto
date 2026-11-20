@@ -294,3 +294,11 @@ unrelated extra star in the object-page sentence. Still open with Bryan: whether
   skyward.webp on a starry navy-to-violet gradient) and `native/ios/splash-2732.png` (same, smaller, centred);
   `scripts/patch-native.mjs` copies them over Capacitor's placeholders in Assets.xcassets. App name already
   "Skyward Push-To" (capacitor.config.json appName / CFBundleDisplayName).
+
+## Build 89 — home button, More menu regrouped (Nov 20)
+- Header: house button `#hb-home` opens the start screen from any screen (was the last item in More). Header gaps
+  and button widths trimmed so "Not aligned — tap" still fits beside four buttons in a browser (the full-screen
+  button is hidden in the iPhone app and when installed to the home screen).
+- More, grouped by when you need it: Each night (Star alignment, Camera star finder, Sky darkness check) · Now and
+  then (Collimate, Blocked sky, Phone check-up) · Your records (Observing log, Back up) · Setup (telescope, eyepieces,
+  location and phone mount) · Quick settings. b75 walk now opens Setup by `[data-go=setup]`.

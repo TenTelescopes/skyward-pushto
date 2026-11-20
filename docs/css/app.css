@@ -412,3 +412,7 @@ pre.camrep { white-space: pre-wrap; word-break: break-word; font-size: 12px; lin
 .finderbox summary { font-weight: 600; }
 .finderbox ol { margin: 6px 0 6px 18px; padding: 0; }
 .finderbox li { margin: 4px 0; }
+/* Build 88: a fourth header button (home): keep the status pill readable on a phone */
+header#status { gap: 4px; padding: 6px 6px; }
+header#status .hbtn { width: 38px; }
+header#status .stbtn { max-width: 28%; padding: 4px 4px; }

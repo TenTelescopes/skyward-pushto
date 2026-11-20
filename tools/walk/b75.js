@@ -32,7 +32,7 @@ const OUT = process.argv[2] || '.';
     const on = await pg.evaluate(() => document.querySelector('#tab-push').innerText);
     check(/In the eyepiece/.test(on), mount + ': on target reads "In the eyepiece"');
     
-    if (mount === 'side-sky') { await pg.click('nav#tabs button[data-tab=more]'); await wait(500); await pg.evaluate(() => { const b = [...document.querySelectorAll('#tab-more button, #tab-more a')].find((x) => /Setup/.test(x.innerText)); if (b) b.click(); }); await wait(600); await pg.evaluate(() => { const d = document.querySelector('#s-mount').closest('details'); d.open = true; d.scrollIntoView(); }); await wait(300); await pg.screenshot({ path: OUT + '/b75-setup.png' }); check((await pg.$$('#s-mount .mnt')).length === 3, 'setup shows the picker'); }
+    if (mount === 'side-sky') { await pg.click('nav#tabs button[data-tab=more]'); await wait(500); await pg.click('#tab-more [data-go=setup]'); await wait(600); await pg.evaluate(() => { const d = document.querySelector('#s-mount').closest('details'); d.open = true; d.scrollIntoView(); }); await wait(300); await pg.screenshot({ path: OUT + '/b75-setup.png' }); check((await pg.$$('#s-mount .mnt')).length === 3, 'setup shows the picker'); }
     await ctx.close();
   }
   await b.close(); console.log(fail ? `${fail} FAILED` : 'b75 walk passed'); process.exit(fail ? 1 : 0);

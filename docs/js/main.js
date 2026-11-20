@@ -2722,17 +2722,22 @@ function renderMore() {
   const el = $('#tab-more'), chk = lastCheck(), st = logStats(state.log, sky.objects);
   const V = { solid: 'Solid', usable: 'Usable', poor: 'Poor', unsuitable: 'Not suitable', incomplete: 'Incomplete' };
   const item = (id, title, sub) => `<button class="act" data-go="${id}"><b>${title}</b><span class="muted small">${sub}</span></button>`;
+  // Grouped by when you need them: every night, now and then, your records, then setup. The start screen is the
+  // house button at the top of every screen.
   el.innerHTML = `<h2>More</h2>
+    <h3>Each night</h3>
     ${item('align', 'Star alignment', state.mode === 'compass' ? 'Compass mode — no alignment needed' : alignedNow() ? `Aligned on ${align.obs.map((o) => esc(o.label)).join(' and ')} · ${syncAgo()}` : 'Not aligned yet — two minutes, and the app shows you which stars')}
-    ${item('log', 'Observing log', st.total ? `${st.total} object${st.total === 1 ? '' : 's'} seen · Messier ${st.messier} of ${st.messierTotal}` : 'Nothing logged yet — your Messier count and milestones live here')}
+    ${item('camera', 'Camera star finder', state.mounting === 'camera' ? (profile().camBore ? 'Finds where the telescope points from the stars · lined up with the eyepiece' : 'Finds where the telescope points from the stars — no star to centre') : 'Works out where the phone’s camera is pointing from the stars')}
     ${item('sky', 'Sky darkness check', state.skyq ? `${esc(state.skyq.label)} · ${shortDate(state.skyq.when)}` : '30 seconds — tunes the visibility ratings to your sky')}
+    <h3>Now and then</h3>
+    ${item('collim', 'Collimate your Skyward', profile().collimated ? `Last done ${shortDate(profile().collimated)} · laser, about 10 minutes` : 'Line up the mirrors with the laser — sharper views, about 10 minutes')}
     ${item('horizon', 'Blocked sky', horizonNow() ? esc(horizonSummary(state.horizon)) : 'Mark trees and buildings so the app never sends you behind them')}
     ${item('test', 'Phone check-up and sensor tests', chk ? `This phone: ${V[chk.result.verdict] || esc(chk.result.verdict)} · ${shortDate(chk.when)}` : 'Find out how accurate this phone can be — 4 minutes')}
-    ${item('setup', 'Setup', `${esc(profile().name)} · eyepieces, location, phone mount`)}
-    ${item('camera', 'Camera star finder', state.mounting === 'camera' ? (profile().camBore ? 'Finds where the telescope points from the stars · lined up with the eyepiece' : 'Finds where the telescope points from the stars — no star to centre') : 'Works out where the phone’s camera is pointing from the stars')}
-    ${item('collim', 'Collimate your Skyward', profile().collimated ? `Last done ${shortDate(profile().collimated)} · laser, about 10 minutes` : 'Line up the mirrors with the laser — sharper views, about 10 minutes')}
+    <h3>Your records</h3>
+    ${item('log', 'Observing log', st.total ? `${st.total} object${st.total === 1 ? '' : 's'} seen · Messier ${st.messier} of ${st.messierTotal}` : 'Nothing logged yet — your Messier count and milestones live here')}
     ${item('backup', 'Back up or restore', state.backedUp ? `Last backup ${shortDate(state.backedUp)} · your log, plans and places` : 'Keep a copy of your log, plans and places — they live only on this phone')}
-    ${item('start', 'Start screen', 'Choose what to do, and how it works')}
+    <h3>Setup</h3>
+    ${item('setup', 'Telescope, eyepieces, location and phone mount', `${esc(profile().name)} · ${esc(MOUNTINGS[state.mounting] ? MOUNTINGS[state.mounting].label : 'phone mount')}`)}
     <h3>Quick settings</h3>
     <label class="row"><span>Screen brightness</span><input id="m-br" type="range" min="0.25" max="1" step="0.05" value="${state.bright}" ${state.day ? 'disabled' : ''}></label>
     <label class="row"><span>Day look <span class="muted small">(switch off for the red Night look; the sun button at the top fades between the two)</span></span><input id="m-day" type="checkbox" ${state.day ? 'checked' : ''}></label>
@@ -3432,6 +3437,9 @@ async function init() {
   $('#hb-day').onclick = (e) => { e.stopPropagation(); openShade(); };
   state.shade = 0;                                 // always open in the Day look; the fader is one tap away on every screen
   $('#hb-fs').innerHTML = ICON.full;
+  // Home: the start screen, one tap from anywhere (it used to be at the bottom of More).
+  $('#hb-home').innerHTML = '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"><path d="M3 11 12 3.5 21 11"/><path d="M5.5 9.5V20h13V9.5"/><path d="M10 20v-5.5h4V20"/></svg>';
+  $('#hb-home').onclick = (e) => { e.stopPropagation(); renderLaunch(); $('#gate').classList.remove('hidden'); };
   $('#hb-fs').onclick = (e) => { e.stopPropagation(); toggleFullscreen(); };
   $('#st-scope').onclick = () => showTab('setup');
   $('#st-pill').onclick = () => { const st = pointState(); if (st === 'off' || st === 'nodata') { renderLaunch(); $('#gate').classList.remove('hidden'); } else showTab('align'); };
