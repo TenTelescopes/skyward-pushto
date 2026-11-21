@@ -420,3 +420,11 @@ header#status .stbtn { max-width: 28%; padding: 4px 4px; }
 .camfloat { position: fixed; left: 12px; right: 12px; z-index: 50; padding: 10px 12px; border-radius: 12px; background: var(--panel); border: 1px solid var(--hi); box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5); max-width: 520px; margin: 0 auto; }
 .camfloat .hzbar { margin: 8px 0; }
 .camfloat button { width: 100%; min-height: 40px; }
+/* Build 92: the light-collecting window covers the screen (replaces the floating panel) */
+.camwin { position: fixed; inset: 0; z-index: 60; background: #05070f; display: flex; align-items: center; justify-content: center; padding: max(12px, env(safe-area-inset-top)) 12px max(12px, env(safe-area-inset-bottom)); }
+.camwin-box { width: 100%; max-width: 520px; max-height: 100%; display: flex; flex-direction: column; gap: 8px; }
+.camwin-title { font-size: 20px; }
+.camwin-stage .camstage video, .camwin-stage .camstage canvas#cam-v { max-height: 58vh; }
+.camwin .hzbar { margin: 2px 0 4px; }
+.camwin button { width: 100%; min-height: 48px; }
+body.camwin-open { overflow: hidden; }

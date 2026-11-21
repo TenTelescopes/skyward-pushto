@@ -135,6 +135,8 @@ export class Sky {
     const prev = this.night(new Date(when.getTime() - 864e5)), end = prev.rise || prev.astroAm || prev.nautAm;
     return end && when < end ? prev : this.night(when);
   }
+  /** J2000 RA (degrees) and Dec of a planet or the Moon as seen from here (for labelling a camera picture). */
+  raDecJ2000(body, date = new Date()) { const eq = A.Equator(body, A.MakeTime(date), this.observer(), false, true); return { ra: eq.ra * 15, dec: eq.dec }; }
   sunAltAz(date = new Date()) { const t = A.MakeTime(date), obs = this.observer(); const eq = A.Equator('Sun', t, obs, true, true); const h = A.Horizon(t, obs, eq.ra, eq.dec, 'normal'); return { alt: h.altitude, az: h.azimuth }; }
   sunAlt(date = new Date()) { const t = A.MakeTime(date), obs = this.observer(); const eq = A.Equator('Sun', t, obs, true, true); return A.Horizon(t, obs, eq.ra, eq.dec, 'normal').altitude; }
 }

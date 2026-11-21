@@ -314,3 +314,21 @@ unrelated extra star in the object-page sentence. Still open with Bryan: whether
 - Native exposure trial no longer runs Apple's own RAW development per trial frame (`raw({check:false})`); the cheap
   RAW-number line stays in the log. Both were diagnostics for the 14-bit black-level problem, now fixed.
 - Walk b90 (= b80 + the floating panel): passes; b87, b78 pass. "Stop" itself is not yet exercised by a walk.
+
+## Build 91 — names on the picture, save the picture (Nov 20)
+- After a fix the picture names bright stars (magnitude limit by field width), planets and the Moon
+  (`sky.raDecJ2000`, new in astro.js) and Messier/Caldwell objects (blue dashed circles), only where the mask says
+  sky, brightest first, at most 24, none overlapping (`camLabels`; `drawResult(..., { labels })`).
+- "Save picture" (the stretched stack alone) and "Save with names" (markings and names, no grey stripes, plus a
+  caption: time, RA/Dec, field, stars recognised, light collected) (`savePicture`). iPhone app: new plug-in
+  method `savePhoto({data})` adds the PNG to Photos with add-only permission (`NSPhotoLibraryAddUsageDescription`,
+  also in patch-native). Web: share sheet with the file, else a download.
+- Walk b91 (= b90 + saving with a pretend `savePhoto`): passes. The Swift method has not been compiled yet.
+
+## Build 92 — a window of its own while collecting light; no stripes on the live view (Nov 21)
+- `camFloat` now opens a full-screen window (`.camwin`): title, "keep the telescope still", the live picture (the
+  camera's `.camstage` element is moved into it for the duration and the screen is redrawn after), status,
+  progress bar, "Stop and use what I have". Replaces the floating panel that could sit half off-screen.
+- The sky/not-sky stripes are no longer drawn on the live view (web `_live` is now empty; native `_show` no longer
+  draws them): too jumpy on single preview frames. They still show on the result picture after collection.
+- Walks b91, b87, b78 pass.

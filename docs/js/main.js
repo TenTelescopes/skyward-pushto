@@ -2881,7 +2881,8 @@ function renderCamera() {
       ${camNote ? `<p class="small" style="margin:4px 0"><b>${esc(camNote)}</b></p>` : ''}
       <p class="muted small" style="margin:4px 0">Sky ${r.plan.sky}, ${(r.an.mask.fraction * 100).toFixed(0)}% of the picture used. ${r.collected.toFixed(1)} s of light in ${r.N} frame${r.N === 1 ? '' : 's'}: ${esc(r.plan.why)}${r.plan.capped ? ' (stopped at the limit)' : ''}.${r.reg && (r.reg.moved || r.reg.rejected) ? ` The picture was moving: ${r.reg.moved} frame${r.reg.moved === 1 ? '' : 's'} lined up, ${r.reg.rejected} left out.` : ''}${r.an.mask.level > 765 * 0.5 ? ' This looks like daylight or a lit room, so it means nothing here.' : r.an.mask.fraction < 0.15 ? ' Hardly any of this is sky: aim away from trees and buildings.' : ''}</p>
       <canvas id="cam-pic" class="campic"></canvas>
-      <p class="muted small" style="margin:4px 0">Grey stripes were ignored. Green circles are stars it recognised, yellow ones it did not. The green mark is where the telescope points.</p>
+      <p class="muted small" style="margin:4px 0">Grey stripes were ignored. Green circles are stars it recognised, yellow ones it did not. The green mark is where the telescope points.${sol ? ' Blue dashed circles are deep-sky objects.' : ''}</p>
+      <div class="btnrow"><button id="cam-save">Save picture</button>${sol ? '<button id="cam-save-l">Save with names</button>' : '<button id="cam-save-l">Save with markings</button>'}</div>
       ${sol && along && !camWiz ? `<details class="more"><summary>Line the camera up with the eyepiece by hand ${cal ? '✓' : '(recommended once)'}</summary>
         <p class="muted small">The camera and the telescope never point in exactly the same direction. Centre a bright star in the eyepiece, take a fix, then say which star it was. From then on the green mark sits where the eyepiece looks.</p>
         ${camStars(sol).length ? `<label class="row"><span>Star in the eyepiece</span><select id="cam-star">${camStars(sol).map((x, i) => `<option value="${i}">${esc(x.name)}</option>`).join('')}</select></label>
@@ -2896,7 +2897,7 @@ function renderCamera() {
     ${along ? '' : `<div class="card"><b>The camera has to look along the tube</b><p class="muted small" style="margin:4px 0 8px">In the dock on top of the tube, the camera faces the telescope and sees nothing. To use the camera for pointing, mount the phone at the back with its camera facing the sky end, then choose that position.</p><div class="btnrow"><button id="cam-along">Set phone position to “Looking along the tube”</button></div><p class="muted small" style="margin-bottom:0">Without that you can still hold the phone up to the sky and see what it recognises.</p></div>`}
     ${wizardHTML(along)}
     ${on ? `<div class="camstage">${skyCam.isNative ? '<canvas id="cam-v"></canvas>' : '<video id="cam-v" playsinline muted autoplay></video>'}<canvas id="cam-ov"></canvas></div>
-      <p class="muted small" style="margin:4px 0">Grey stripes: not sky, ignored. Keep the phone still.</p>
+      <p class="muted small" style="margin:4px 0">Keep the phone still. After the light is collected, grey stripes show what was not used as sky.</p>
       <label class="row"><span>Light to collect: <b id="cam-light-v">${state.camLight || 3} s</b> <span class="muted small">— more finds fainter stars but takes longer; it stops early once there are enough stars</span></span><input id="cam-light" type="range" min="1" max="10" step="1" value="${state.camLight || 3}"></label>
       <div class="hzbar"><i id="cam-bar" style="width:0"></i></div>
       <p id="cam-status" class="small" style="min-height:1.4em">${along ? (alignedNow() ? 'Aligned. A fix here re-syncs the pointing.' : `Not aligned yet: ${align.obs.length ? 'one more fix, in a different part of the sky' : 'two fixes in different parts of the sky will do it'}.`) : ''}</p>
@@ -2916,10 +2917,12 @@ function renderCamera() {
   if ($('#cam-go')) $('#cam-go').onclick = cameraFind;
   if ($('#cam-errcopy')) $('#cam-errcopy').onclick = async () => { try { await navigator.clipboard.writeText(`${$('#build').textContent}\n${camErr}`); toast('Copied'); } catch (e) { toast('Could not copy; select the text instead'); } };
   if (r && $('#cam-pic')) {
-    drawResult($('#cam-pic'), r, camBore());
+    drawResult($('#cam-pic'), r, camBore(), { labels: camLabels(r) });
     const ws = camWiz && camWiz.star && sol ? wizWhere(sol, camWiz.star) : null;      // ring the star to centre
     if (ws) { const c = $('#cam-pic').getContext('2d'), q = Math.max(30, r.w / 25); c.strokeStyle = '#ffd66e'; c.lineWidth = Math.max(3, r.w / 300); c.beginPath(); c.arc(ws.x, ws.y, q, 0, 6.283); c.stroke(); c.fillStyle = '#ffd66e'; c.font = `bold ${Math.round(q * 0.8)}px system-ui`; c.textAlign = 'center'; c.fillText(camWiz.star.name, ws.x, ws.y - q - 8); }
   }
+  if ($('#cam-save')) $('#cam-save').onclick = () => savePicture(false);
+  if ($('#cam-save-l')) $('#cam-save-l').onclick = () => savePicture(true);
   if ($('#cam-copy')) $('#cam-copy').onclick = async () => { try { await navigator.clipboard.writeText(reportText(r, $('#build').textContent)); toast('Report copied'); } catch (e) { toast('Could not copy; select the text instead'); } };
   if ($('#cam-cal')) $('#cam-cal').onclick = () => {
     const st = camStars(sol)[+$('#cam-star').value]; if (!st) return;
@@ -2930,6 +2933,52 @@ function renderCamera() {
   if ($('#cam-uncal')) $('#cam-uncal').onclick = () => { delete profile().camBore; save(); camNote = 'Line-up forgotten: the middle of the picture is used.'; renderCamera(); };
 }
 /** Bright named stars inside a solved picture, nearest the telescope mark first. */
+/** Names to write on a solved picture: bright stars, planets and the Moon, and Messier and Caldwell objects. */
+function camLabels(r) {
+  const sol = r && r.sol; if (!sol) return [];
+  const { w, h } = r, out = [], m = r.an && r.an.mask, when = r.when ? new Date(r.when) : new Date();
+  // Only where the picture shows sky: no names on trees or roofs that hide the object.
+  const inside = (p) => p && p.x >= 0 && p.y >= 0 && p.x < w && p.y < h && (!m || m.sky[Math.min(m.th - 1, (p.y / m.T) | 0) * m.tw + Math.min(m.tw - 1, (p.x / m.T) | 0)] === 1);
+  const fovMag = sol.fovW > 30 ? 3.2 : sol.fovW > 10 ? 4.5 : 6;          // fewer names on a wide view
+  for (const o of sky.objects) {
+    if (o.key.startsWith('st:')) { if ((o.mag ?? 9) > fovMag || o.ra == null) continue; const p = projectStar(sol, w, h, o.ra, o.dec); if (inside(p)) out.push({ ...p, text: o.label, kind: 'star', mag: o.mag }); }
+    else if (o.key.startsWith('dso:') && /^(M\d|Caldwell)/.test(o.label) && o.ra != null) { const p = projectStar(sol, w, h, o.ra, o.dec); if (inside(p)) out.push({ ...p, text: o.name && o.name !== o.label && o.name.length < 22 ? `${o.label} ${o.name}` : o.label, kind: 'dso', mag: o.mag ?? 8 }); }
+    else if (o.planet) { try { const q = sky.raDecJ2000(o.id, when), p = projectStar(sol, w, h, q.ra, q.dec); if (inside(p)) out.push({ ...p, text: o.label, kind: 'star', mag: -3 }); } catch (e) { /* no position */ } }
+  }
+  // Keep the brightest few, and none so close to another that the names would overlap.
+  out.sort((a, b) => a.mag - b.mag); const kept = [], gap = w / 14;
+  for (const L of out) { if (kept.length >= 24) break; if (kept.every((k) => Math.hypot(k.x - L.x, k.y - L.y) > gap)) kept.push(L); }
+  return kept;
+}
+/** Save the stacked picture: plain, or with the markings and names plus a caption. To Photos in the iPhone app,
+ *  otherwise through the share sheet or a download. */
+async function savePicture(marked) {
+  const r = camLast; if (!r) return;
+  const c = document.createElement('canvas'); drawResult(c, r, camBore(), marked ? { labels: camLabels(r), stripes: false } : { clean: true });
+  let out = c;
+  if (marked) {
+    const sol = r.sol, fs = Math.max(14, Math.round(r.w / 40)), lines = [`Skyward Push-To · ${new Date(r.when || Date.now()).toLocaleString()}`,
+      sol ? `RA ${raHms(sol.ra)}, Dec ${sol.dec.toFixed(1)}° · ${sol.fovW.toFixed(0)}° × ${sol.fovH.toFixed(0)}° · ${sol.n} of ${sol.of} stars recognised` : 'Not recognised',
+      `${r.collected.toFixed(1)} s of light in ${r.N} frame${r.N === 1 ? '' : 's'}`];
+    out = document.createElement('canvas'); out.width = c.width; out.height = c.height + Math.round(fs * 1.5 * lines.length + fs);
+    const x = out.getContext('2d'); x.fillStyle = '#000'; x.fillRect(0, 0, out.width, out.height); x.drawImage(c, 0, 0);
+    x.fillStyle = '#d8dcf0'; x.font = `${fs}px system-ui, -apple-system, sans-serif`; x.textBaseline = 'top';
+    lines.forEach((l, i) => x.fillText(l, fs * 0.6, c.height + fs * 0.5 + i * fs * 1.5));
+  }
+  const stamp = new Date(r.when || Date.now()).toISOString().slice(0, 16).replace(/[-:]/g, '').replace('T', '-');
+  const name = `skyward-${stamp}${marked ? '-labelled' : ''}.png`;
+  const blob = await new Promise((res) => out.toBlob(res, 'image/png'));
+  try {
+    const sc = cap('SkyCam');
+    if (sc) {
+      const b64 = await new Promise((res) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result).split(',')[1]); fr.readAsDataURL(blob); });
+      await sc.savePhoto({ data: b64 }); toast('Saved to Photos'); return;
+    }
+    const file = new File([blob], name, { type: 'image/png' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: 'Skyward camera picture' }); return; }
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  } catch (e) { if (!(e && e.name === 'AbortError')) toast('Could not save: ' + (e.message || e), 5000); }
+}
 function camStars(sol) {
   if (!camLast) return []; const { w, h } = camLast, b = camBore(), bx = w / 2 + sol.f * b[0] / b[2], by = h / 2 + sol.f * b[1] / b[2], out = [];
   for (const o of sky.objects) {
@@ -3141,16 +3190,23 @@ function attachCamera() {
   if (skyCam.v !== v) { if (!skyCam.isNative) { v.srcObject = skyCam.stream; v.play().catch(() => {}); } skyCam.v = v; }
   skyCam.ov = ov;
 }
-// While the camera collects light: a small panel that floats above the buttons, so the progress stays in view however
-// the page is scrolled. "Stop" finishes with the light collected so far and still tries to solve.
+// While the camera collects light: a window of its own over the whole screen, with the live picture, what is
+// happening, a progress bar and "Stop and use what I have" (finishes with the light so far and still solves).
+// The camera's picture element is moved into the window for the duration, then the screen is redrawn as usual.
 let camStop = false;
 function camFloat(on) {
   let f = $('#cam-float');
-  if (!on) { if (f) f.remove(); return; }
-  if (!f) { f = document.createElement('div'); f.id = 'cam-float'; f.className = 'camfloat'; f.innerHTML = '<div id="camf-text" class="small">Starting…</div><div class="hzbar"><i id="camf-bar" style="width:0"></i></div><button id="camf-stop" class="small">Stop and use what I have</button>'; document.body.appendChild(f);
-    $('#camf-stop').onclick = () => { camStop = true; $('#camf-stop').disabled = true; $('#camf-text').textContent = 'Finishing with the light collected so far…'; }; }
-  const ab = $('#tab-camera .actionbar'), nav = $('nav#tabs'), top = ab && ab.getBoundingClientRect().top > 0 ? ab.getBoundingClientRect().top : nav.getBoundingClientRect().top;
-  f.style.bottom = `${window.innerHeight - top + 8}px`;
+  if (!on) { if (f) f.remove(); document.body.classList.remove('camwin-open'); return; }
+  if (f) return;
+  f = document.createElement('div'); f.id = 'cam-float'; f.className = 'camwin';
+  f.innerHTML = `<div class="camwin-box"><b class="camwin-title">Collecting starlight</b>
+    <div class="muted small">Keep the telescope still · up to ${state.camLight || 3} s of light</div>
+    <div id="camf-stage" class="camwin-stage"></div>
+    <div id="camf-text" class="small">Starting…</div><div class="hzbar"><i id="camf-bar" style="width:0"></i></div>
+    <button id="camf-stop">Stop and use what I have</button></div>`;
+  document.body.appendChild(f); document.body.classList.add('camwin-open');
+  const st = $('#tab-camera .camstage'); if (st) { $('#camf-stage').appendChild(st); const v = st.querySelector('video'); if (v && v.play) v.play().catch(() => {}); }
+  $('#camf-stop').onclick = () => { camStop = true; $('#camf-stop').disabled = true; $('#camf-text').textContent = 'Finishing with the light collected so far…'; };
 }
 async function cameraFind() {
   if (!skyCam || !skyCam.on) return; const go = $('#cam-go'); if (go) go.disabled = true;
@@ -3165,7 +3221,7 @@ async function cameraFind() {
       status: (t) => { for (const id of ['#cam-status', '#camf-text']) { const s = $(id); if (s && !(id === '#camf-text' && camStop)) s.textContent = t; } },
       progress: (f) => { for (const id of ['#cam-bar', '#camf-bar']) { const b = $(id); if (b) b.style.width = `${f * 100}%`; } } });
     if (!r) return;
-    camLast = r; camErr = ''; camNote = r.sol ? (camWiz && camWiz.step !== 'done' ? wizardFix(r, refR) : applyCameraFix(r.sol, refR)) : '';
+    r.when = Date.now(); camLast = r; camErr = ''; camNote = r.sol ? (camWiz && camWiz.step !== 'done' ? wizardFix(r, refR) : applyCameraFix(r.sol, refR)) : '';
     // Learn hot pixels: unrecognised spots that stay on the same pixel while the sky moves. Only from confident fixes.
     { const same = hp && hp.w === r.w && hp.h === r.h, before = same ? hp.list.filter((e) => e.hot).length : 0; r.hotKnown = before;
       if (r.sol && r.sol.confidence === 'high') {

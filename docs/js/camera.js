@@ -56,13 +56,9 @@ export class SkyCamera {
   }
   // Brightness of the SKY ONLY. Everything about exposure is decided from this, never from trees, walls or lamps.
   async _skyLevel(frames) { let tot = 0; for (let k = 0; k < frames; k++) { await this._next(); const g = this._small(); tot += skyMask(g.lum, g.w, g.h).level; } return tot / frames; }
-  // Grey stripes over the live view, refreshed about once a second while idle.
-  async _live() {
-    while (this.alive && this.on) {
-      if (!this.busy && this.v.videoWidth && this.ov && this.ov.isConnected) { const g = this._small(), m = skyMask(g.lum, g.w, g.h); this.ov.width = g.w; this.ov.height = g.h; const c = this.ov.getContext('2d'); c.clearRect(0, 0, g.w, g.h); drawRejected(c, m, g.w, g.h); }
-      await new Promise((r) => setTimeout(r, 1100));
-    }
-  }
+  // The live view shows the picture only. The sky/not-sky stripes appear on the result, after the light is collected:
+  // on single preview frames they flickered and looked wrong (Build 92).
+  async _live() {}
   // When the phone will not say how long each frame is exposed, find out by experiment: slow the frame rate step by step
   // and watch whether the sky gets brighter. In the dark the phone is already at full gain, so brighter means longer.
   async _probe(status) {
@@ -228,9 +224,7 @@ export class NativeSkyCamera {
     big.width = fr.w; big.height = fr.h; big.getContext('2d').putImageData(new ImageData(rgba, fr.w, fr.h), 0, 0);
     cv.width = w; cv.height = h; const cx = cv.getContext('2d', { willReadFrequently: true }); cx.drawImage(big, 0, 0, w, h);
     const d = cx.getImageData(0, 0, w, h).data, lum = new Float32Array(w * h); for (let i = 0, j = 0; i < lum.length; i++, j += 4) lum[i] = d[j] + d[j + 1] + d[j + 2];
-    const m = skyMask(lum, w, h);
-    if (this.ov && this.ov.isConnected) { this.ov.width = w; this.ov.height = h; const c = this.ov.getContext('2d'); c.clearRect(0, 0, w, h); drawRejected(c, m, w, h); }
-    return m;
+    return skyMask(lum, w, h);
   }
   async _live() {
     while (this.alive) {
@@ -332,14 +326,29 @@ export async function solveInBackground(an, w, h, FIELD, prior, scale) {
   }
 }
 /** Draw the stacked picture with stripes over what was ignored, circles on the stars and a mark where the telescope points. */
-export function drawResult(canvas, r, bore) {
+/** The stacked picture, stretched so faint stars show. opts.clean: the picture alone (for saving). Otherwise grey
+ *  stripes over ignored parts, circles on stars (green recognised, yellow not), the telescope mark, and opts.labels:
+ *  [{ x, y, text, kind: 'star' | 'dso' }] — names written beside stars and deep-sky objects in the picture. */
+export function drawResult(canvas, r, bore, opts = {}) {
   const { lum, w, h, an, sol } = r; canvas.width = w; canvas.height = h; const px = canvas.getContext('2d');
   const img = px.createImageData(w, h), lo = an.mask.level - 1.5 * an.mask.noise, span = Math.max(12 * Math.max(an.mask.noise, 0.5), 20);
   for (let i = 0, j = 0; i < lum.length; i++, j += 4) { const t = Math.max(0, (lum[i] - lo) / span), g = Math.min(255, 255 * Math.asinh(t * 3) / Math.asinh(30)); img.data[j] = img.data[j + 1] = img.data[j + 2] = g; img.data[j + 3] = 255; }
-  px.putImageData(img, 0, 0); drawRejected(px, an.mask, w, h);
+  px.putImageData(img, 0, 0);
+  if (opts.clean) return;
+  if (opts.stripes !== false) drawRejected(px, an.mask, w, h);
   const known = new Set((sol ? sol.matches : []).map((m) => `${Math.round(m.x)},${Math.round(m.y)}`));
   px.lineWidth = Math.max(2, w / 600);
   for (const s of an.stars.slice(0, 150)) { px.strokeStyle = known.has(`${Math.round(s.x)},${Math.round(s.y)}`) ? '#7fe0a5' : '#ffd66e'; px.beginPath(); px.arc(s.x, s.y, Math.max(9, w / 120), 0, 6.283); px.stroke(); }
+  // Names: a dark outline under the text keeps it readable on any background.
+  const fs = Math.max(13, Math.round(w / 42)), rr = Math.max(9, w / 120);
+  px.font = `600 ${fs}px system-ui, -apple-system, sans-serif`; px.textBaseline = 'middle'; px.lineJoin = 'round';
+  for (const L of opts.labels || []) {
+    const dso = L.kind === 'dso';
+    if (dso) { px.save(); px.setLineDash([5, 4]); px.strokeStyle = '#9fc4ff'; px.lineWidth = Math.max(2, w / 600); px.beginPath(); px.arc(L.x, L.y, rr * 2, 0, 6.283); px.stroke(); px.restore(); }
+    const right = L.x < w - fs * 8, tx = right ? L.x + rr * (dso ? 2.3 : 1.4) : L.x - rr * (dso ? 2.3 : 1.4);
+    px.textAlign = right ? 'left' : 'right'; px.lineWidth = Math.max(3, fs / 4); px.strokeStyle = 'rgba(0,0,0,0.85)'; px.strokeText(L.text, tx, L.y);
+    px.fillStyle = dso ? '#bcd6ff' : '#ffffff'; px.fillText(L.text, tx, L.y);
+  }
   if (sol) {
     const b = bore || [0, 0, 1], x = w / 2 + sol.f * b[0] / b[2], y = h / 2 + sol.f * b[1] / b[2], q = Math.max(16, w / 50);
     px.strokeStyle = '#7fe0a5'; px.lineWidth = Math.max(3, w / 400); px.beginPath(); px.moveTo(x - q, y); px.lineTo(x + q, y); px.moveTo(x, y - q); px.lineTo(x, y + q); px.stroke(); px.beginPath(); px.arc(x, y, q * 0.6, 0, 6.283); px.stroke();

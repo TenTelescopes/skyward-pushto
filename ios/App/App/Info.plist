@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Saves your camera star-finder pictures to Photos. The app never reads your photos.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Your location is used to compute where objects are in your sky. It never leaves the phone.</string>
 	<key>NSCameraUsageDescription</key>

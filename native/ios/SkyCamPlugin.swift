@@ -18,6 +18,7 @@ import Capacitor
 import AVFoundation
 import CoreImage
 import ImageIO
+import Photos
 
 @objc(SkyCamPlugin)
 public class SkyCamPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapturePhotoCaptureDelegate {
@@ -29,7 +30,8 @@ public class SkyCamPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoDataOutput
         CAPPluginMethod(name: "frame", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "raw", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "close", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "status", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "status", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "savePhoto", returnType: CAPPluginReturnPromise)
     ]
 
     private let session = AVCaptureSession()
@@ -289,6 +291,23 @@ public class SkyCamPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoDataOutput
     }
 
     /// status() — how the camera is doing, for reports: { state, events }
+    /// savePhoto({ data: base64 PNG }) — adds the picture to the Photos library (add-only permission: the app never
+    /// sees the user's other photos).
+    @objc func savePhoto(_ call: CAPPluginCall) {
+        guard let b64 = call.getString("data"), let data = Data(base64Encoded: b64) else { call.reject("No picture to save."); return }
+        let save = {
+            PHPhotoLibrary.shared().performChanges({
+                PHAssetCreationRequest.forAsset().addResource(with: .photo, data: data, options: nil)
+            }) { ok, err in
+                if ok { call.resolve() } else { call.reject("Could not save the picture: \(err?.localizedDescription ?? "unknown error")") }
+            }
+        }
+        PHPhotoLibrary.requestAuthorization(for: .addOnly) { st in
+            if st == .authorized || st == .limited { save() }
+            else { call.reject("The app is not allowed to add photos. Allow it in Settings › Apps › Skyward Push-To › Photos.") }
+        }
+    }
+
     @objc func status(_ call: CAPPluginCall) {
         queue.async { call.resolve(["state": self.state(), "events": self.events]) }
     }

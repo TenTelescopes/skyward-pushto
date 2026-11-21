@@ -11,6 +11,7 @@ edit('ios/App/App/Info.plist', (s) => {
   const add = (key, xml) => s.includes(`<key>${key}</key>`) ? s : s.replace(/<dict>/, `<dict>\n\t<key>${key}</key>\n\t${xml}`);
   s = add('NSMotionUsageDescription', '<string>Motion sensors measure where your telescope is pointing.</string>');
   s = add('NSCameraUsageDescription', '<string>The camera finds stars to work out where your telescope is pointing, and scans game codes from other players\' phones.</string>');
+  s = add('NSPhotoLibraryAddUsageDescription', '<string>Saves your camera star-finder pictures to Photos. The app never reads your photos.</string>');
   s = add('NSLocationWhenInUseUsageDescription', '<string>Your location is used to compute where objects are in your sky. It never leaves the phone.</string>');
   s = s.replace(/(<key>UISupportedInterfaceOrientations<\/key>\s*<array>)[\s\S]*?(<\/array>)/, '$1\n\t\t<string>UIInterfaceOrientationPortrait</string>\n\t$2');
   s = s.replace(/(<key>UISupportedInterfaceOrientations~ipad<\/key>\s*<array>)[\s\S]*?(<\/array>)/, '$1\n\t\t<string>UIInterfaceOrientationPortrait</string>\n\t$2');
