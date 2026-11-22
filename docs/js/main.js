@@ -3178,7 +3178,7 @@ function brightestNamedNear(sol) {
 async function renderCameraLive() {
   try {
     const plug = nativeCam();
-    if (plug) skyCam = new NativeSkyCamera(plug, null, null);
+    if (plug) { skyCam = new NativeSkyCamera(plug, null, null); skyCam.start = state.camGood || null; }
     else { const holder = document.createElement('video'); holder.playsInline = true; holder.muted = true; skyCam = new SkyCamera(holder, null); }
     await skyCam.open();
   } catch (e) { skyCam = null; const st = $('#cam-status'); if (st) st.textContent = 'Could not open the camera: ' + (e.message || e.name) + '. Check that camera access is allowed.'; return; }
@@ -3221,7 +3221,7 @@ async function cameraFind() {
       status: (t) => { for (const id of ['#cam-status', '#camf-text']) { const s = $(id); if (s && !(id === '#camf-text' && camStop)) s.textContent = t; } },
       progress: (f) => { for (const id of ['#cam-bar', '#camf-bar']) { const b = $(id); if (b) b.style.width = `${f * 100}%`; } } });
     if (!r) return;
-    r.when = Date.now(); camLast = r; camErr = ''; camNote = r.sol ? (camWiz && camWiz.step !== 'done' ? wizardFix(r, refR) : applyCameraFix(r.sol, refR)) : '';
+    r.when = Date.now(); camLast = r; camErr = ''; if (skyCam && skyCam.good) { state.camGood = skyCam.good; save(); } camNote = r.sol ? (camWiz && camWiz.step !== 'done' ? wizardFix(r, refR) : applyCameraFix(r.sol, refR)) : '';
     // Learn hot pixels: unrecognised spots that stay on the same pixel while the sky moves. Only from confident fixes.
     { const same = hp && hp.w === r.w && hp.h === r.h, before = same ? hp.list.filter((e) => e.hot).length : 0; r.hotKnown = before;
       if (r.sol && r.sol.confidence === 'high') {

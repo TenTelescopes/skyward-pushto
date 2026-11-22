@@ -43,7 +43,9 @@ public class SkyCamPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoDataOutput
     private let work = DispatchQueue(label: "com.tentelescopes.skyward.develop", qos: .userInitiated)    // developing RAW
     private var waiting: [CAPPluginCall] = []          // frame() calls not yet answered; touched only on `queue`
     private var rawCalls: [Int64: CAPPluginCall] = [:] // raw() calls by capture id; touched only on `queue`
-    private var checkFor: [Int64: Bool] = [:]          // raw() calls that asked for the full check (slower); only on `queue`
+    private var checkFor: [Int64: Bool] = [:]
+    private var askedAt: [Int64: Date] = [:]           // when each RAW photo was asked for (timing in reports); only on `queue`
+    private var timing: (capture: Double, start: Date) = (0, Date())   // the RAW photo now being processed          // raw() calls that asked for the full check (slower); only on `queue`
     private var binFor: [Int64: Int] = [:]             // block size asked for, by capture id; only on `queue`
     private var skip = 0                               // preview frames to drop after a settings change; only on `queue`
     private var configured = false
@@ -239,7 +241,7 @@ public class SkyCamPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoDataOutput
                     }
                     d.setExposureModeCustom(duration: dur, iso: iso) { _ in self.queue.async { answer(true) } }
                     d.unlockForConfiguration()
-                    self.queue.asyncAfter(deadline: .now() + 2 * t + 2.0) { answer(false) }
+                    self.queue.asyncAfter(deadline: .now() + t + 0.6) { answer(false) }   // was 2t + 2 s: too long a wait per test picture
                 } else {
                     d.unlockForConfiguration()
                     call.reject("This camera does not allow manual exposure.")
@@ -275,6 +277,7 @@ public class SkyCamPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoDataOutput
             self.rawCalls[settings.uniqueID] = call
             self.binFor[settings.uniqueID] = bin
             self.checkFor[settings.uniqueID] = call.getBool("check") ?? false
+            self.askedAt[settings.uniqueID] = Date()
             self.photoOut.capturePhoto(with: settings, delegate: self)
         }
     }
@@ -362,6 +365,8 @@ public class SkyCamPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoDataOutput
         queue.async {
             guard let call = self.rawCalls.removeValue(forKey: id) else { return }
             let bin = self.binFor.removeValue(forKey: id) ?? 4
+            let asked = self.askedAt.removeValue(forKey: id) ?? Date()
+            self.timing = (Date().timeIntervalSince(asked) * 1000, Date())     // camera time: exposure + Apple's processing
             if let error = error { self.note("RAW photo failed: \(self.why(error))"); call.reject("The RAW photo failed: \(self.why(error)); \(self.state())"); return }
             guard let dng = photo.fileDataRepresentation() else { call.reject("The RAW photo came back empty."); return }
             let exif = photo.metadata[kCGImagePropertyExifDictionary as String] as? [String: Any]
@@ -497,6 +502,7 @@ public class SkyCamPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoDataOutput
         call.resolve([
             "width": rw, "height": rh, "bits": 16, "linear": true, "method": method, "bin": bin, "black": black, "white": white,
             "exposure": exposure, "iso": iso, "stats": stats,
+            "captureMs": timing.capture, "processMs": Date().timeIntervalSince(timing.start) * 1000,
             "data": data.base64EncodedString()
         ])
     }

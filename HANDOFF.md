@@ -332,3 +332,18 @@ unrelated extra star in the object-page sentence. Still open with Bryan: whether
 - The sky/not-sky stripes are no longer drawn on the live view (web `_live` is now empty; native `_show` no longer
   draws them): too jumpy on single preview frames. They still show on the result picture after collection.
 - Walks b91, b87, b78 pass.
+
+## Build 93 — choosing the exposure faster (Nov 21)
+- Bryan: the window spent a long time on "Reading the sky to choose the exposure".
+- Native trial: at most 3 test pictures (was 5); the first is also the first light frame. In the dark, once the
+  frame is as long as allowed, the gain jumps straight to what is needed (up to ×16, capped at ISO 800) instead of
+  doubling per step. Status shows "test picture k of up to 3 (exposure, ISO)".
+- The settings that worked are remembered (`state.camGood`, per camera) and used to start the next session.
+- Swift: an unconfirmed `setExposure` now answers after exposure + 0.6 s (was 2 × exposure + 2 s — up to 4 s lost per
+  test picture at 1 s frames).
+- Walks b91, b87 pass.
+- Timing in the report (first 4 RAW pictures of each attempt): camera time (exposure + Apple's processing, from
+  `capturePhoto` to `didFinishProcessingPhoto`), binning (Swift, incl. the RAW-check statistics), hand-over (bridge +
+  base64) and unpacking (JS). Bryan suggested subsampling for the exposure tests; measure first — the analysis already
+  runs on the 4×4-binned picture, and the suspicion is that Apple's capture pipeline and the Debug build (Swift loops
+  run unoptimised from Xcode's Run) dominate. Try Release (Edit Scheme › Run › Build Configuration) as a comparison.

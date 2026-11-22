@@ -176,7 +176,9 @@ export class NativeSkyCamera {
   async open() {
     this.info = await this._call('open', {}, 20000); this.opened = true; this.alive = true;
     this.log = [`native camera: ${this.info.camera}${this.info.raw ? ', RAW' : ', no RAW (processed frames)'}, exposure ${fmtSec(this.info.minExposure)} to ${fmtSec(this.info.maxExposure)}, ISO ${Math.round(this.info.minISO)}–${Math.round(this.info.maxISO)}, lens ${Number(this.info.fieldOfView).toFixed(0)}° wide${this.info.formatInfo ? `; format ${this.info.formatInfo}` : ''}`];
-    await this._expose(Math.min(this.info.maxExposure, 0.1), Math.min(this._isoMax(), this.info.maxISO * 0.6));
+    // Start from the settings that worked last time (the sky is usually similar), else 1/10 s at a middling gain.
+    const st = this.start && this.start.camera === this.info.camera ? this.start : null;
+    await this._expose(Math.min(this.info.maxExposure, st ? st.exposure : 0.1), Math.min(this._isoMax(), st ? st.iso : this.info.maxISO * 0.6));
     this._live();
   }
   // In RAW, the sensor's own (analogue) gain stops somewhere between ISO 400 and 1600 on an iPhone 16 Pro: higher
@@ -203,8 +205,14 @@ export class NativeSkyCamera {
   // plug-in), returned as brightness 0..765 so the rest of the app reads it like any other frame. Otherwise a preview frame.
   async _sci(check = false) {
     if (!this.info.raw) return this._frame();
-    const f = await this._call('raw', { bin: 4, check }, 1000 * ((this.set && this.set.exposure) || 1) + 15000), bin = atob(f.data), n = bin.length >> 1, lum = new Float32Array(n), k = 765 / 65535;
+    const t0 = performance.now();
+    const f = await this._call('raw', { bin: 4, check }, 1000 * ((this.set && this.set.exposure) || 1) + 15000), t1 = performance.now(), bin = atob(f.data), n = bin.length >> 1, lum = new Float32Array(n), k = 765 / 65535;
     for (let i = 0, j = 0; i < n; i++, j += 2) lum[i] = (bin.charCodeAt(j) | (bin.charCodeAt(j + 1) << 8)) * k;
+    // Where the time goes, for the first few pictures of each attempt (to decide what to speed up).
+    if ((this._timed = (this._timed || 0) + 1) <= 4 && f.captureMs != null) {
+      const ms = (x) => `${Math.round(x)} ms`, transfer = t1 - t0 - f.captureMs - f.processMs;
+      this.log.push(`RAW picture time (${fmtSec(f.exposure)}): camera ${ms(f.captureMs)} (exposure ${ms(f.exposure * 1000)} + Apple ${ms(f.captureMs - f.exposure * 1000)}), binning ${ms(f.processMs)}, hand-over ${ms(transfer)}, unpacking ${ms(performance.now() - t1)}, total ${ms(performance.now() - t0)}`);
+    }
     await new Promise((r) => setTimeout(r, 0));              // let the screen catch up between frames
     return { lum, w: f.width, h: f.height, exposure: f.exposure, iso: f.iso, raw: true, method: f.method || 'developed', bin: f.bin || 2, black: f.black, white: f.white, stats: f.stats || '' };
   }
@@ -244,8 +252,11 @@ export class NativeSkyCamera {
       const I0 = this.info, cap = Math.min(I0.maxExposure, opts.maxLight || MAX_LIGHT);
       const I = { ...I0, maxExposure: cap };                // no single frame longer than all the light asked for
       let exp = Math.min(this.set.exposure, cap), iso = this.set.iso, fr = null; const trial = [];
-      for (let k = 0; k < 5; k++) {
-        status(`Reading the sky to choose the exposure (${fmtSec(exp)})…`);
+      // At most 3 trial pictures (each RAW photo costs about a second on top of its exposure); each step aims straight
+      // for the target brightness instead of creeping towards it. The first trial picture is also the first light frame.
+      const TRIES = 3; this._timed = 0;
+      for (let k = 0; k < TRIES; k++) {
+        status(`Choosing the exposure: test picture ${k + 1} of up to ${TRIES} (${fmtSec(exp)}, ISO ${Math.round(iso)})…`);
         if (opts.shouldStop && opts.shouldStop() && fr) break;
         try { fr = await this._sci(false); }
         catch (e) {
@@ -264,10 +275,14 @@ export class NativeSkyCamera {
           // and more room before stars saturate); only shorten the exposure once the gain is as low as it goes.
           const need = 0.11 / frac; wantIso = Math.max(I.minISO, iso * need); want = Math.min(I.maxExposure, Math.max(I.minExposure, fr.exposure * need * iso / wantIso));
         } else if (frac > 0.20 && want <= 1 / 25) wantIso = Math.max(I.minISO, iso * 0.11 / frac);          // already short and still bright: turn the gain down
-        if (frac < 0.06 && fr.exposure >= I.maxExposure * 0.98) wantIso = Math.min(this._isoMax(), iso * Math.min(2, 0.11 / Math.max(frac, 0.01)));   // as long as it goes and still dark: turn it up
-        if (Math.abs(want / fr.exposure - 1) < 0.25 && Math.abs(wantIso / iso - 1) < 0.2) break;
+        if (frac < 0.06 && want >= I.maxExposure * 0.98) {        // as long as it goes and still dark: make up the rest with gain
+          const short = (0.11 / Math.max(frac, 0.005)) * fr.exposure / I.maxExposure;   // how much more light is wanted beyond the longest frame
+          wantIso = Math.min(this._isoMax(), iso * Math.max(1, Math.min(16, short)));
+        }
+        if ((Math.abs(want / fr.exposure - 1) < 0.25 && Math.abs(wantIso / iso - 1) < 0.2) || k === TRIES - 1) break;
         const s = await this._expose(want, wantIso); exp = s.exposure; iso = s.iso;
       }
+      this.good = { camera: this.info.camera, exposure: fr.exposure, iso: fr.iso };   // remembered for next time (see main.js)
       const frameTime = fr.exposure, w = fr.w, h = fr.h; let first = fr;
       const src = { next: async () => { if (!this.alive) return null; if (first) { const f = first; first = null; return f.lum || f.rgba; } const f = await this._sci(); this._show(f); return f.lum || f.rgba; }, canSet: true, maxFrameTime: I.maxExposure };
       const { avg, an, plan, N, reg, checks, took, collected } = await collectLight(src, w, h, frameTime, opts, status, progress);
