@@ -347,3 +347,9 @@ unrelated extra star in the object-page sentence. Still open with Bryan: whether
   base64) and unpacking (JS). Bryan suggested subsampling for the exposure tests; measure first — the analysis already
   runs on the 4×4-binned picture, and the suspicion is that Apple's capture pipeline and the Debug build (Swift loops
   run unoptimised from Xcode's Run) dominate. Try Release (Edit Scheme › Run › Build Configuration) as a comparison.
+
+## Build 94 — "Not aligned yet" instead of "Best guess" (Nov 21)
+- Bryan: while exploring, "Best guess" should say it is not aligned yet, so people know alignment improves it.
+- Chart label under the telescope circle: "Not aligned yet" (was "Best guess"); banner "NOT ALIGNED YET — ROUGH
+  POSITION" with "… · align to make it accurate". Sky view (Explore) with only a compass: the status line now says
+  "Not aligned yet — the position comes from the phone's compass, so it's rough" with an Align button (it was empty).

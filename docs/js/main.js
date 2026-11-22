@@ -888,7 +888,7 @@ function updateSkyView() {
   }
   const live = cur.ready ? cur : roughPointing();
   if (!live.guess) { setPstat('sv', '<span id="ps-far"></span>'); const f = $('#ps-far'); if (f) f.textContent = `${cur.alt.toFixed(0)}° up, facing ${compassName(cur.az)}`; }
-  else if (live.src === 'compass') setPstat('sv-guess', '');
+  else if (live.src === 'compass') setPstat('sv-guess', `<b>Not aligned yet</b> — the position comes from the phone's compass, so it's rough. Align for an accurate one. <button class="mini primary" id="ps-align">Align</button>`, bindAlignBtn);
   else setPstat('sv-nocomp', `<b>No compass.</b> Tap the way the scope points, or drag the chart.<div class="dirs">${DIRS.map((d, i) => `<button data-dir="${i * 45}">${d}</button>`).join('')}</div>`,
     (el) => el.querySelectorAll('[data-dir]').forEach((bt) => bt.onclick = () => {
       const g = roughPointing(); if (!g) return;
@@ -1203,9 +1203,9 @@ function drawReticle(cur, tgt, o, opt = {}) {
   c.fillText(`${view >= 2 ? view.toFixed(view < 10 ? 1 : 0) + '°' : (view * 60).toFixed(0) + '′'} radius · stars to mag ${magLim.toFixed(1)}${zoom == null ? ' · auto' : ''}`, 12, 30);
   if (limited && !guess) { c.fillStyle = col(200, 40, 15); c.fillText(`Zoom limited by phone accuracy (±${fmt.am(U)})`, 12, H - 16); }
   // Unmistakable label whenever the chart is not showing a known pointing: a best guess, or no pointing at all.
-  const banner = opt.noBanner ? null : guess ? ['NOT ALIGNED — BEST GUESS MODE',
-    src === 'hand' ? 'Direction set by hand — no compass reading' : src === 'assumed' ? 'No compass reading — assuming you started out facing south'
-      : U ? `Direction from the phone's compass (measured ±${fmt.am(U)})` : 'Direction is a rough compass guess'] : opt.banner || null;
+  const banner = opt.noBanner ? null : guess ? ['NOT ALIGNED YET — ROUGH POSITION',
+    src === 'hand' ? 'Direction set by hand · align to make it accurate' : src === 'assumed' ? 'No compass reading, assuming south · align to fix it'
+      : U ? `From the compass (±${fmt.am(U)}) · align to make it accurate` : 'From the compass · align to make it accurate'] : opt.banner || null;
   if (banner) {
     const fit = (txt, px, weight = '') => { c.font = `${weight} ${px}px system-ui`; const w = c.measureText(txt).width; if (w > W - 40) c.font = `${weight} ${Math.floor(px * (W - 40) / w)}px system-ui`; };
     c.fillStyle = 'rgba(0,0,0,0.75)'; c.fillRect(0, 44, W, 74);
@@ -1219,7 +1219,7 @@ function drawReticle(cur, tgt, o, opt = {}) {
   if (scope && U) { c.strokeStyle = col(200, 40, 15); c.lineWidth = 2; c.setLineDash([8, 8]); c.beginPath(); c.arc(scope.x, scope.y, U / 60 * s, 0, 7); c.stroke(); c.setLineDash([]); }
   if (scope) {
     c.strokeStyle = col(230, 50, 25); c.lineWidth = 3; if (guess) c.setLineDash([10, 8]); c.beginPath(); c.arc(scope.x, scope.y, Math.max(5, half * s), 0, 7); c.stroke(); c.setLineDash([]);
-    if (guess) { c.fillStyle = col(230, 50, 25); c.font = 'bold 22px system-ui'; c.textAlign = 'center'; c.fillText(opt.noBanner ? 'Best guess (compass)' : 'Best guess', scope.x, scope.y + Math.max(28, half * s + 26)); c.textAlign = 'left'; }
+    if (guess) { c.fillStyle = col(230, 50, 25); c.font = 'bold 22px system-ui'; c.textAlign = 'center'; c.fillText(opt.noBanner ? 'Not aligned yet (compass)' : 'Not aligned yet', scope.x, scope.y + Math.max(28, half * s + 26)); c.textAlign = 'left'; }
     const L = Math.max(14, half * s * 0.35); c.beginPath(); c.moveTo(scope.x - L, scope.y); c.lineTo(scope.x + L, scope.y); c.moveTo(scope.x, scope.y - L); c.lineTo(scope.x, scope.y + L); c.stroke();
   }
 
