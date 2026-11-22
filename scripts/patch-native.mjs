@@ -13,6 +13,8 @@ edit('ios/App/App/Info.plist', (s) => {
   s = add('NSCameraUsageDescription', '<string>The camera finds stars to work out where your telescope is pointing, and scans game codes from other players\' phones.</string>');
   s = add('NSPhotoLibraryAddUsageDescription', '<string>Saves your camera star-finder pictures to Photos. The app never reads your photos.</string>');
   s = add('NSLocationWhenInUseUsageDescription', '<string>Your location is used to compute where objects are in your sky. It never leaves the phone.</string>');
+  // App Store: the app uses only the encryption built into iOS (HTTPS), which is exempt; saves a question on every upload.
+  s = add('ITSAppUsesNonExemptEncryption', '<false/>');
   s = s.replace(/(<key>UISupportedInterfaceOrientations<\/key>\s*<array>)[\s\S]*?(<\/array>)/, '$1\n\t\t<string>UIInterfaceOrientationPortrait</string>\n\t$2');
   s = s.replace(/(<key>UISupportedInterfaceOrientations~ipad<\/key>\s*<array>)[\s\S]*?(<\/array>)/, '$1\n\t\t<string>UIInterfaceOrientationPortrait</string>\n\t$2');
   return s;
@@ -45,6 +47,16 @@ if (fs.existsSync('ios/App/App')) {
   // Capacitor 8 builds its window in SceneDelegate; use our view controller there so the plug-in gets registered.
   edit('ios/App/App/SceneDelegate.swift', (s) => s.replace('window?.rootViewController = CAPBridgeViewController()', 'window?.rootViewController = MyViewController()    // registers the Skyward camera plug-in'));
   // Older templates use the storyboard instead.
+  // Optimise Swift even in Debug builds (Xcode's ▶ Run): the RAW binning loop took ~2 s per picture unoptimised.
+  edit('ios/App/App.xcodeproj/project.pbxproj', (s) => s.replace(/SWIFT_OPTIMIZATION_LEVEL = "-Onone";/g, 'SWIFT_OPTIMIZATION_LEVEL = "-O";'));
+  // iPhone only (no iPad layout yet; an iPad target would need iPad screenshots and an iPad review).
+  // Build number = the app's build label in docs/index.html ("Build NN"), so every upload to Apple is new and matches the app.
+  const buildNo = (fs.readFileSync('docs/index.html', 'utf8').match(/id="build"[^>]*>Build (\d+)/) || [])[1];
+  edit('ios/App/App.xcodeproj/project.pbxproj', (s) => {
+    s = s.replace(/TARGETED_DEVICE_FAMILY = "1,2";/g, 'TARGETED_DEVICE_FAMILY = 1;');
+    if (buildNo) s = s.replace(/CURRENT_PROJECT_VERSION = \d+;/g, `CURRENT_PROJECT_VERSION = ${buildNo};`);
+    return s;
+  });
   // Home-screen icon and launch picture (the Skyward on a night sky): replace Capacitor's placeholders.
   const copyBin = (from, to) => { if (!fs.existsSync(from) || !fs.existsSync(to.replace(/\/[^/]+$/, ''))) return log(`skip ${to}`); const a = fs.readFileSync(from), b = fs.existsSync(to) ? fs.readFileSync(to) : null; if (!b || !a.equals(b)) { fs.writeFileSync(to, a); log(`copied ${from} → ${to}`); } else log(`ok ${to}`); };
   copyBin('native/ios/AppIcon-1024.png', 'ios/App/App/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png');

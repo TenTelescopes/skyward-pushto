@@ -378,7 +378,7 @@ public class SkyCamPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoDataOutput
             self.work.async {
                 // Preferred: add up the photosites ourselves. Fallback: Apple develops it linearly, then we average 2×2.
                 if let px = px, let lv = self.levels(dng), self.superpixel(px, bin: bin, black: lv.black, white: lv.white, exposure: exposure, iso: iso, call: call,
-                                                                                  extra: check ? String(format: "; preview frame at the time: mean %.1f of 255; ", pm) + self.appleMean(dng) : "", activeW: rawW) { return }
+                                                                                  extra: check ? String(format: "; preview frame at the time: mean %.1f of 255", pm) : "", activeW: rawW, wantStats: check) { return }
                 self.develop(dng, bin: bin, exposure: exposure, iso: iso, call: call)
             }
         }
@@ -402,7 +402,7 @@ public class SkyCamPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoDataOutput
 
     /// Superpixel binning straight from the Bayer data. Returns false (so the caller falls back) if the buffer is not
     /// the expected one-plane, 16-bits-per-photosite layout.
-    private func superpixel(_ px: CVPixelBuffer, bin k: Int, black blackTag: [Double], white whiteTag: Double, exposure: Double, iso: Double, call: CAPPluginCall, extra: String = "", activeW: Int = 0) -> Bool {
+    private func superpixel(_ px: CVPixelBuffer, bin k: Int, black blackTag: [Double], white whiteTag: Double, exposure: Double, iso: Double, call: CAPPluginCall, extra: String = "", activeW: Int = 0, wantStats: Bool = false) -> Bool {
         // The DNG tags give black and white on a 12-bit scale (e.g. 528 and 4095), but on iPhone 16 Pro the buffer itself
         // is 14-bit ('bgg4' and friends end in 4): measured dark level ~2100 = 4 × 528. Put the levels on the buffer's scale.
         let ft0 = CVPixelBufferGetPixelFormatType(px)
@@ -419,53 +419,65 @@ public class SkyCamPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoDataOutput
         let blk4 = black.count >= 4 ? black[0] + black[1] + black[2] + black[3] : 4 * (black.reduce(0, +) / Double(black.count))
         let groups = Double((k / 2) * (k / 2)), blkBlock = blk4 * groups
         let scale = 65535.0 / (groups * (4 * white - blk4))
-        // A check on the raw numbers themselves (every 16th pair of rows): mean per Bayer position, the largest value, and
-        // how much is at or above the stated white level. Tells us whether the settings really changed the photo.
-        var sum = [Double](repeating: 0, count: 4), cnt = [Int](repeating: 0, count: 4), mx = 0, clip = 0, n = 0
-        for y in stride(from: 0, to: H - 1, by: 16) {
-            for dy in 0..<2 {
-                let r = (base + (y + dy) * rowBytes).assumingMemoryBound(to: UInt16.self)
-                for x in stride(from: 0, to: W - 1, by: 2) {
-                    for dx in 0..<2 {
-                        let v = Int(r[x + dx]), i = dy * 2 + dx
-                        sum[i] += Double(v); cnt[i] += 1; n += 1
-                        if v > mx { mx = v }
-                        if Double(v) >= white { clip += 1 }
+        var stats = ""
+        if wantStats {          // the RAW-number check: only for the first test picture of each attempt (it costs time)
+            // A check on the raw numbers themselves (every 16th pair of rows): mean per Bayer position, the largest value, and
+            // how much is at or above the stated white level. Tells us whether the settings really changed the photo.
+            var sum = [Double](repeating: 0, count: 4), cnt = [Int](repeating: 0, count: 4), mx = 0, clip = 0, n = 0
+            for y in stride(from: 0, to: H - 1, by: 16) {
+                for dy in 0..<2 {
+                    let r = (base + (y + dy) * rowBytes).assumingMemoryBound(to: UInt16.self)
+                    for x in stride(from: 0, to: W - 1, by: 2) {
+                        for dx in 0..<2 {
+                            let v = Int(r[x + dx]), i = dy * 2 + dx
+                            sum[i] += Double(v); cnt[i] += 1; n += 1
+                            if v > mx { mx = v }
+                            if Double(v) >= white { clip += 1 }
+                        }
                     }
                 }
             }
+            // Spread of values (every 16th pair of rows) and, if the buffer is wider than the picture, the extra columns.
+            var hist = [Int](repeating: 0, count: 65536), hn = 0, mSum = 0.0, mN = 0
+            for y in stride(from: 0, to: H - 1, by: 16) {
+                let r = (base + y * rowBytes).assumingMemoryBound(to: UInt16.self)
+                for x in 0..<W { let v = Int(r[x]); if activeW > 0 && W > activeW && x >= activeW { mSum += Double(v); mN += 1 } else { hist[v] += 1; hn += 1 } }
+            }
+            func pct(_ q: Double) -> Int { var acc = 0; let target = Int(Double(hn) * q); for (v, c) in hist.enumerated() { acc += c; if acc > target { return v } }; return 65535 }
+            let spread = String(format: "; values 0.1%% %d, 1%% %d, median %d, 99%% %d, 99.9%% %d", pct(0.001), pct(0.01), pct(0.5), pct(0.99), pct(0.999))
+                + (mN > 0 ? String(format: "; the %d extra columns average %.0f", W - activeW, mSum / Double(mN)) : String(format: "; picture %d wide", activeW))
+            let ft = CVPixelBufferGetPixelFormatType(px)
+            let fourcc = String([24, 16, 8, 0].map { Character(UnicodeScalar(UInt8((ft >> UInt32($0)) & 0xff))) })
+            stats = String(format: "raw %dx%d '%@', %d bytes per row; mean by Bayer position %.0f %.0f %.0f %.0f; max %d; %.1f%% at or above white (%.0f); black %@",
+                               W, H, fourcc, rowBytes, sum[0] / Double(max(cnt[0], 1)), sum[1] / Double(max(cnt[1], 1)), sum[2] / Double(max(cnt[2], 1)), sum[3] / Double(max(cnt[3], 1)),
+                               mx, 100.0 * Double(clip) / Double(max(n, 1)), white, black.map { String(format: "%.0f", $0) }.joined(separator: "/")) + (f > 1 ? " (DNG tags ×4: 14-bit buffer)" : "") + spread + extra
         }
-        // Spread of values (every 16th pair of rows) and, if the buffer is wider than the picture, the extra columns.
-        var hist = [Int](repeating: 0, count: 65536), hn = 0, mSum = 0.0, mN = 0
-        for y in stride(from: 0, to: H - 1, by: 16) {
-            let r = (base + y * rowBytes).assumingMemoryBound(to: UInt16.self)
-            for x in 0..<W { let v = Int(r[x]); if activeW > 0 && W > activeW && x >= activeW { mSum += Double(v); mN += 1 } else { hist[v] += 1; hn += 1 } }
-        }
-        func pct(_ q: Double) -> Int { var acc = 0; let target = Int(Double(hn) * q); for (v, c) in hist.enumerated() { acc += c; if acc > target { return v } }; return 65535 }
-        let spread = String(format: "; values 0.1%% %d, 1%% %d, median %d, 99%% %d, 99.9%% %d", pct(0.001), pct(0.01), pct(0.5), pct(0.99), pct(0.999))
-            + (mN > 0 ? String(format: "; the %d extra columns average %.0f", W - activeW, mSum / Double(mN)) : String(format: "; picture %d wide", activeW))
-        let ft = CVPixelBufferGetPixelFormatType(px)
-        let fourcc = String([24, 16, 8, 0].map { Character(UnicodeScalar(UInt8((ft >> UInt32($0)) & 0xff))) })
-        let stats = String(format: "raw %dx%d '%@', %d bytes per row; mean by Bayer position %.0f %.0f %.0f %.0f; max %d; %.1f%% at or above white (%.0f); black %@",
-                           W, H, fourcc, rowBytes, sum[0] / Double(max(cnt[0], 1)), sum[1] / Double(max(cnt[1], 1)), sum[2] / Double(max(cnt[2], 1)), sum[3] / Double(max(cnt[3], 1)),
-                           mx, 100.0 * Double(clip) / Double(max(n, 1)), white, black.map { String(format: "%.0f", $0) }.joined(separator: "/")) + (f > 1 ? " (DNG tags ×4: 14-bit buffer)" : "") + spread + extra
         let usable = activeW > 0 && activeW < W ? activeW : W          // the buffer has empty (zero) columns on the right
         let ow = usable / k, oh = H / k
+        // Sum each k×k block with plain pointers (this loop runs over ~12 million photosites: about 2 s per picture
+        // when written with Swift arrays and run unoptimised, Nov 21). Black is taken off once per block at the end.
         var out = [UInt16](repeating: 0, count: ow * oh)
         var rowSum = [Int](repeating: 0, count: ow)
-        for oy in 0..<oh {
-            for i in 0..<ow { rowSum[i] = 0 }
-            for yy in 0..<k {
-                let r = (base + (oy * k + yy) * rowBytes).assumingMemoryBound(to: UInt16.self)
-                for ox in 0..<ow {
-                    var s = 0
-                    let x0 = ox * k
-                    for xx in 0..<k { s += Int(r[x0 + xx]) }
-                    rowSum[ox] += s
+        let blkI = Int(blkBlock.rounded())
+        rowSum.withUnsafeMutableBufferPointer { rs in
+            out.withUnsafeMutableBufferPointer { o in
+                for oy in 0..<oh {
+                    for i in 0..<ow { rs[i] = 0 }
+                    for yy in 0..<k {
+                        let r = (base + (oy * k + yy) * rowBytes).assumingMemoryBound(to: UInt16.self)
+                        var p = r
+                        if k == 4 {
+                            for ox in 0..<ow { rs[ox] &+= Int(p[0]) &+ Int(p[1]) &+ Int(p[2]) &+ Int(p[3]); p += 4 }
+                        } else {
+                            for ox in 0..<ow { var s = 0; for xx in 0..<k { s &+= Int(p[xx]) }; rs[ox] &+= s; p += k }
+                        }
+                    }
+                    let row = oy * ow
+                    for ox in 0..<ow {
+                        let v = Double(rs[ox] - blkI) * scale
+                        o[row + ox] = v <= 0 ? 0 : v >= 65535 ? 65535 : UInt16(v + 0.5)
+                    }
                 }
-            }
-            for ox in 0..<ow {
-                out[oy * ow + ox] = UInt16(max(0, min(65535, ((Double(rowSum[ox]) - blkBlock) * scale).rounded())))
             }
         }
         finish(out, ow, oh, exposure: exposure, iso: iso, method: "superpixel", bin: k, black: blk4 / 4, white: white, call: call, stats: stats)

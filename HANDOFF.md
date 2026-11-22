@@ -353,3 +353,52 @@ unrelated extra star in the object-page sentence. Still open with Bryan: whether
 - Chart label under the telescope circle: "Not aligned yet" (was "Best guess"); banner "NOT ALIGNED YET — ROUGH
   POSITION" with "… · align to make it accurate". Sky view (Explore) with only a compass: the status line now says
   "Not aligned yet — the position comes from the phone's compass, so it's rough" with an Align button (it was empty).
+
+## Build 95 — RAW binning ~10× faster (expected) (Nov 21)
+- Timing from the phone (indoors, Build 94): camera 22–250 ms (the photo arrives almost at once — less than the 1 s
+  exposure, so Apple hands over a frame already being exposed), hand-over 14 ms, unpacking 5 ms — and **binning
+  1.9–2.3 s**. The Swift superpixel loop was the bottleneck (array subscripts, Double maths, unoptimised Debug build).
+- Binning now uses raw pointers, integer sums and one black subtraction per block; the RAW-number statistics run only
+  for the first test picture of each attempt (`raw({check:true})`, `wantStats`); the Apple-development check is gone.
+- Debug builds now compile Swift with `-O` (project-level `SWIFT_OPTIMIZATION_LEVEL`, also set by patch-native), so
+  Xcode's ▶ Run gives App Store speed. Side effect: the debugger shows fewer variables. Not yet measured on the phone.
+
+## Build 96 — light-pollution estimate from a built-in map (Nov 22) — app side done, map data pending
+- Bryan: use location plus light-pollution maps to estimate the sky in Plan and elsewhere.
+- Data choice: NASA Black Marble yearly night lights (VNP46A4, US government work, current) rather than the World
+  Atlas 2016 (CC BY-NC 4.0: a grey area for an app tied to a business, ~10 years old, 2.9 GB). Black Marble measures
+  upward light, so sky glow is modelled: `tools/lightmap/build.py` (sum to 0.025°, glow = Σ light ×
+  (d² + 5²)^-1.25 × exp(-d/150 km) within 250 km, SQM = 21.9 − 2.5·log10(1 + glow/G0), G0 fitted to anchors.json;
+  written on a 0.05° grid, one byte per cell). `--selftest` checks the model (a city calibrated to 17.0 gives ~20.3 at
+  50 km, matching Walker's-law expectations). Needs h5py, which this workspace cannot install: run it on the Mac (or
+  the desktop Linux VM) once the tiles are downloaded.
+- Anchors: only one measured value so far (downtown Toronto 16.8–17.0 mag/arcsec², University of Toronto
+  photometry, 2002, pre-LED). Add Bryan's own Sky darkness checks (Guelph etc.) as more anchors.
+- App: `docs/js/skyglow.js` (load/parse `data/skyglow.bin`, bilinear lookup, SQM→NELM, Bortle). `skyNelm()` now uses,
+  in order: the user's sky check, the map estimate for `state.site`, then the suburban default. Plan shows e.g.
+  "Suburban sky (light-pollution map, about Bortle 6)"; More › Sky darkness check shows the estimate. Ratings caches
+  key on `skyNelm()`, so they update when the map arrives. No map file yet: the app behaves as before.
+- First tiles requested from Bryan: h08v04 h09v04 h10v04 h08v05 h09v05 h10v05 (southern Ontario, NE US), into
+  `Documents/GitHub/skyward-lightdata/` (outside the repo). When `docs/data/skyglow.bin` exists, add it to sw.js FILES.
+- Tests: `test/skyglow.test.mjs` (in npm test). Checked in Chromium with a made-up map: Plan and More show the estimate.
+- Icons: home-screen icon, launch picture and the web app's icons (docs/icons/icon-192/512.png) are now the Ten
+  Telescopes logo (telescope against a starry Moon, navy background), from Bryan's logo file; crop centred on the art.
+
+## Build 97 — first real light-pollution map (Nov 22)
+- `docs/data/skyglow.bin` (240 kB): 2025 Black Marble tiles h08–h10 × v04–v05 (lon −100…−70, lat 30…50), built on
+  Bryan's Mac with `tools/lightmap/build.py` in a venv (`~/skyward-venv`; Homebrew Python refuses pip installs).
+  Downloads: built-in browser, one at a time (NASA returned 502 to several at once); the Earthdata profile needed
+  User Type / Organization / Study Area before NASA would serve files.
+- Sample estimates (SQM, Bortle): Toronto 17.0 (anchor), Chicago 16.5, Detroit 16.7, Hamilton 17.7, Kitchener 18.0,
+  Guelph 18.35 (B8), Orangeville 19.2, Wellington County 20.0, Muskoka 20.6, Torrance Barrens 21.2, Algonquin 21.8,
+  Tobermory 21.7, Cherry Springs PA 21.6. Mid-sized city centres look too bright (one anchor only, 2002 pre-LED):
+  needs more anchors — Bryan's own sky checks — before trusting the city end. Dark sites look sensible.
+- Added to sw.js FILES (offline). Grid edge: places outside the six tiles get no estimate (suburban default).
+
+## Build 98 (Nov 22)
+- Bortle shown after a sky darkness check too: "(about Bortle N)" from the measured limiting magnitude
+  (`nelmToSqm`, `bortleOfNelm` in skyglow.js; the stored label is unchanged, so logs are unaffected).
+- `test/skyglow.test.mjs` now runs in `npm test`.
+- App Store prep in `scripts/patch-native.mjs`: `ITSAppUsesNonExemptEncryption = NO`, iPhone-only
+  (`TARGETED_DEVICE_FAMILY = 1`), Xcode build number = the "Build NN" label. Version stays 1.0.
+- Owner enrolling in the Apple Developer Program as an individual (not incorporated).

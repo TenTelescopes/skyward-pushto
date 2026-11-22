@@ -258,7 +258,7 @@ export class NativeSkyCamera {
       for (let k = 0; k < TRIES; k++) {
         status(`Choosing the exposure: test picture ${k + 1} of up to ${TRIES} (${fmtSec(exp)}, ISO ${Math.round(iso)})…`);
         if (opts.shouldStop && opts.shouldStop() && fr) break;
-        try { fr = await this._sci(false); }
+        try { fr = await this._sci(k === 0); }          // the RAW-number check on the first test picture only
         catch (e) {
           // A RAW photo that fails is not the end: carry on with the camera's preview frames (processed, but they work).
           if (!this.info.raw) throw e;

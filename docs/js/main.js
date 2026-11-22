@@ -22,6 +22,7 @@ import { analyzeSwing, analyzeAltSweep, analyzeHorizonTurn, gradeCheck, guessMod
 import { SkyCamera, NativeSkyCamera, drawResult, reportText, hms as raHms } from './camera.js';
 import { learnHot } from './skycam.js';
 import { project as projectStar } from './solve.js';
+import { loadSkyGlow, skyGlowAt, bortleOfNelm } from './skyglow.js';
 import { FIELD as STAR_FIELD } from '../data/catalog.js';
 
 // ---------------------------------------------------------------- persistence
@@ -392,7 +393,7 @@ function renderPlan() {
   const start = new Date(P.start), end = new Date(start.getTime() + P.hours * 3600000), n = sky.nightAt(start);
   const moonTxt = `${Math.round(n.moonFrac * 100)}% lit${n.moonRise ? ', rises ' + hm(n.moonRise) : ''}${n.moonSet ? ', sets ' + hm(n.moonSet) : ''}`;
   const T = P.items.filter((x) => !x.sync), nSync = P.items.length - T.length, nDone = T.filter((x) => P.done && P.done[x.key]).length;
-  const skyName = state.skyq ? state.skyq.label : 'Suburban sky (a guess)';
+  const skyName = state.skyq ? skyCheckName() : skyGuessName();
   // A plan put together by hand has no sync star at the front: suggest one.
   const firstObj = P.items.length && !P.items[0].sync ? objByKey(P.items[0].key) : null;
   let openStar = null; try { openStar = firstObj ? openingSync(sky, firstObj, start) : null; } catch (e) { /* no site yet */ }
@@ -408,7 +409,7 @@ function renderPlan() {
         <label class="row"><span>Date</span><input id="pl-date" type="date" value="${dateVal(start)}"></label>
         <label class="row"><span>Going out at</span><input id="pl-time" type="time" step="900" value="${timeVal(start)}"></label>
         <label class="row"><span>Staying out</span><select id="pl-hours">${[1, 1.5, 2, 3, 4, 6, 8].map((h) => `<option value="${h}" ${+P.hours === h ? 'selected' : ''}>${h} hour${h > 1 ? 's' : ''}</option>`).join('')}</select></label>
-        <label class="row"><span>Your sky</span><select id="pl-skysel">${SKY_PICKS.map(([m, l]) => `<option value="${m}" ${Math.abs(skyNelm() - m) < 0.26 ? 'selected' : ''}>${l}</option>`).join('')}${SKY_PICKS.some(([m]) => Math.abs(skyNelm() - m) < 0.26) ? '' : `<option selected>${esc(state.skyq.label)}</option>`}</select></label>
+        <label class="row"><span>Your sky</span><select id="pl-skysel">${SKY_PICKS.map(([m, l]) => `<option value="${m}" ${Math.abs(skyNelm() - m) < 0.26 ? 'selected' : ''}>${l}</option>`).join('')}${SKY_PICKS.some(([m]) => Math.abs(skyNelm() - m) < 0.26) ? '' : `<option selected>${esc(state.skyq ? state.skyq.label : skyGuessName())}</option>`}</select></label>
         <div class="btnrow"><button id="pl-skyq" class="mini">Measure it: Little Dipper check (30 s)</button></div>
       </div>
     </div>
@@ -498,7 +499,12 @@ function computePlanRows() {
 /** The blocked-sky map for this spot (null when nothing is marked). */
 function horizonNow() { return hasHorizon(state.horizon) ? state.horizon : null; }
 const hzSig = () => (state.horizon ? state.horizon.when || 1 : 0);
-function skyNelm() { return state.skyq ? state.skyq.nelm : DEFAULT_NELM; }
+// The sky's darkness: the observer's own check if there is one, else the light-pollution map's estimate for the site,
+// else a suburban guess.
+function mapSky() { return state && state.site ? skyGlowAt(state.site.lat, state.site.lon) : null; }
+function skyNelm() { const m = state.skyq ? null : mapSky(); return state.skyq ? state.skyq.nelm : m ? m.nelm : DEFAULT_NELM; }
+function skyCheckName() { return `${state.skyq.label} (about Bortle ${bortleOfNelm(state.skyq.nelm)})`; }
+function skyGuessName() { const m = mapSky(); return m ? `${skyLabel(m.nelm)[0]} (light-pollution map, about Bortle ${m.bortle})` : 'Suburban sky (a guess)'; }
 let planDarkNight = null, planSig = '';
 const rowFor = (key) => computePlanRows().find((r) => r.key === key) || null;
 /** When each plan item will be reached: targets spread evenly through the session, a sync star just before its target. */
@@ -2728,7 +2734,7 @@ function renderMore() {
     <h3>Each night</h3>
     ${item('align', 'Star alignment', state.mode === 'compass' ? 'Compass mode — no alignment needed' : alignedNow() ? `Aligned on ${align.obs.map((o) => esc(o.label)).join(' and ')} · ${syncAgo()}` : 'Not aligned yet — two minutes, and the app shows you which stars')}
     ${item('camera', 'Camera star finder', state.mounting === 'camera' ? (profile().camBore ? 'Finds where the telescope points from the stars · lined up with the eyepiece' : 'Finds where the telescope points from the stars — no star to centre') : 'Works out where the phone’s camera is pointing from the stars')}
-    ${item('sky', 'Sky darkness check', state.skyq ? `${esc(state.skyq.label)} · ${shortDate(state.skyq.when)}` : '30 seconds — tunes the visibility ratings to your sky')}
+    ${item('sky', 'Sky darkness check', state.skyq ? `${esc(skyCheckName())} · ${shortDate(state.skyq.when)}` : mapSky() ? `Map estimate: ${esc(skyGuessName())} — a 30-second check makes it exact` : '30 seconds — tunes the visibility ratings to your sky')}
     <h3>Now and then</h3>
     ${item('collim', 'Collimate your Skyward', profile().collimated ? `Last done ${shortDate(profile().collimated)} · laser, about 10 minutes` : 'Line up the mirrors with the laser — sharper views, about 10 minutes')}
     ${item('horizon', 'Blocked sky', horizonNow() ? esc(horizonSummary(state.horizon)) : 'Mark trees and buildings so the app never sends you behind them')}
@@ -2822,7 +2828,7 @@ function renderLaunch() {
     <div class="path">
       <div class="pnote">Your path — tap a star to skip a stop</div>
       ${['check', 'sky', 'horizon', 'align'].map((k) => (stops.includes(k)
-    ? `<label class="stop"><input type="checkbox" data-step="${k}" ${stepOn(k) ? 'checked' : ''}><span><b>${STEP_INFO[k][0]}</b><span class="muted">${k === 'horizon' ? (stepOn(k) || horizonNow() || placeLabel() ? status[k] : 'skipped') : esc(stepOn(k) ? status[k] : k === 'check' && !chk ? 'optional — 4 min, shows how far to trust the arrows' : 'skipped')}</span></span>${k === 'horizon' ? '<button id="l-hz" class="mini" type="button">Open</button>' : ''}</label>`
+    ? `<label class="stop"><input type="checkbox" data-step="${k}" ${stepOn(k) ? 'checked' : ''}><span><b>${STEP_INFO[k][0]}</b><span class="muted">${k === 'horizon' ? (stepOn(k) || horizonNow() || placeLabel() ? status[k] : 'skipped') : esc(stepOn(k) ? status[k] : k === 'check' && !chk ? 'optional — 4 min, shows how far to trust the arrows' : k === 'sky' && !sq && mapSky() ? `skipped — using the map estimate, about Bortle ${mapSky().bortle}` : 'skipped')}</span></span>${k === 'horizon' ? '<button id="l-hz" class="mini" type="button">Open</button>' : ''}</label>`
     : `<div class="stop na"><input type="checkbox" disabled aria-hidden="true"><span><b>${STEP_INFO[k][0]}</b><span class="muted">not needed for this</span></span></div>`)).join('')}
       <div class="stop end"><span class="dest"></span><button id="l-go" class="primary">${GO[act]}</button></div>
     </div>
@@ -3364,7 +3370,7 @@ function renderFlowBar() {
 // Little Dipper sky check: the faintest Little Dipper stars you can see ≈ naked-eye limiting magnitude.
 const UMI = [['Polaris', 37.95, 89.26, 1.98], ['Yildun', 263.05, 86.59, 4.35], ['ε', 251.49, 82.04, 4.21], ['ζ', 236.01, 77.79, 4.32],
   ['η', 244.38, 75.76, 4.95], ['Pherkad', 230.18, 71.83, 3.00], ['Kochab', 222.68, 74.16, 2.08]];
-const SKY_PICKS = [[3.5, 'City'], [4.5, 'Bright suburbs'], [5.0, 'Suburbs'], [5.6, 'Edge of town'], [6.2, 'Rural'], [6.7, 'Dark site']];
+const SKY_PICKS = [[3.5, 'Inner city (Bortle 9)'], [4.0, 'City (8)'], [4.5, 'Edge of city (7)'], [5.0, 'Bright suburbs (6)'], [5.5, 'Suburbs (5)'], [6.0, 'Rural-suburban (4)'], [6.5, 'Rural (3)'], [7.0, 'Dark site (1–2)']];
 // [naked-eye limit saved, faintest star drawn as visible, title, caption]
 const SKY_LEVELS = [
   [2.8, 2.6, 'Two stars', 'Only Polaris and Kochab'],
@@ -3374,11 +3380,16 @@ const SKY_LEVELS = [
   [5.7, 5.8, 'The dipper and more', 'All seven, with faint stars around them'],
 ];
 function skyLabel(m) {
-  return m < 3.5 ? ['Bright city sky', 'Moon, planets, bright clusters and double stars. Galaxies will be very hard.']
-    : m < 4.5 ? ['Bright suburban sky', 'Planets, clusters, globulars, small planetary nebulae and the brightest galaxies.']
-    : m < 5.3 ? ['Suburban sky', 'Most clusters and nebulae, and the brighter galaxies.']
-    : m < 6 ? ['Rural sky', 'Most of the Messier list, including faint galaxies.']
-    : ['Dark sky', 'Faint galaxies and large nebulae — a great night.'];
+  // Named by Bortle class, so the name always agrees with the "about Bortle N" shown beside it.
+  const b = bortleOfNelm(m);
+  return b >= 9 ? ['Inner-city sky', 'Moon, planets, bright clusters and double stars. Galaxies will be very hard.']
+    : b === 8 ? ['City sky', 'Planets, bright clusters, globulars and double stars; a few bright nebulae and galaxies.']
+    : b === 7 ? ['Edge-of-city sky', 'Planets, clusters, globulars, small planetary nebulae and the brightest galaxies.']
+    : b === 6 ? ['Bright suburban sky', 'Most clusters and nebulae, and the brighter galaxies.']
+    : b === 5 ? ['Suburban sky', 'Most of the Messier list, including some faint galaxies.']
+    : b === 4 ? ['Rural-suburban sky', 'Most of the Messier list, including faint galaxies.']
+    : b === 3 ? ['Rural sky', 'Faint galaxies and large nebulae — a great night.']
+    : ['Dark sky', 'Faint galaxies, large nebulae and the Milky Way full of detail — a superb night.'];
 }
 function openSkyCheck() {
   const box = $('#skycheck'), card = $('#skycheck-card'); box.classList.remove('hidden');
@@ -3496,6 +3507,8 @@ async function init() {
   }
   if (state.v < 3) { state.sort = 'best'; state.v = 3; }   // v3: Find opens on what looks best right now
   if (!Array.isArray(state.log)) state.log = [];
+  // The light-pollution map loads in the background; when it arrives, ratings that rely on a guess are redone.
+  loadSkyGlow().then((g) => { if (g && !state.skyq && mapSky()) { planRows = null; rateCache.clear(); try { renderLaunch(); } catch (e) { /* launch screen not built yet */ } if (tab === 'plan') renderPlan(); else if (tab === 'find') renderFind(); } }).catch(() => {});
   sound.mode = state.sound || 'chime';
   if (state.rot180 == null) state.rot180 = true;
   for (const k of ['sw150c', 'sw200v']) if (state.profiles[k] && state.profiles[k].focuser == null) state.profiles[k].focuser = 90;   // Skyward: focuser always on the right
