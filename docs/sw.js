@@ -1,5 +1,5 @@
 // Offline cache for the browser/PWA build. The native (Capacitor) apps ship these files inside the app instead.
-const CACHE = 'skyward-pushto-v98';
+const CACHE = 'skyward-pushto-v99';
 const FILES = ['./', 'index.html', 'css/app.css', 'js/main.js', 'js/model.js', 'js/astro.js', 'js/sensors.js', 'js/tests.js', 'js/check.js', 'js/assist.js', 'js/eyeview.js', 'js/theme.js', 'js/plan.js', 'js/vis.js', 'js/log.js', 'js/sound.js', 'data/blurbs.js', 'js/dome.js', 'js/horizon.js', 'js/places.js', 'js/marathon.js', 'js/locate.js', 'data/bounds.js', 'js/game.js', 'js/wixscores.js', 'vendor/qrcode.mjs', 'vendor/jsQR.js',
   'data/catalog.js', 'vendor/astronomy.mjs', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/ten-mark.png', 'js/camera.js', 'js/skycam.js', 'js/solve.js', 'js/solve-worker.js', 'js/skyglow.js', 'data/skyglow.bin', 'img/finder-mount.png', 'img/secondary-screws.png', 'img/primary-knobs.jpg'];
 // cache:'reload' bypasses the browser's HTTP cache, so a new version is never filled with stale files.

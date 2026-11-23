@@ -22,7 +22,7 @@ import { analyzeSwing, analyzeAltSweep, analyzeHorizonTurn, gradeCheck, guessMod
 import { SkyCamera, NativeSkyCamera, drawResult, reportText, hms as raHms } from './camera.js';
 import { learnHot } from './skycam.js';
 import { project as projectStar } from './solve.js';
-import { loadSkyGlow, skyGlowAt, bortleOfNelm } from './skyglow.js';
+import { loadSkyGlow, skyGlowAt, bortleOfNelm, skyGlowGrid, cellSqm, bortleOf } from './skyglow.js';
 import { FIELD as STAR_FIELD } from '../data/catalog.js';
 
 // ---------------------------------------------------------------- persistence
@@ -2499,6 +2499,7 @@ function renderSetup() {
     <label class="row"><span>Elevation (m)</span><input id="s-el" type="number" inputmode="decimal" value="${state.site.elev}"></label>
     <p class="muted small">Source: ${esc(state.site.source)}. GPS works with no cell signal.</p>
     <div class="btnrow"><button id="s-gps">Use GPS</button></div>
+    <div id="s-lp"></div>
 
     <h2>Display</h2>
     <label class="row"><span>Day look <span class="muted small">(off = Night, red only; the sun/moon button fades between them)</span></span><input id="s-day" type="checkbox" ${state.day ? 'checked' : ''}></label>
@@ -2536,12 +2537,91 @@ function renderSetup() {
   $('#s-rate').onchange = (e) => { state.useRate = e.target.checked; model.useRate = state.useRate; save(); };
   $('#s-smooth').onchange = (e) => { state.smooth = parseFloat(e.target.value); save(); };
   $('#s-clrcal').onclick = () => { p.cal = null; applyModelSettings(); save(); renderSetup(); };
-  const site = () => { state.site = { lat: num('#s-lat'), lon: num('#s-lon'), elev: num('#s-el') || 0, source: 'entered manually' }; sky.setSite(state.site.lat, state.site.lon, state.site.elev); siteMoved(); save(); };
+  const site = () => { state.site = { lat: num('#s-lat'), lon: num('#s-lon'), elev: num('#s-el') || 0, source: 'entered manually' }; sky.setSite(state.site.lat, state.site.lon, state.site.elev); planRows = null; rateCache.clear(); siteMoved(); save(); renderLightHere(); };
   ['#s-lat', '#s-lon', '#s-el'].forEach((id) => $(id).onchange = site);
   $('#s-gps').onclick = getGPS;
   $('#s-day').onchange = (e) => setShade(e.target.checked ? 0 : 1, true);
   $('#s-br').oninput = (e) => { state.bright = parseFloat(e.target.value); applyModelSettings(); save(); };
   $('#s-min').onchange = () => { state.minAlt = num('#s-min') || 0; save(); };
+  renderLightHere();
+}
+
+// ---- Light pollution where you are: the map estimate, the sky check (if any), and a small map of the area (Build 98)
+const BORTLE_COL = ['', '#141414', '#3d4466', '#2457c9', '#2f9e44', '#e3d03a', '#f08a24', '#d8321f', '#f2a6cf', '#ffffff'];
+const BORTLE_NAME = ['', 'Excellent dark sky', 'Truly dark sky', 'Rural sky', 'Rural-suburban sky', 'Suburban sky', 'Bright suburban sky', 'Edge-of-city sky', 'City sky', 'Inner-city sky'];
+const LP_SPANS = [0.5, 1.25, 3];
+// Towns to label on the light-pollution map so you can find your way around it (largest first; labels that would overlap are skipped).
+const LP_TOWNS = [['Chicago', 41.88, -87.63], ['New York', 40.71, -74.01], ['Toronto', 43.65, -79.38], ['Philadelphia', 39.95, -75.17], ['Montréal', 45.50, -73.57], ['Washington', 38.91, -77.04], ['Atlanta', 33.75, -84.39], ['Boston', 42.36, -71.06], ['Detroit', 42.33, -83.05], ['Dallas', 32.78, -96.80], ['Minneapolis', 44.98, -93.27], ['St. Louis', 38.63, -90.20], ['Baltimore', 39.29, -76.61], ['Charlotte', 35.23, -80.84], ['Pittsburgh', 40.44, -79.99], ['Cincinnati', 39.10, -84.51], ['Kansas City', 39.10, -94.58], ['Cleveland', 41.50, -81.69], ['Columbus', 39.96, -83.00], ['Indianapolis', 39.77, -86.16], ['Nashville', 36.16, -86.78], ['Ottawa', 45.42, -75.70], ['Milwaukee', 43.04, -87.91], ['Louisville', 38.25, -85.76], ['Memphis', 35.15, -90.05], ['Richmond', 37.54, -77.44], ['Raleigh', 35.78, -78.64], ['Oklahoma City', 35.47, -97.52], ['Buffalo', 42.89, -78.88], ['Québec', 46.81, -71.21], ['Winnipeg', 49.90, -97.14], ['Hamilton', 43.26, -79.87], ['Omaha', 41.26, -95.93], ['Rochester', 43.16, -77.61], ['Birmingham', 33.52, -86.80], ['Jacksonville', 30.33, -81.66], ['Grand Rapids', 42.96, -85.67], ['Toledo', 41.65, -83.54], ['Des Moines', 41.59, -93.62], ['Kitchener', 43.45, -80.49], ['London', 42.98, -81.25], ['Albany', 42.65, -73.76], ['Syracuse', 43.05, -76.15], ['Windsor', 42.31, -83.04], ['Madison', 43.07, -89.40], ['Lansing', 42.73, -84.56], ['Oshawa', 43.90, -78.86], ['Flint', 43.01, -83.69], ['Barrie', 44.39, -79.69], ['Guelph', 43.55, -80.25], ['Kingston', 44.23, -76.49], ['Erie', 42.13, -80.09], ['Green Bay', 44.51, -88.01], ['Sudbury', 46.49, -80.99], ['Duluth', 46.79, -92.10], ['Burlington', 44.48, -73.21], ['Thunder Bay', 48.38, -89.25], ['Peterborough', 44.30, -78.32], ['Niagara Falls', 43.09, -79.08], ['Sarnia', 42.97, -82.40], ['Sault Ste. Marie', 46.52, -84.33], ['North Bay', 46.31, -79.46], ['Traverse City', 44.76, -85.62], ['Orillia', 44.61, -79.42], ['Owen Sound', 44.57, -80.94], ['Huntsville', 45.33, -79.22]];                     // half-height of the map in degrees of latitude: ~55, 140, 330 km across
+let lpSpan = 1;
+function renderLightHere() {
+  const el = $('#s-lp'); if (!el) return;
+  const g = skyGlowGrid();
+  if (!g) { el.innerHTML = '<p class="muted small">Loading the light-pollution map…</p>'; loadSkyGlow().then((x) => { if (x && $('#s-lp')) renderLightHere(); else if ($('#s-lp')) $('#s-lp').innerHTML = ''; }); return; }
+  const here = skyGlowAt(state.site.lat, state.site.lon, g), sq = state.skyq;
+  const checkLine = sq ? `<p class="small">Your sky darkness check (${esc(shortDate(sq.when))}): <b>${esc(sq.label)}</b>, about Bortle ${bortleOfNelm(sq.nelm)}, stars to magnitude ${sq.nelm.toFixed(1)}. The app uses this, not the map.</p>` : '';
+  if (!here) {
+    el.innerHTML = `<h3>Light pollution here</h3><p class="muted small">This spot is outside the built-in light-pollution map (it covers about 30°–50° N, 70°–100° W). A sky darkness check measures your sky anywhere.</p>${checkLine}<div class="btnrow"><button id="s-lpcheck">Sky darkness check</button></div>`;
+  } else {
+    el.innerHTML = `<h3>Light pollution here</h3>
+      <p class="small"><b>About Bortle ${here.bortle}</b> — ${BORTLE_NAME[here.bortle].toLowerCase()}. Sky brightness about ${here.sqm.toFixed(1)} mag/arcsec², stars to about magnitude ${here.nelm.toFixed(1)} overhead on a clear moonless night.</p>
+      ${checkLine}
+      <canvas id="s-lpmap" class="lpmap" aria-label="Map of estimated sky brightness around you"></canvas>
+      <div class="lpleg">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map((b) => `<span><i style="background:${BORTLE_COL[b]}"></i>${b}</span>`).join('')}</div>
+      <p class="muted small">Bortle class, 1 darkest. The bright patches are towns: their light glows in the sky for tens of kilometres around them. Estimated from NASA Black Marble satellite night lights (${g.year || 'recent'}), in 5 km squares, so it can't show the dark side of a hill or a park in town. A sky darkness check measures your actual sky.</p>
+      <div class="btnrow"><button id="s-lpless">Closer</button><button id="s-lpmore">Wider</button><button id="s-lpcheck">Sky darkness check</button></div>`;
+    drawLightMap($('#s-lpmap'), g);
+    $('#s-lpless').disabled = lpSpan === 0; $('#s-lpmore').disabled = lpSpan === LP_SPANS.length - 1;
+    $('#s-lpless').onclick = () => { lpSpan = Math.max(0, lpSpan - 1); renderLightHere(); };
+    $('#s-lpmore').onclick = () => { lpSpan = Math.min(LP_SPANS.length - 1, lpSpan + 1); renderLightHere(); };
+  }
+  $('#s-lpcheck').onclick = () => openSkyCheck();
+}
+function drawLightMap(cv, g) {
+  const W = cv.clientWidth || 320, H = Math.round(W * 0.75), dpr = Math.min(3, window.devicePixelRatio || 1);
+  cv.width = W * dpr; cv.height = H * dpr; cv.style.height = H + 'px';
+  const ctx = cv.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.lineJoin = 'round';
+  const lat0 = state.site.lat, lon0 = state.site.lon, cosl = Math.cos(lat0 * Math.PI / 180);
+  const hLat = LP_SPANS[lpSpan], hLon = hLat * (W / H) / cosl;           // same km per pixel both ways
+  const n = lat0 + hLat, s = lat0 - hLat, w = lon0 - hLon, e = lon0 + hLon;
+  // Sky brightness interpolated between map cells at every (half-)pixel, then coloured by Bortle class: smooth edges.
+  const pw = Math.ceil(W / 2), ph = Math.ceil(H / 2), off = document.createElement('canvas'); off.width = pw; off.height = ph;
+  const oc = off.getContext('2d'), img = oc.createImageData(pw, ph);
+  const rgb = (h) => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+  const pal = BORTLE_COL.map((h) => h ? rgb(h) : null);
+  for (let y = 0; y < ph; y++) for (let x = 0; x < pw; x++) {
+    const lat = n - (y + 0.5) / ph * (n - s), lon = w + (x + 0.5) / pw * (e - w), k = (y * pw + x) * 4;
+    const fy = (g.north - lat) / g.dLat - 0.5, fx = (lon - g.west) / g.dLon - 0.5, r = Math.floor(fy), c = Math.floor(fx), ty = fy - r, tx = fx - c;
+    let sum = 0, wt = 0;
+    for (const [dr, dc, kk] of [[0, 0, (1 - ty) * (1 - tx)], [0, 1, (1 - ty) * tx], [1, 0, ty * (1 - tx)], [1, 1, ty * tx]]) { const q = cellSqm(g, r + dr, c + dc); if (q != null) { sum += q * kk; wt += kk; } }
+    if (wt < 0.3) { img.data[k] = 20; img.data[k + 1] = 24; img.data[k + 2] = 40; img.data[k + 3] = 255; continue; }
+    const [R, G, B] = pal[bortleOf(sum / wt)]; img.data[k] = R; img.data[k + 1] = G; img.data[k + 2] = B; img.data[k + 3] = 255;
+  }
+  oc.putImageData(img, 0, 0);
+  ctx.imageSmoothingEnabled = true; ctx.drawImage(off, 0, 0, W, H);
+  // Town names (dot + label), skipping any that would overlap one already drawn or the "You" marker.
+  ctx.font = '600 11px system-ui, sans-serif'; ctx.textBaseline = 'middle';
+  const taken = [[W / 2 - 18, H / 2 - 22, 60, 40]];
+  for (const [name, la, lo] of LP_TOWNS) {
+    const tx = (lo - w) / (e - w) * W, ty = (n - la) / (n - s) * H; if (tx < 4 || ty < 4 || tx > W - 4 || ty > H - 4) continue;
+    const tw = ctx.measureText(name).width, right = tx + 6 + tw < W - 4, bx = right ? tx - 3 : tx - 9 - tw, box = [bx, ty - 8, tw + 12, 16];
+    if (taken.some((b) => box[0] < b[0] + b[2] && b[0] < box[0] + box[2] && box[1] < b[1] + b[3] && b[1] < box[1] + box[3])) continue;
+    taken.push(box);
+    ctx.fillStyle = '#000'; ctx.beginPath(); ctx.arc(tx, ty, 3, 0, 7); ctx.fill(); ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(tx, ty, 1.8, 0, 7); ctx.fill();
+    ctx.textAlign = right ? 'left' : 'right'; ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,.8)'; const lx = right ? tx + 6 : tx - 6;
+    ctx.strokeText(name, lx, ty); ctx.fillStyle = '#fff'; ctx.fillText(name, lx, ty);
+  }
+  // You are here.
+  const X = W / 2, Y = H / 2;
+  ctx.lineWidth = 2.5; ctx.strokeStyle = '#000'; ctx.beginPath(); ctx.arc(X, Y, 9, 0, 7); ctx.stroke();
+  ctx.lineWidth = 1.5; ctx.strokeStyle = '#fff'; ctx.beginPath(); ctx.arc(X, Y, 9, 0, 7); ctx.moveTo(X - 15, Y); ctx.lineTo(X - 4, Y); ctx.moveTo(X + 4, Y); ctx.lineTo(X + 15, Y); ctx.moveTo(X, Y - 15); ctx.lineTo(X, Y - 4); ctx.moveTo(X, Y + 4); ctx.lineTo(X, Y + 15); ctx.stroke();
+  ctx.font = '600 12px system-ui, sans-serif'; ctx.textBaseline = 'middle';
+  const label = (t, x, y, a = 'left') => { ctx.textAlign = a; ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,.85)'; ctx.strokeText(t, x, y); ctx.fillStyle = '#fff'; ctx.fillText(t, x, y); };
+  label('You', X + 13, Y - 12);
+  // Scale bar and north.
+  const kmPerPx = (2 * hLat * 111.2) / H, nice = [5, 10, 20, 25, 50, 100, 200].find((k) => k / kmPerPx > W * 0.18) || 200, len = nice / kmPerPx;
+  ctx.lineWidth = 3; ctx.strokeStyle = '#000'; ctx.beginPath(); ctx.moveTo(10, H - 12); ctx.lineTo(10 + len, H - 12); ctx.stroke();
+  ctx.lineWidth = 1.5; ctx.strokeStyle = '#fff'; ctx.beginPath(); ctx.moveTo(10, H - 12); ctx.lineTo(10 + len, H - 12); ctx.stroke();
+  label(`${nice} km`, 10, H - 24); label('N ↑', W - 10, 14, 'right');
 }
 async function getGPS() {
   toast('Getting GPS fix…', 8000);
@@ -3440,7 +3520,7 @@ function openSkyCheck() {
   show();
   $('#sq-ok').onclick = () => {
     const m = SKY_LEVELS[lv][0], [label, means] = skyLabel(m);
-    state.skyq = { nelm: m, label, when: Date.now(), lat: state.site.lat, lon: state.site.lon, twilight: sun > -12 }; planRows = null; save(); if (tab === 'plan') renderPlan();
+    state.skyq = { nelm: m, label, when: Date.now(), lat: state.site.lat, lon: state.site.lon, twilight: sun > -12 }; planRows = null; rateCache.clear(); save(); if (tab === 'plan') renderPlan(); if (tab === 'setup') renderLightHere();
     card.innerHTML = `<h3 style="margin-top:0">${label}</h3><p>Faintest stars you can see: about magnitude ${m.toFixed(1)}.</p><p class="small">${means}</p>
       <button id="sq-done" class="primary" style="width:100%">${flow ? 'Continue' : 'Done'}</button>`;
     $('#sq-done').onclick = () => { if (flow) return flowNext(); box.classList.add('hidden'); rateCache.clear(); if (tab === 'more') renderMore(); if (tab === 'find') renderFind(); };

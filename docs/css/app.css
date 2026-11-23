@@ -428,3 +428,9 @@ header#status .stbtn { max-width: 28%; padding: 4px 4px; }
 .camwin .hzbar { margin: 2px 0 4px; }
 .camwin button { width: 100%; min-height: 48px; }
 body.camwin-open { overflow: hidden; }
+
+/* ---- Light pollution here (Setup → Location) */
+.lpmap { display: block; width: 100%; border-radius: 10px; margin: 8px 0 6px; background: #141828; }
+.lpleg { display: flex; justify-content: space-between; gap: 2px; font-size: 11px; opacity: .8; }
+.lpleg span { display: flex; flex-direction: column; align-items: center; flex: 1; }
+.lpleg i { display: block; width: 100%; height: 8px; border-radius: 2px; margin-bottom: 2px; box-shadow: 0 0 0 1px rgba(255,255,255,.15) inset; }

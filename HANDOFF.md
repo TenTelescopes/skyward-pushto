@@ -406,4 +406,10 @@ unrelated extra star in the object-page sentence. Still open with Bryan: whether
   map with no sky check (Build 96 regression); the start screen and ratings now refresh when the map loads
   (`rateCache` was keeping ratings made with the default sky); sky names now follow the Bortle class
   (`skyLabel` uses `bortleOfNelm`), and the Plan sky picker lists Bortle 9 to 1.
-- Icon (same build): the Ten Telescopes "Ten" mark from the website header (T drawn as a Newtonian spider star), white on the app's night-blue gradient; the TELESCOPES line is left off so it stays legible at icon size. Source: website header PNG; build script inline (PIL), not kept.
+- Icon (same build): the Ten Telescopes "Ten" mark from the website header (T drawn as a Newtonian spider star) in white, with "Skyward" (Inter Bold, gold) and "Push-To" (Inter Regular, white) below, on the app's night-blue gradient. Launch screen: same, centred small enough to survive the portrait crop.
+
+## Build 99 (Nov 22)
+- Light pollution here: More → Telescope, eyepieces, location → under Location. Map estimate (Bortle,
+  SQM, limiting magnitude), the sky darkness check result if any, and a map of the area coloured by Bortle class
+  (interpolated from data/skyglow.bin, 3 zoom levels ~110/280/670 km tall, "You" marker, scale bar, ~65 town labels
+  in `LP_TOWNS` with overlap skipping). `renderLightHere`, `drawLightMap` in main.js; `skyGlowGrid`, `cellSqm` in skyglow.js.

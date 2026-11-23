@@ -23,6 +23,15 @@ export async function loadSkyGlow(url = 'data/skyglow.bin') {
   return loading;
 }
 
+/** The loaded map (or null), for drawing it. */
+export function skyGlowGrid() { return grid; }
+
+/** SQM of one map cell, or null where the map has no data. */
+export function cellSqm(g, row, col) {
+  if (row < 0 || col < 0 || row >= g.rows || col >= g.cols) return null;
+  const v = g.data[row * g.cols + col]; return v ? 16 + (v - 1) / 40 : null;
+}
+
 export function parseSkyGlow(b) {
   if (b.length < 9 || String.fromCharCode(b[0], b[1], b[2], b[3]) !== 'SKYG' || b[4] !== 1) return null;
   const n = b[5] | (b[6] << 8) | (b[7] << 16) | (b[8] << 24);
