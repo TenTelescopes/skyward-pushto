@@ -326,13 +326,15 @@ function askLocation(dest) {
           <label class="row"><span>Longitude (°E, west is −)</span><input id="loc-lon" inputmode="decimal" placeholder="-80.25"></label>
           <div class="btnrow"><button id="loc-set">Use these</button></div></details>
         <div class="btnrow"><button id="loc-skip">Not now (use Toronto)</button></div>
+        <div class="btnrow"><button id="loc-never" class="mini">Don't ask again</button></div>
         <p class="muted small" style="margin-bottom:0">It stays on this phone. GPS works with no cell signal.</p>`;
     dlg().classList.remove('hidden');
-    if (ok) { $('#loc-go').onclick = () => { closeDlg(); launch(dest); }; return; }
+    if (ok) { $('#loc-go').onclick = () => { closeDlg(); if (dest) launch(dest); else renderLaunch(); }; return; }
     $('#loc-gps').onclick = async () => { $('#loc-gps').textContent = 'Finding you…'; getGPS(); const t0 = Date.now(); while (!siteKnown() && Date.now() - t0 < 32000 && !dlg().classList.contains('hidden')) await new Promise((r) => setTimeout(r, 250)); if (!dlg().classList.contains('hidden')) show(); };
     $('#loc-set').onclick = () => { const la = parseFloat($('#loc-lat').value), lo = parseFloat($('#loc-lon').value); if (!(Math.abs(la) <= 90) || !(Math.abs(lo) <= 180)) return toast('Latitude is between −90 and 90, longitude between −180 and 180.', 4000);
       state.site = { lat: la, lon: lo, elev: state.site.elev || 0, source: 'entered manually' }; sky.setSite(la, lo, state.site.elev); planRows = null; rateCache.clear(); siteMoved(); save(); renderLaunch(); show(); };
-    $('#loc-skip').onclick = () => { locAsked = true; closeDlg(); launch(dest); };
+    $('#loc-skip').onclick = () => { locAsked = true; closeDlg(); if (dest) launch(dest); else renderLaunch(); };      // asks again next time the app opens
+    $('#loc-never').onclick = () => { locAsked = true; state.locNever = true; save(); closeDlg(); if (dest) launch(dest); else renderLaunch(); toast('OK. You can set your location any time under More → Telescope, eyepieces, location.', 4500); };
   };
   show();
 }
@@ -403,6 +405,7 @@ function renderPlan() {
         <div class="muted small">${esc(skyName)} · Moon ${moonTxt}</div>
         <div class="muted small">Sunset ${hm(n.set)} · fully dark ${hm(n.astro)} – ${hm(n.astroAm)}${n.set && start < n.set ? ' · <b>you start before sunset</b>' : ''}</div></div>
         <button id="pl-edit" class="mini">${planEdit ? 'Done' : 'Change'}</button></div>
+      <div class="sess hzrow"><div class="muted small">📍 ${whereText()}</div><button id="pl-loc" class="mini">Update location</button></div>
       <div class="sess hzrow"><div class="muted small">${placeLabel() ? hzLine() : `Blocked sky: ${hzLine()}`}</div><button id="pl-hz" class="mini">${horizonNow() ? 'Change' : 'Trace it'}</button></div>
       <div id="pl-form" class="${planEdit ? '' : 'hidden'}" style="margin-top:8px">
         <div class="btnrow"><button id="pl-dark" class="mini">Start at full dark (${hm(n.astro || n.naut)})</button><button id="pl-now" class="mini">Start now</button></div>
@@ -434,6 +437,7 @@ function renderPlan() {
     <div class="chips" id="pl-sort">${[['top', 'Top picks'], ['time', 'Looks best'], ['alt', 'Highest'], ['name', 'Catalog #']].map(([k, l]) => `<button data-s="${k}" class="${planSort === k ? 'on' : ''}">${l}</button>`).join('')}</div>
     <ul class="list" id="pl-sugg"><li class="muted">Working it out…</li></ul>`;
   $('#pl-hz').onclick = () => openHorizon('plan');
+  wireUpdateLoc($('#pl-loc'));
   $('#pl-notes').oninput = (e) => { P.notes = e.target.value; save(); };
   $('#pl-notes').onchange = () => { const y = $('main').scrollTop; renderPlan(); $('main').scrollTop = y; };
   $('#pl-rename').onclick = async () => { const auto = planAutoName(new Date(P.start), planWhere(P)), n = await askText('Name this plan', planTitle(P), { hint: 'Leave it as it is to keep the automatic name.' }); if (n == null) return;
@@ -502,8 +506,16 @@ const hzSig = () => (state.horizon ? state.horizon.when || 1 : 0);
 // The sky's darkness: the observer's own check if there is one, else the light-pollution map's estimate for the site,
 // else a suburban guess.
 function mapSky() { return state && state.site ? skyGlowAt(state.site.lat, state.site.lon) : null; }
-function skyNelm() { const m = state.skyq ? null : mapSky(); return state.skyq ? state.skyq.nelm : m ? m.nelm : DEFAULT_NELM; }
-function skyCheckName() { return `${state.skyq.label} (about Bortle ${bortleOfNelm(state.skyq.nelm)})`; }
+/** The darkest picture of the sky darkness check (all seven dipper stars and more) means "this dark or darker": the check
+ *  can't tell darker skies apart. There, if the light-pollution map says darker still, go by the map. */
+const checkTop = () => SKY_LEVELS[SKY_LEVELS.length - 1][0];
+function checkNelm(q = state.skyq) {
+  if (!q) return null;
+  if (q.nelm >= checkTop() - 1e-6) { const mp = skyGlowAt(q.lat ?? state.site.lat, q.lon ?? state.site.lon); if (mp && mp.nelm > q.nelm) return mp.nelm; }
+  return q.nelm;
+}
+function skyNelm() { const m = state.skyq ? null : mapSky(); return state.skyq ? checkNelm() : m ? m.nelm : DEFAULT_NELM; }
+function skyCheckName() { return `${state.skyq.label} (about Bortle ${bortleOfNelm(checkNelm())})`; }
 function skyGuessName() { const m = mapSky(); return m ? `${skyLabel(m.nelm)[0]} (light-pollution map, about Bortle ${m.bortle})` : 'Suburban sky (a guess)'; }
 let planDarkNight = null, planSig = '';
 const rowFor = (key) => computePlanRows().find((r) => r.key === key) || null;
@@ -2498,7 +2510,7 @@ function renderSetup() {
     <label class="row"><span>Longitude (°E, west is −)</span><input id="s-lon" type="number" inputmode="decimal" step="0.0001" value="${state.site.lon}"></label>
     <label class="row"><span>Elevation (m)</span><input id="s-el" type="number" inputmode="decimal" value="${state.site.elev}"></label>
     <p class="muted small">Source: ${esc(state.site.source)}. GPS works with no cell signal.</p>
-    <div class="btnrow"><button id="s-gps">Use GPS</button></div>
+    <div class="btnrow"><button id="s-gps">Update location (GPS)</button></div>
     <div id="s-lp"></div>
 
     <h2>Display</h2>
@@ -2553,28 +2565,34 @@ const LP_SPANS = [0.5, 1.25, 3];
 // Towns to label on the light-pollution map so you can find your way around it (largest first; labels that would overlap are skipped).
 const LP_TOWNS = [['Chicago', 41.88, -87.63], ['New York', 40.71, -74.01], ['Toronto', 43.65, -79.38], ['Philadelphia', 39.95, -75.17], ['Montréal', 45.50, -73.57], ['Washington', 38.91, -77.04], ['Atlanta', 33.75, -84.39], ['Boston', 42.36, -71.06], ['Detroit', 42.33, -83.05], ['Dallas', 32.78, -96.80], ['Minneapolis', 44.98, -93.27], ['St. Louis', 38.63, -90.20], ['Baltimore', 39.29, -76.61], ['Charlotte', 35.23, -80.84], ['Pittsburgh', 40.44, -79.99], ['Cincinnati', 39.10, -84.51], ['Kansas City', 39.10, -94.58], ['Cleveland', 41.50, -81.69], ['Columbus', 39.96, -83.00], ['Indianapolis', 39.77, -86.16], ['Nashville', 36.16, -86.78], ['Ottawa', 45.42, -75.70], ['Milwaukee', 43.04, -87.91], ['Louisville', 38.25, -85.76], ['Memphis', 35.15, -90.05], ['Richmond', 37.54, -77.44], ['Raleigh', 35.78, -78.64], ['Oklahoma City', 35.47, -97.52], ['Buffalo', 42.89, -78.88], ['Québec', 46.81, -71.21], ['Winnipeg', 49.90, -97.14], ['Hamilton', 43.26, -79.87], ['Omaha', 41.26, -95.93], ['Rochester', 43.16, -77.61], ['Birmingham', 33.52, -86.80], ['Jacksonville', 30.33, -81.66], ['Grand Rapids', 42.96, -85.67], ['Toledo', 41.65, -83.54], ['Des Moines', 41.59, -93.62], ['Kitchener', 43.45, -80.49], ['London', 42.98, -81.25], ['Albany', 42.65, -73.76], ['Syracuse', 43.05, -76.15], ['Windsor', 42.31, -83.04], ['Madison', 43.07, -89.40], ['Lansing', 42.73, -84.56], ['Oshawa', 43.90, -78.86], ['Flint', 43.01, -83.69], ['Barrie', 44.39, -79.69], ['Guelph', 43.55, -80.25], ['Kingston', 44.23, -76.49], ['Erie', 42.13, -80.09], ['Green Bay', 44.51, -88.01], ['Sudbury', 46.49, -80.99], ['Duluth', 46.79, -92.10], ['Burlington', 44.48, -73.21], ['Thunder Bay', 48.38, -89.25], ['Peterborough', 44.30, -78.32], ['Niagara Falls', 43.09, -79.08], ['Sarnia', 42.97, -82.40], ['Sault Ste. Marie', 46.52, -84.33], ['North Bay', 46.31, -79.46], ['Traverse City', 44.76, -85.62], ['Orillia', 44.61, -79.42], ['Owen Sound', 44.57, -80.94], ['Huntsville', 45.33, -79.22]];                     // half-height of the map in degrees of latitude: ~55, 140, 330 km across
 let lpSpan = 1;
+/** Setup → Location: one line, pointing to the full picture in the sky darkness check. */
 function renderLightHere() {
   const el = $('#s-lp'); if (!el) return;
   const g = skyGlowGrid();
-  if (!g) { el.innerHTML = '<p class="muted small">Loading the light-pollution map…</p>'; loadSkyGlow().then((x) => { if (x && $('#s-lp')) renderLightHere(); else if ($('#s-lp')) $('#s-lp').innerHTML = ''; }); return; }
-  const here = skyGlowAt(state.site.lat, state.site.lon, g), sq = state.skyq;
-  const checkLine = sq ? `<p class="small">Your sky darkness check (${esc(shortDate(sq.when))}): <b>${esc(sq.label)}</b>, about Bortle ${bortleOfNelm(sq.nelm)}, stars to magnitude ${sq.nelm.toFixed(1)}. The app uses this, not the map.</p>` : '';
-  if (!here) {
-    el.innerHTML = `<h3>Light pollution here</h3><p class="muted small">This spot is outside the built-in light-pollution map (it covers about 30°–50° N, 70°–100° W). A sky darkness check measures your sky anywhere.</p>${checkLine}<div class="btnrow"><button id="s-lpcheck">Sky darkness check</button></div>`;
-  } else {
-    el.innerHTML = `<h3>Light pollution here</h3>
-      <p class="small"><b>About Bortle ${here.bortle}</b> — ${BORTLE_NAME[here.bortle].toLowerCase()}. Sky brightness about ${here.sqm.toFixed(1)} mag/arcsec², stars to about magnitude ${here.nelm.toFixed(1)} overhead on a clear moonless night.</p>
-      ${checkLine}
-      <canvas id="s-lpmap" class="lpmap" aria-label="Map of estimated sky brightness around you"></canvas>
-      <div class="lpleg">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map((b) => `<span><i style="background:${BORTLE_COL[b]}"></i>${b}</span>`).join('')}</div>
-      <p class="muted small">Bortle class, 1 darkest. The bright patches are towns: their light glows in the sky for tens of kilometres around them. Estimated from NASA Black Marble satellite night lights (${g.year || 'recent'}), in 5 km squares, so it can't show the dark side of a hill or a park in town. A sky darkness check measures your actual sky.</p>
-      <div class="btnrow"><button id="s-lpless">Closer</button><button id="s-lpmore">Wider</button><button id="s-lpcheck">Sky darkness check</button></div>`;
-    drawLightMap($('#s-lpmap'), g);
-    $('#s-lpless').disabled = lpSpan === 0; $('#s-lpmore').disabled = lpSpan === LP_SPANS.length - 1;
-    $('#s-lpless').onclick = () => { lpSpan = Math.max(0, lpSpan - 1); renderLightHere(); };
-    $('#s-lpmore').onclick = () => { lpSpan = Math.min(LP_SPANS.length - 1, lpSpan + 1); renderLightHere(); };
-  }
+  if (!g) { loadSkyGlow().then((x) => { if (x && $('#s-lp')) renderLightHere(); }); el.innerHTML = ''; return; }
+  const here = skyGlowAt(state.site.lat, state.site.lon, g);
+  el.innerHTML = `<p class="small">Light pollution here: ${here ? `<b>about Bortle ${here.bortle}</b> (map estimate)` : 'outside the built-in map'}${state.skyq ? ` · your check: about Bortle ${bortleOfNelm(checkNelm())}` : ''}</p>
+    <div class="btnrow"><button id="s-lpcheck">Your sky: map and darkness check</button></div>`;
   $('#s-lpcheck').onclick = () => openSkyCheck();
+}
+/** The light-pollution picture for this spot (summary, the sky check if any, and the map) into element el. */
+function lightHereHTML(g, here) {
+  const sq = state.skyq;
+  const checkLine = sq ? `<p class="small">Your sky darkness check (${esc(shortDate(sq.when))}): <b>${esc(sq.label)}</b>, about Bortle ${bortleOfNelm(checkNelm(sq))}, stars to magnitude ${checkNelm(sq).toFixed(1)}. The app uses your check, not the map.</p>` : '';
+  if (!here) return `<p class="muted small">This spot is outside the built-in light-pollution map (it covers about 30°–50° N, 70°–100° W). The 30-second check below measures your sky anywhere.</p>${checkLine}`;
+  return `<p class="small">Light-pollution map: <b>about Bortle ${here.bortle}</b> — ${BORTLE_NAME[here.bortle].toLowerCase()}. Sky brightness about ${here.sqm.toFixed(1)} mag/arcsec², stars to about magnitude ${here.nelm.toFixed(1)} overhead on a clear moonless night.</p>
+    ${checkLine}
+    <canvas class="lpmap" aria-label="Map of estimated sky brightness around you"></canvas>
+    <div class="lpleg">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map((b) => `<span><i style="background:${BORTLE_COL[b]}"></i>${b}</span>`).join('')}</div>
+    <div class="btnrow"><button class="lpless">Closer</button><button class="lpmore">Wider</button></div>
+    <p class="muted small">Bortle class, 1 darkest. The bright patches are towns: their light glows in the sky for tens of kilometres around them. Estimated from NASA Black Marble satellite night lights (${g.year || 'recent'}) in 5 km squares, so it can't show the dark side of a hill or a park in town. The 30-second check measures your actual sky.</p>`;
+}
+function wireLightMap(el, g) {
+  const cv = el.querySelector('.lpmap'); if (!cv) return;
+  const draw = () => { drawLightMap(cv, g); el.querySelector('.lpless').disabled = lpSpan === 0; el.querySelector('.lpmore').disabled = lpSpan === LP_SPANS.length - 1; };
+  el.querySelector('.lpless').onclick = () => { lpSpan = Math.max(0, lpSpan - 1); draw(); };
+  el.querySelector('.lpmore').onclick = () => { lpSpan = Math.min(LP_SPANS.length - 1, lpSpan + 1); draw(); };
+  draw();
 }
 function drawLightMap(cv, g) {
   const W = cv.clientWidth || 320, H = Math.round(W * 0.75), dpr = Math.min(3, window.devicePixelRatio || 1);
@@ -2623,18 +2641,43 @@ function drawLightMap(cv, g) {
   ctx.lineWidth = 1.5; ctx.strokeStyle = '#fff'; ctx.beginPath(); ctx.moveTo(10, H - 12); ctx.lineTo(10 + len, H - 12); ctx.stroke();
   label(`${nice} km`, 10, H - 24); label('N ↑', W - 10, 14, 'right');
 }
-async function getGPS() {
-  toast('Getting GPS fix…', 8000);
+/** At start-up: refresh the location from GPS without a fuss when the phone already allows it, so the light-pollution
+ *  estimate (and everything else) is for where you are tonight. First time ever: ask, once, with the usual explanation. */
+async function autoLocate() {
+  let granted = false;
+  try {
+    const G = cap('Geolocation');
+    if (G && G.checkPermissions) granted = (await G.checkPermissions()).location === 'granted';
+    else if (navigator.permissions && navigator.permissions.query) granted = (await navigator.permissions.query({ name: 'geolocation' })).state === 'granted';
+  } catch (e) { /* unknown: treat as not granted */ }
+  if (granted) return getGPS(true);
+  if (!siteKnown() && !locAsked && !state.locNever) askLocation(null);
+}
+/** Where the app thinks you are, in a few words, for the "Update location" lines. */
+function whereText() {
+  if (!siteKnown()) return 'Toronto (not set)';
+  const name = placeLabel(), gps = /^GPS/.test(state.site.source || '') ? /, (.+)$/.exec(state.site.source) : null;
+  const when = gps && !Number.isNaN(Date.parse(gps[1])) ? new Date(gps[1]) : null;
+  const age = when ? (Date.now() - when < 864e5 && new Date().toDateString() === when.toDateString() ? `GPS today ${hm(when)}` : `GPS ${shortDate(when)}`) : 'typed in';
+  return `${name ? esc(name) + ' · ' : ''}${coordText(state.site.lat, state.site.lon)} · ${age}`;
+}
+/** An "Update location" button: GPS now, then whatever shows the location redraws itself (see getGPS). */
+function wireUpdateLoc(btn) {
+  if (!btn) return;
+  btn.onclick = () => { btn.disabled = true; btn.textContent = 'Finding you…'; getGPS(); setTimeout(() => { if (btn.isConnected) { btn.disabled = false; btn.textContent = 'Update location'; } }, 32000); };
+}
+async function getGPS(quiet = false) {
+  if (!quiet) toast('Getting GPS fix…', 8000);
   const done = (lat, lon, elev, acc) => {
     state.site = { lat: +lat.toFixed(5), lon: +lon.toFixed(5), elev: Math.round(elev || state.site.elev || 0), source: `GPS ±${Math.round(acc)} m, ${new Date().toLocaleString()}` };
-    sky.setSite(state.site.lat, state.site.lon, state.site.elev); planRows = null; rateCache.clear(); siteMoved(); save(); toast('Location set'); if (tab === 'setup') renderSetup(); if (tab === 'find') renderFind(); if (!$('#gate').classList.contains('hidden')) renderLaunch();
+    sky.setSite(state.site.lat, state.site.lon, state.site.elev); planRows = null; rateCache.clear(); siteMoved(); save(); if (!quiet) toast('Location set'); if (tab === 'setup') renderSetup(); if (tab === 'find') renderFind(); if (tab === 'plan') renderPlan(); if (!$('#gate').classList.contains('hidden')) renderLaunch(); if (!$('#skycheck').classList.contains('hidden') && $('#sq-lp')) openSkyCheck();
   };
   try {
     const G = cap('Geolocation');
     if (G) { await G.requestPermissions?.(); const p = await G.getCurrentPosition({ enableHighAccuracy: true, timeout: 30000 }); return done(p.coords.latitude, p.coords.longitude, p.coords.altitude, p.coords.accuracy); }
   } catch (e) { /* fall back to web API */ }
-  if (!navigator.geolocation) return toast('No location service on this device');
-  navigator.geolocation.getCurrentPosition((p) => done(p.coords.latitude, p.coords.longitude, p.coords.altitude, p.coords.accuracy), (e) => toast('Location failed: ' + e.message), { enableHighAccuracy: true, timeout: 30000, maximumAge: 600000 });
+  if (!navigator.geolocation) return quiet ? null : toast('No location service on this device');
+  navigator.geolocation.getCurrentPosition((p) => done(p.coords.latitude, p.coords.longitude, p.coords.altitude, p.coords.accuracy), (e) => (quiet ? null : toast('Location failed: ' + e.message)), { enableHighAccuracy: true, timeout: 30000, maximumAge: quiet ? 600000 : 0 });   // a button press wants a fresh fix
 }
 
 // ---------------------------------------------------------------- status + loop
@@ -2880,7 +2923,9 @@ function tonightLine() {
     const moon = `Moon ${Math.round(m.frac * 100)}% lit${m.alt > 0 ? (n.moonSet && n.moonSet > now ? ', sets ' + hm(n.moonSet) : ', up') : (n.moonRise && n.moonRise > now ? ', rises ' + hm(n.moonRise) : ', down')}`;
     const at = dark && now < dark ? dark : now;
     const up = ['Venus', 'Jupiter', 'Saturn', 'Mars'].filter((p) => { const o = sky.objects.find((x) => x.key === 'pl:' + p); return o && sky.altAz(o, at).alt > 15; });
-    return [when, moon, up.length ? `${up.join(' and ')} ${up.length > 1 ? 'are' : 'is'} up` : ''].filter(Boolean).join(' · ') + (siteKnown() ? '' : ' · worked out for Toronto until you set your location');
+    const mp = state.skyq ? null : mapSky();
+    const bort = state.skyq ? `your sky about Bortle ${bortleOfNelm(checkNelm())}` : mp ? `sky about Bortle ${mp.bortle} (light-pollution map)` : '';
+    return [when, moon, up.length ? `${up.join(' and ')} ${up.length > 1 ? 'are' : 'is'} up` : '', bort].filter(Boolean).join(' · ');
   } catch (e) { return ''; }
 }
 function planProgress() {
@@ -2902,6 +2947,7 @@ function renderLaunch() {
   const act = ACTIVITIES.some((x) => x[0] === state.launchAct) ? state.launchAct : 'observe', stops = PATH[act];
   $('#launch').innerHTML = `<div class="lhead"><h1>Skyward <span>Push-To</span></h1><button class="hbtn shadebtn" id="l-shade" aria-label="Day or night look"></button></div>
     <p class="tonight">${esc(tonightLine())}</p>
+    <div class="whereline"><span class="muted small">📍 ${whereText()}</span><button id="l-loc" class="mini">Update location</button></div>
     ${pp && pp.next ? `<button id="l-resume" class="primary" style="width:100%;margin:6px 0 2px">Carry on with your plan — ${pp.done} of ${pp.total} done</button>` : ''}
     <h3 class="lq">What are we up to?</h3>
     <div class="lgrid">${ACTIVITIES.map(([k, t, sub, ic]) => `<button class="act${k === act ? ' on' : ''}" data-act="${k}"><svg class="ic" viewBox="0 0 24 24">${ic}</svg><b>${t}</b><span class="muted">${sub}</span></button>`).join('')}</div>
@@ -2922,6 +2968,7 @@ function renderLaunch() {
   $('#launch').querySelectorAll('[data-act]').forEach((b) => b.onclick = () => { const g = $('#gate'), y = g.scrollTop; state.launchAct = b.dataset.act; save(); renderLaunch(); g.scrollTop = y; });
   $('#l-go').onclick = () => launch(act);
   $('#l-hz').onclick = (e) => { e.preventDefault(); e.stopPropagation(); openHorizon('start'); };
+  wireUpdateLoc($('#l-loc'));
   $('#l-shade').onclick = (e) => { e.stopPropagation(); openShade(); };
   if ($('#l-resume')) $('#l-resume').onclick = () => launch('resume');
   applyTheme();
@@ -3397,7 +3444,7 @@ function askDock(dest) {
   ask(); el.classList.remove('hidden');
 }
 function launch(dest) {
-  if (!siteKnown() && !locAsked) { askLocation(dest); return; }
+  if (!siteKnown() && !locAsked && !state.locNever) { askLocation(dest); return; }
   if (dest !== 'plan' && dest !== 'explore' && !state.dock) { askDock(dest); return; }
   initSound();                                    // audio can only start from a tap
   state.seenIntro = true;
@@ -3471,7 +3518,25 @@ function skyLabel(m) {
     : b === 3 ? ['Rural sky', 'Faint galaxies and large nebulae — a great night.']
     : ['Dark sky', 'Faint galaxies, large nebulae and the Milky Way full of detail — a superb night.'];
 }
+/** Your sky: what the light-pollution map says here, your last check, and the 30-second check itself. */
 function openSkyCheck() {
+  const box = $('#skycheck'), card = $('#skycheck-card'); box.classList.remove('hidden');
+  const show = (g) => {
+    const here = g ? skyGlowAt(state.site.lat, state.site.lon, g) : null;
+    card.innerHTML = `<h3 style="margin-top:0">Your sky</h3>
+      <div class="whereline"><span class="muted small">📍 ${whereText()}</span><button id="sq-loc" class="mini">Update location</button></div>
+      <div id="sq-lp">${g ? lightHereHTML(g, here) : '<p class="muted small">Loading the light-pollution map…</p>'}</div>
+      <button id="sq-go" class="primary" style="width:100%;margin-top:8px">${state.skyq ? 'Check again — 30 seconds' : 'Do the 30-second darkness check'}</button>
+      <button id="sq-close" style="width:100%;margin-top:6px">${flow ? 'Skip' : 'Close'}</button>`;
+    if (g) wireLightMap($('#sq-lp'), g);
+    $('#sq-go').onclick = () => runSkyCheck();
+    wireUpdateLoc($('#sq-loc'));
+    $('#sq-close').onclick = () => (flow ? flowNext() : box.classList.add('hidden'));
+  };
+  const g = skyGlowGrid(); show(g);
+  if (!g) loadSkyGlow().then((x) => { if (x && !box.classList.contains('hidden') && $('#sq-lp')) show(x); });
+}
+function runSkyCheck() {
   const box = $('#skycheck'), card = $('#skycheck-card'); box.classList.remove('hidden');
   if (state.site.lat < 5) {
     card.innerHTML = `<h3 style="margin-top:0">Sky darkness check</h3><p>The Little Dipper isn't visible from the southern hemisphere, so this check isn't available here yet.</p><button id="sq-skip" class="primary" style="width:100%">Continue</button>`;
@@ -3508,7 +3573,7 @@ function openSkyCheck() {
     <button id="sq-ok" class="primary" style="width:100%;margin-top:8px">That's my sky — OK</button>
     <button id="sq-skip" style="width:100%;margin-top:6px">Can't see it (cloud, trees, not dark) — skip</button>`;
   const show = () => {
-    $('#sq-svg').innerHTML = chart(); $('#sq-title').textContent = SKY_LEVELS[lv][2]; $('#sq-cap').textContent = SKY_LEVELS[lv][3];
+    $('#sq-svg').innerHTML = chart(); $('#sq-title').textContent = SKY_LEVELS[lv][2]; $('#sq-cap').textContent = `${SKY_LEVELS[lv][3]} · about Bortle ${bortleOfNelm(SKY_LEVELS[lv][0])}${lv === SKY_LEVELS.length - 1 ? ' or darker' : ''}`;
     $('#sq-dots').innerHTML = SKY_LEVELS.map((_, i) => `<i class="${i === lv ? 'on' : ''}"></i>`).join('');
     $('#sq-less').disabled = lv === 0; $('#sq-more').disabled = lv === SKY_LEVELS.length - 1;
   };
@@ -3519,9 +3584,14 @@ function openSkyCheck() {
   svg.addEventListener('touchend', (e) => { if (sx == null) return; const d = e.changedTouches[0].clientX - sx; sx = null; if (Math.abs(d) > 30) { lv = Math.max(0, Math.min(SKY_LEVELS.length - 1, lv + (d < 0 ? 1 : -1))); show(); } });
   show();
   $('#sq-ok').onclick = () => {
-    const m = SKY_LEVELS[lv][0], [label, means] = skyLabel(m);
-    state.skyq = { nelm: m, label, when: Date.now(), lat: state.site.lat, lon: state.site.lon, twilight: sun > -12 }; planRows = null; rateCache.clear(); save(); if (tab === 'plan') renderPlan(); if (tab === 'setup') renderLightHere();
-    card.innerHTML = `<h3 style="margin-top:0">${label}</h3><p>Faintest stars you can see: about magnitude ${m.toFixed(1)}.</p><p class="small">${means}</p>
+    const m = SKY_LEVELS[lv][0], mp = skyGlowAt(state.site.lat, state.site.lon);
+    const q = { nelm: m, when: Date.now(), lat: state.site.lat, lon: state.site.lon, twilight: sun > -12 }, eff = checkNelm(q), top = lv === SKY_LEVELS.length - 1;
+    const [label, means] = skyLabel(eff); q.label = label;
+    state.skyq = q; planRows = null; rateCache.clear(); save(); if (tab === 'plan') renderPlan(); if (tab === 'setup') renderLightHere();
+    const verdict = top
+      ? `Faintest stars you can see: magnitude ${m.toFixed(1)} or fainter — Bortle ${bortleOfNelm(m)} or darker. This check can't tell darker skies apart${mp && eff > m ? `, so the app goes by the light-pollution map here: about Bortle ${mp.bortle}` : ''}.`
+      : `Faintest stars you can see: about magnitude ${m.toFixed(1)} — about Bortle ${bortleOfNelm(m)}.${mp ? ` The light-pollution map estimated about Bortle ${mp.bortle} here.` : ''}`;
+    card.innerHTML = `<h3 style="margin-top:0">${label}</h3><p>${verdict}</p><p class="small">${means}</p>
       <button id="sq-done" class="primary" style="width:100%">${flow ? 'Continue' : 'Done'}</button>`;
     $('#sq-done').onclick = () => { if (flow) return flowNext(); box.classList.add('hidden'); rateCache.clear(); if (tab === 'more') renderMore(); if (tab === 'find') renderFind(); };
   };
@@ -3614,6 +3684,7 @@ async function init() {
   $('#fs-close').onclick = () => $('#fs-help').classList.add('hidden');
   applyTheme();
   renderLaunch();
+  setTimeout(() => autoLocate().catch(() => {}), 2600);   // after the splash
   $('#gate-sim').onclick = () => startSensors(true);
   $('#gate-skip').onclick = () => { $('#gate').classList.add('hidden'); if (flow && !flow.started) flowNext(); toast('Browsing without sensors — drag the sky view to look around. Pointing needs them: tap the status at the top to turn them on.', 5500); };
   if (new URLSearchParams(location.search).has('sim')) $('#gate-sim').classList.remove('hidden');

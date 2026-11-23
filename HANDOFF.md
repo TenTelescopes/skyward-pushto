@@ -409,7 +409,22 @@ unrelated extra star in the object-page sentence. Still open with Bryan: whether
 - Icon (same build): the Ten Telescopes "Ten" mark from the website header (T drawn as a Newtonian spider star) in white, with "Skyward" (Inter Bold, gold) and "Push-To" (Inter Regular, white) below, on the app's night-blue gradient. Launch screen: same, centred small enough to survive the portrait crop.
 
 ## Build 99 (Nov 22)
-- Light pollution here: More → Telescope, eyepieces, location → under Location. Map estimate (Bortle,
-  SQM, limiting magnitude), the sky darkness check result if any, and a map of the area coloured by Bortle class
-  (interpolated from data/skyglow.bin, 3 zoom levels ~110/280/670 km tall, "You" marker, scale bar, ~65 town labels
-  in `LP_TOWNS` with overlap skipping). `renderLightHere`, `drawLightMap` in main.js; `skyGlowGrid`, `cellSqm` in skyglow.js.
+- Your sky (light pollution): opening the sky darkness check (More, Plan, start-up path) now shows a "Your sky" page
+  first: the light-pollution map estimate (Bortle, SQM, limiting magnitude), your last check, and a map of the area
+  coloured by Bortle class (interpolated from data/skyglow.bin; Closer/Wider ~110/280/670 km tall; "You" marker, scale
+  bar, ~65 town labels in `LP_TOWNS`, overlaps skipped), then "Do the 30-second darkness check" (`runSkyCheck`, the old
+  check). The result page compares with the map. Setup → Location keeps one line plus a button to that page.
+  `openSkyCheck`, `runSkyCheck`, `lightHereHTML`, `wireLightMap`, `drawLightMap` in main.js; `skyGlowGrid`, `cellSqm` in skyglow.js.
+
+## Build 100 (Nov 22)
+- Start-up location: `autoLocate()` 2.6 s after launch. If the phone already allows location, a quiet GPS refresh
+  (`getGPS(true)`, no toasts); if location was never set, the "Where are you observing from?" dialog, with
+  "Use this phone's location", "Not now" (asks again next launch) and "Don't ask again" (`state.locNever`, also
+  skips the ask before the first activity; location stays settable under More → Telescope, eyepieces, location). The start screen's tonight line ends with "sky about Bortle N (light-pollution
+  map)" or "your sky about Bortle N".
+- Sky darkness check: each picture shows its Bortle class; the darkest picture reads "Bortle 5 or darker" because the
+  Little Dipper can't tell darker skies apart. There `checkNelm()` goes by the map when the map is darker (e.g.
+  Torrance: Bortle 4), and the result says so. `skyNelm()` uses `checkNelm()`.
+- "Update location" buttons (GPS, fresh fix: `maximumAge 0` when pressed) with a "📍 place · coordinates · GPS today
+  8:15 PM" line (`whereText`, `wireUpdateLoc`) on the start screen, in Plan's Tonight box and on the "Your sky" page;
+  Setup's button now reads "Update location (GPS)". `getGPS` redraws all of them when the fix arrives.
