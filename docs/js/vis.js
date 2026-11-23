@@ -107,6 +107,10 @@ function planetEp(o, scope) {
 }
 /** A pair looks comfortably split when the eyepiece shows it this far apart: 4 arcminutes (2′ is only just separable). */
 export const SPLIT_ARCSEC = 240;
+/** Apparent gap (arcseconds, as seen in the eyepiece) for a comfortable split. 4′ is plenty for a matched pair, but a
+ *  faint companion next to a bright star hides in its glare and needs more room: up to 15′ at 6 magnitudes' difference.
+ *  Polaris (18″, 2.0 and 9.1) then wants about 50×; observers report it at 37–74× in small scopes (Astronomy, Apr 2019). */
+export const splitArcsec = (dm = 0) => SPLIT_ARCSEC + Math.max(0, Math.min(4, dm - 2)) * 165;
 export const LEVEL_NAMES = ['Obvious', 'Visible', 'Challenging', 'Not now'];
 export const DOTS = ['●●●', '●●○', '●○○', '○○○'];
 const levelOf = (m) => (m >= 1.5 ? 0 : m >= 0.6 ? 1 : m >= -0.2 ? 2 : 3);
@@ -117,7 +121,7 @@ function objectGeometry(o) {
   let area = Math.PI / 4 * o.maj * (o.min || o.maj), mag = o.mag;
   // Galaxies and bright nebulae: the eye sees the bright inner part, not the catalogue's faint outer edge.
   // Use the inner quarter of the size, holding roughly a quarter of the light.
-  if (['GX', 'NB', 'CN'].includes(o.t)) { area /= 16; mag += 1.4; }
+  if (['GX', 'NB', 'CN', 'CM'].includes(o.t)) { area /= 16; mag += 1.4; }        // comets too: a brighter, condensed head in a faint coma
   // Nebula magnitudes in catalogues often measure the embedded stars, not the glow. Trust the famous (Messier)
   // ones; treat the rest as about 2 mag fainter than listed — big faint ones (Veil, North America) want a filter.
   if (['NB', 'CN'].includes(o.t) && !(o.cats || []).some((c) => /^M\d/.test(c))) mag += 2;
@@ -144,6 +148,14 @@ export function rate(o, cond, scope) {
   if (isStar && !o.show) return null;                                // alignment stars aren't targets
   // Star patterns far bigger than the widest eyepiece field are naked-eye or binocular sights, not telescope targets.
   if (o.t === 'AS' && o.maj && tooWide(o, scope)) return null;
+  if (o.shower) {                                                    // a meteor shower: how many an hour one person might see now
+    if (sunAlt > -12) return { level: 3, margin: -9, ep: null, cause: sunAlt > 0 ? 'daylight' : 'twilight', hr: 0 };
+    const Bm = moonlight({ moonAlt, moonFrac, sepDeg: moonSep, targetAlt: Math.max(alt, 30) });
+    const lm = nelmFromSky(sbFromCd(cdFromSB(skyFromNelm(nelm)) + Bm + twilight(sunAlt)));
+    const sh = o.shower, hr = sh.zhrNow * Math.sin(alt * D2R) / sh.r ** Math.max(0, 6.5 - lm);
+    const level = hr >= 15 ? 0 : hr >= 5 ? 1 : hr >= 1 ? 2 : 3;
+    return { level, margin: Math.log10(hr + 0.01), ep: null, cause: level === 3 ? 'few' : Bm > 0 && level > 0 ? 'moon' : null, hr };
+  }
   if (o.planet && DAY_PLANETS.includes(o.id)) return { level: 0, margin: 5, ep: planetEp(o, scope), cause: null };
   if (sunAlt > 0) return { level: 3, margin: -9, ep: null, cause: 'daylight' };   // with the Sun up: Moon, Venus, Jupiter, Saturn, Mars only
   if (o.planet) {
@@ -154,16 +166,16 @@ export function rate(o, cond, scope) {
   const Bsky = Bbase + Bmoon + Btw, ext = K_EXT * (airmass(alt) - 1);
   const best = (list) => list.reduce((a, b) => (b.margin > a.margin ? b : a));
   let one;
-  if (o.planet || isDouble || isStar) {
-    const mm = o.planet ? (o.mag ?? 6) : (() => { const p = (o.pairs && o.pairs[0]) || {}; const ms = String(p.mags || '').split('/').map(Number).filter((x) => !Number.isNaN(x)); return ms.length ? Math.max(...ms) : (o.mag ?? 7); })();
+  if (o.planet || isDouble || isStar || o.t === 'TR') {             // TR: a nova or supernova, a point of light
+    const mm = o.planet || o.t === 'TR' ? (o.mag ?? 6) : (() => { const p = (o.pairs && o.pairs[0]) || {}; const ms = String(p.mags || '').split('/').map(Number).filter((x) => !Number.isNaN(x)); return ms.length ? Math.max(...ms) : (o.mag ?? 7); })();
     const calc = (B) => best(starMargins(mm + ext, B, scope));
     one = calc(Bsky);
     if (isDouble) {                                                            // also needs splitting
       const p = (o.pairs && o.pairs[0]) || {}, sep = p.sep ?? o.sep;
       if (!sep) return null;
       const limit = Math.max(116 / scope.aperture, 1.5), maxM = Math.max(...mags(scope).map((x) => x.M));
-      const split = sep / limit, needM = SPLIT_ARCSEC / sep;       // enough power for a comfortable split
       const ms = String(p.mags || '').split('/').map(Number).filter((x) => !Number.isNaN(x)), dm = ms.length > 1 ? Math.abs(ms[1] - ms[0]) : 0;
+      const split = sep / limit, needM = splitArcsec(dm) / sep;     // enough power for a comfortable split
       let lv = levelOf(one.margin);
       if (split < 1 || needM > maxM * 1.3) lv = 3;
       else { if (split < 1.5 || needM > maxM) lv = Math.max(lv, 2); else if (split < 3) lv = Math.max(lv, 1); if (dm >= 3 && sep < 6) lv = Math.min(3, lv + 1); }
@@ -210,9 +222,13 @@ export function describe(o, r) {
     DS: ['Splits cleanly — look for colour', 'Splits with the higher power', 'A tough split — needs steady air'],
     PL: ['Bright and easy', 'Visible', 'Hard to spot'],
     ST: ['Bright star — look at its colour', 'Easy star', 'Faint star'],
+    CM: ['Bright fuzzy head — look for a tail', 'Soft round glow with a brighter middle', 'Faint smudge — averted vision helps'],
+    TR: ['Easy to pick out — compare it with the stars around it', 'A faint new star — check the chart closely', 'Very faint — at the limit'],
+    MS: ['Plenty of meteors — look anywhere, not at the radiant', 'Some meteors — lie back and give it 20 minutes', 'Only the odd meteor'],
   }[t] || ['Easy', 'Visible', 'Hard'];
   if (o.planet && (o.id === 'Uranus' || o.id === 'Neptune') && r.level < 3) return r.level === 1 ? 'A tiny disc, almost star-like — high power shows it is not a star' : 'Tiny and faint — hard to tell from a star';
   const why = { moon: 'Moon washes it out', twilight: 'Sky not dark yet', low: 'Low in the haze', sky: 'Light pollution', close: 'Close pair', faint: 'Faint', below: 'Below the horizon', daylight: 'Daylight', blocked: 'Behind the trees or buildings you marked' }[r.cause] || '';
+  if (o.shower) return r.level === 3 ? (r.cause === 'daylight' || r.cause === 'twilight' ? 'Not now — wait for full dark' : 'Not now — too few to be worth the wait') : `${['Plenty of meteors — look anywhere, not at the radiant', 'Some meteors — lie back and give it 20 minutes', 'Only the odd meteor'][Math.min(2, r.level)]} · about ${Math.max(1, Math.round(r.hr))} an hour${r.cause === 'moon' ? ' · the Moon hides the fainter ones' : ''}`;
   if (r.level === 3) return why ? `Not now — ${why === 'Moon washes it out' ? 'the Moon washes it out' : why.toLowerCase()}` : 'Not now';
   return `${see[Math.min(2, r.level)]}${r.level > 0 && why && r.cause !== 'faint' ? ` · ${why}` : ''}`;
 }

@@ -2,10 +2,11 @@
 import * as A from '../vendor/astronomy.mjs';
 import { DSO, DOUBLES, STARS, FIELD, LINES, ASTERISMS } from '../data/catalog.js';
 import { NAMES, STAR_NAMES, BLURBS, STAR_PAIRS } from '../data/blurbs.js';
+import { orbitRaDec } from './transients.js';
 
 export const PLANETS = ['Moon', 'Mercury', 'Venus', 'Mars', 'Jupiter', 'Saturn', 'Uranus', 'Neptune'];
 
-const TYPE_LABEL = { OC: 'Open cluster', GC: 'Globular cluster', PN: 'Planetary nebula', GX: 'Galaxy', NB: 'Nebula', DN: 'Dark nebula', CN: 'Cluster + nebula', AS: 'Asterism', DS: 'Double star', ST: 'Star', PL: 'Planet', OT: 'Other' };
+const TYPE_LABEL = { CM: 'Comet', TR: 'Nova / transient', MS: 'Meteor shower', OC: 'Open cluster', GC: 'Globular cluster', PN: 'Planetary nebula', GX: 'Galaxy', NB: 'Nebula', DN: 'Dark nebula', CN: 'Cluster + nebula', AS: 'Asterism', DS: 'Double star', ST: 'Star', PL: 'Planet', OT: 'Other' };
 export const typeLabel = (t) => TYPE_LABEL[t] || t;
 
 function j2000Vec(raDeg, decDeg) {
@@ -49,7 +50,7 @@ for (let i = 0; i < FIELD_N; i++) {
   FV[3 * i] = Math.cos(de) * Math.cos(ra); FV[3 * i + 1] = Math.cos(de) * Math.sin(ra); FV[3 * i + 2] = Math.sin(de);
 }
 const LINE_STARS = new Set(LINES.flatMap(([, seg]) => seg));
-export { LINES };
+export { LINES, j2000Vec };
 
 export class Sky {
   constructor() { this.lat = 43.65; this.lon = -79.38; this.elev = 100; this.objects = buildObjects(); this.stars = this.objects.filter((o) => o.key.startsWith('st:')); }
@@ -62,6 +63,10 @@ export class Sky {
   }
   /** Apparent (refracted) alt/az of an object at `date`. */
   altAz(o, date = new Date()) {
+    if (o.orbit) {                                     // a comet: position from its orbit for this moment
+      const c = orbitRaDec(o.orbit, date); o.mag = c.mag; o.ra = c.ra; o.dec = c.dec; o.r = c.r; o.delta = c.delta; o.v = j2000Vec(c.ra, c.dec);
+      return this.altAzRaDec(c.ra, c.dec, date);
+    }
     if (o.planet) {
       const t = A.MakeTime(date), obs = this.observer();
       const eq = A.Equator(o.id, t, obs, true, true);

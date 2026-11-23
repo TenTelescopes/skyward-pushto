@@ -444,3 +444,5 @@ body.camwin-open { overflow: hidden; }
 #st-scope span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; color: var(--fg); }
 .list.hl .hlwhy { font-style: italic; opacity: .85; margin-top: 2px; }
 .list.hl button.mini { white-space: nowrap; flex: none; }
+.gpserr { color: var(--warn, #ffb08a); margin: -4px 0 8px; }
+.list li .tap, .list li [data-goplan] { cursor: pointer; }

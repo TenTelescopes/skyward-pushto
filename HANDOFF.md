@@ -482,3 +482,36 @@ unrelated extra star in the object-page sentence. Still open with Bryan: whether
   pull request that the owner merges. Schema: { generated, validUntil, region, items: [{ id, title, start, end, look
   (eye|binoculars|telescope|any), what, why, target, source }] }. No file yet: the section stays hidden.
   The daily debrief page (feedback by taps) is a claude.ai artifact, not part of this repo.
+- Owner's phone at a lake near Haliburton (45.04 N, 78.26 W; map: Bortle 4) still showed "your sky about Bortle 9"
+  from an earlier check. `checkDoubt`: a check more than 2 mag/arcsec² brighter than the map for its spot is not used
+  (clouds, haze, Moon, a nearby light or a test run); the result page and "Your sky" say why. Update location now
+  writes why it failed under the button (`gpsError`), not only in a toast. Open question: on the owner's phone, Update
+  location left the place "typed in" after he allowed location access; the new message should show the reason.
+
+## Build 103 (Nov 23): meteor showers, northern lights, comets and novae
+- New `docs/js/transients.js`:
+  - `SHOWERS`: 12 major showers from the IMO 2026 calendar (Table 5), keyed by solar longitude so they work in any year. `activeShowers(date)` gives each active shower with a ZHR that falls off either side of the peak. `hourlyRate` = ZHR · sin(radiant altitude) / r^(6.5 − limiting magnitude).
+  - Comet positions from orbital elements: Kepler, parabolic (Barker) or hyperbolic orbits, with one light-time step. Earth's position comes from Astronomy Engine. Tested: Mars from its orbital elements lands within 0.08′ of Astronomy Engine.
+  - Comet magnitude = H + 5 log Δ + k log r.
+  - Aurora: Kp forecast from NOAA SWPC (`noaa-planetary-k-index-forecast.json`, cached 30 min). The auroral oval edge is at about 66.5 − 2.05·Kp geomagnetic latitude, and the aurora counts as visible from here when that edge comes within 5° of the observer. Toronto sits at about 52.8° geomagnetic, so Kp 5+ is needed there.
+  - Whether NOAA allows the web app to read it (CORS) is untested; if not, the aurora line simply doesn't appear.
+- `highlights.json` takes two optional lists:
+  - `comets: [{ id, name, tp, q, e, i, node, peri, H, k, coma, note, source }]`
+  - `fixed: [{ id, name, ra, dec (degrees), mag, kind, note, source }]`
+  - These become targets (`cm:` and `tr:` keys, types CM Comet / TR Nova-transient) that the app can point to and plan.
+  - The Eyepiece Daily task prompt now asks for them, taken from JPL/MPC/COBS and AAVSO/TNS.
+- Sky charts: `drawZones`
+  - Each active shower gets a 40° dashed circle around its radiant, with marching-ants dashes, a pulsing stroke and twinkling streaks inside it. It is labelled "☄︎ Geminids radiant · meteors anywhere in the dashed circle", and the labels are kept inside the round chart (`labelX`).
+  - When aurora is possible, a green dashed arc runs low in the north (azimuth 300°–60°).
+  - Seen in a browser test with a mocked Geminid night: the circle, its label and the sparks all draw. The aurora arc has not been seen yet, because the test view never faced north.
+- Plan, "Passing through" (`#pl-ev`, `fillEvents`): lists showers (peak status, best time tonight, about N an hour), comets and novae (magnitude, best time and altitude) and the aurora outlook, each with "+ Plan".
+- `rate()` gives showers a level from the hourly rate (15+ → 0, 5+ → 1, 1+ → 2).
+- Tests: `test/transients.test.mjs` (in `npm test`).
+- Plan previews: tapping a target in "Your plan" did nothing; the rows had `data-goplan` but no handler. They now open
+  the target sheet (eyepiece views, rating, best time), with arrows and swipes stepping through the plan. Not while
+  reordering. Rows in "Passing through" and "This week's highlights" that have a target open it too. A meteor shower's
+  sheet replaces the eyepiece views with a short "no telescope needed" note.
+- Double-star power for unequal pairs (`splitArcsec` in vis.js): the apparent gap wanted grows from 4′ for pairs within
+  2 magnitudes of each other to 15′ at 6 or more magnitudes apart. Polaris (18.4″, 2.0/9.1) now asks for about 49× (the
+  10 mm) instead of 13× (the 23 mm). Observers report Polaris B at 37–74× in small scopes (Astronomy, April 2019).
+  Almach goes from 26× to 38×; Albireo is unchanged.

@@ -2,7 +2,8 @@ import { PointingModel, MOUNTINGS, eulerForMounting, fitAlignment, guidance, tan
 import { emptyHorizon, hasHorizon, limitAt, blocked, setWedge, wedgeLevel, wedgeHeight, newTrace, traceAdd, traceFinish, traceCoverage, summary as horizonSummary, WEDGES, LEVELS as HZ_LEVELS, BINS as HZ_BINS } from './horizon.js';
 import { marathonList, pick as marathonPick, nightOf, syncStarFor } from './marathon.js';
 import { nearPlaces, uniqueName, relocate, planAutoName, coordText, PLACE_IDEAS, distKm } from './places.js';
-import { Sky, typeLabel, compassName, LINES } from './astro.js';
+import { Sky, typeLabel, compassName, LINES, j2000Vec } from './astro.js';
+import { activeShowers, feedObjects, loadKp, kpAt3h, auroraView, geomagLat } from './transients.js';
 import { Sensors, SimSensors } from './sensors.js';
 import { Recorder, analyzeStillness, analyzeRepeat, analyzeReversal, analyzeAccuracy, fmt, toCSV } from './tests.js';
 import { fitConsistency, pairConsistency, outliers, verdict as domeVerdict, drawDome, correctionTable, splitJumps } from './dome.js';
@@ -23,7 +24,7 @@ import { SkyCamera, NativeSkyCamera, drawResult, reportText, hms as raHms } from
 import { learnHot } from './skycam.js';
 import { project as projectStar } from './solve.js';
 import { loadTowns, townsLoaded, nearestName, DARK_SITES } from './towns.js';
-import { loadSkyGlow, skyGlowAt, bortleOfNelm, skyGlowGrid, cellSqm, bortleOf } from './skyglow.js';
+import { loadSkyGlow, skyGlowAt, nelmToSqm, bortleOfNelm, skyGlowGrid, cellSqm, bortleOf } from './skyglow.js';
 import { FIELD as STAR_FIELD } from '../data/catalog.js';
 
 // ---------------------------------------------------------------- persistence
@@ -399,7 +400,7 @@ async function loadHighlights() {
   const urls = /github\.io$/.test(location.hostname) ? ['data/highlights.json'] : [live, 'data/highlights.json'];
   highlights = null;
   for (const u of urls) {
-    try { const r = await fetch(u, { cache: 'no-cache' }); if (r.ok) { const j = await r.json(); if (j && Array.isArray(j.items)) { highlights = j; break; } } } catch (e) { /* offline or not there yet */ }
+    try { const r = await fetch(u, { cache: 'no-cache' }); if (r.ok) { const j = await r.json(); if (j && (Array.isArray(j.items) || Array.isArray(j.comets) || Array.isArray(j.fixed))) { highlights = j; break; } } } catch (e) { /* offline or not there yet */ }
   }
   return highlights;
 }
@@ -409,18 +410,126 @@ async function fillHighlights() {
   const el = $('#pl-hl'); if (!el) return;
   const H = await loadHighlights(); if (!el.isConnected) return;
   const today = new Date().toISOString().slice(0, 10), now = Date.now();
-  const items = H && (!H.validUntil || H.validUntil >= today) ? H.items.filter((it) => { const end = Date.parse(it.end || it.start || ''); return isNaN(end) || end > now - 6 * 3600e3; }) : [];
+  const items = H && (!H.validUntil || H.validUntil >= today) ? (H.items || []).filter((it) => { const end = Date.parse(it.end || it.start || ''); return isNaN(end) || end > now - 6 * 3600e3; }) : [];
   if (!items.length) { el.innerHTML = ''; return; }
   const P = planState();
   const when = (it) => { const d = new Date(it.start); return isNaN(d) ? '' : d.toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); };
   el.innerHTML = `<div class="sech"><h3>This week's highlights <span class="muted small">${esc(H.region || '')}</span></h3></div>
     <ul class="list hl">${items.map((it, i) => { const o = hlTarget(it.target), inPlan = o && P.items.some((x) => x.key === o.key);
-      return `<li><div class="grow"><b>${esc(it.title)}</b><div class="muted small">${esc(HL_LOOK[it.look] || '')}${when(it) ? ' · ' + esc(when(it)) : ''}</div>
+      return `<li><div class="grow${o ? ' tap' : ''}"${o ? ` data-hlinfo="${esc(o.key)}"` : ''}><b>${esc(it.title)}</b><div class="muted small">${esc(HL_LOOK[it.look] || '')}${when(it) ? ' · ' + esc(when(it)) : ''}</div>
         ${it.what ? `<div class="small">${esc(it.what)}</div>` : ''}${it.why ? `<div class="small hlwhy">${esc(it.why)}</div>` : ''}</div>
         ${o ? `<button class="mini" data-hl="${i}">${inPlan ? '✓ In plan' : '+ Plan'}</button>` : ''}</li>`; }).join('')}</ul>`;
+  el.querySelectorAll('[data-hlinfo]').forEach((d) => d.onclick = () => openObject(d.dataset.hlinfo, { row: rowFor(d.dataset.hlinfo) }));
   el.querySelectorAll('[data-hl]').forEach((b) => b.onclick = () => {
     const o = hlTarget(items[+b.dataset.hl].target); if (!o) return;
     const i = P.items.findIndex((x) => x.key === o.key); if (i >= 0) P.items.splice(i, 1); else P.items.push({ key: o.key });
+    save(); renderPlan(); fillPlanSuggestions();
+  });
+}
+// ---- Comets, meteor showers, novae and the northern lights (Build 103)
+// Showers come from the built-in IMO list (transients.js); comets and novae from the weekly highlights feed
+// (`comets`: perihelion elements; `fixed`: RA/Dec); aurora from NOAA's Kp forecast when online.
+function syncTransients(date = new Date()) {
+  const keep = sky.objects.filter((o) => !o.key.startsWith('ms:') && !o.key.startsWith('cm:') && !o.key.startsWith('tr:'));
+  const add = [];
+  for (const sh of activeShowers(date)) add.push({ id: sh.id, key: 'ms:' + sh.id, label: sh.name, name: sh.name, sub: 'Meteor shower', t: 'MS', type: 'Meteor shower', cats: ['Meteor showers'], shower: sh, ra: sh.ra, dec: sh.dec, v: j2000Vec(sh.ra, sh.dec) });
+  for (const o of feedObjects(highlights)) { if (o.orbit) sky.altAz(o, date); else o.v = j2000Vec(o.ra, o.dec); add.push(o); }
+  sky.objects = keep.concat(add);
+  planRows = null; rateCache.clear();
+}
+let kpList = null;
+async function refreshAurora() { const L = await loadKp(); if (L) kpList = L; }
+/** Aurora outlook now, or null: { kp, height } from the Kp forecast for this 3-hour block, at night only. */
+function auroraNow(date = new Date()) {
+  if (!kpList || sky.sunAlt(date) > -12) return null;
+  return auroraView(kpAt3h(kpList, date), here().lat, here().lon);
+}
+/** The strongest aurora chance during tonight's dark hours: { kp, height, at } or null; undefined when no forecast. */
+function auroraTonight() {
+  if (!kpList) return undefined;
+  const nt = sky.nightAt(new Date()), a = nt && (nt.astro || nt.naut || nt.set), b = nt && (nt.astroAm || nt.nautAm || nt.rise);
+  const from = a ? a.getTime() : Date.now(), to = b ? b.getTime() : from + 10 * 3600e3;
+  let best = null;
+  for (const r of kpList) { if (r.t + 3 * 3600e3 < from || r.t > to) continue; const v = auroraView(r.kp, here().lat, here().lon); if (v && (!best || v.kp > best.kp)) best = { ...v, at: new Date(Math.max(r.t, from)) }; }
+  const maxKp = kpList.filter((r) => r.t + 3 * 3600e3 >= from && r.t <= to).reduce((m, r) => Math.max(m, r.kp), 0);
+  return best || { kp: maxKp, height: 0, none: true };
+}
+/** x for a centred label so it stays inside the round chart (radius 0.46 × width) at height y. */
+function labelX(c, txt, x, y) {
+  const W = c.canvas.width, H = c.canvas.height, R = W * 0.46, dy = Math.min(R, Math.abs(y - H / 2));
+  const half = Math.sqrt(R * R - dy * dy), w = c.measureText(txt).width / 2 + 8;
+  return w >= half ? W / 2 : Math.max(W / 2 - half + w, Math.min(W / 2 + half - w, x));
+}
+/** Big dashed zones on the sky chart: meteor showers (around the radiant) and possible aurora (low in the north). */
+function drawZones(c, proj, view, col, s) {
+  const t = performance.now(), D = Math.PI / 180;
+  const sunA = sky.sunAlt(new Date());
+  if (sunA > -6) return;
+  const path = (pts) => { let pen = false; c.beginPath(); for (const p of pts) { const q = p.alt > -3 ? proj(p) : null; if (!q || q.r > view * 2.2) { pen = false; continue; } if (pen) c.lineTo(q.x, q.y); else { c.moveTo(q.x, q.y); pen = true; } } };
+  c.save(); c.lineWidth = 3; c.setLineDash([18, 14]); c.lineDashOffset = -(t / 45) % 32;          // marching ants
+  for (const o of sky.objects) {
+    if (!o.shower || o.alt == null || o.alt < -15) continue;
+    const lat1 = o.alt * D, lon1 = o.az * D, rho = 40 * D, pts = [];
+    for (let k = 0; k <= 72; k++) { const th = k * 5 * D, lat2 = Math.asin(Math.sin(lat1) * Math.cos(rho) + Math.cos(lat1) * Math.sin(rho) * Math.cos(th)); const lon2 = lon1 + Math.atan2(Math.sin(th) * Math.sin(rho) * Math.cos(lat1), Math.cos(rho) - Math.sin(lat1) * Math.sin(lat2)); pts.push({ alt: lat2 / D, az: ((lon2 / D) % 360 + 360) % 360 }); }
+    const pulse = 0.55 + 0.25 * Math.sin(t / 700);
+    c.strokeStyle = col(255, 200, 120, pulse); path(pts); c.stroke();
+    // a few twinkling sparks inside the zone, so it reads as "meteors anywhere in here"
+    c.setLineDash([]); for (let k = 0; k < 7; k++) { const ph = (t / 900 + k * 0.37) % 1, ang = k * 2.4 + Math.floor(t / 900 + k * 0.37) * 1.3, dist = 12 + (k * 37) % 26;
+      const lat2 = Math.asin(Math.sin(lat1) * Math.cos(dist * D) + Math.cos(lat1) * Math.sin(dist * D) * Math.cos(ang)), lon2 = lon1 + Math.atan2(Math.sin(ang) * Math.sin(dist * D) * Math.cos(lat1), Math.cos(dist * D) - Math.sin(lat1) * Math.sin(lat2));
+      const q = proj({ alt: lat2 / D, az: ((lon2 / D) % 360 + 360) % 360 }); if (!q || q.r > view * 1.2) continue;
+      const a = Math.sin(ph * Math.PI); c.strokeStyle = col(255, 230, 170, 0.8 * a); c.lineWidth = 2; c.beginPath(); c.moveTo(q.x, q.y); const dx = Math.cos(ang) * 22 * a, dy = Math.sin(ang) * 22 * a; c.lineTo(q.x + dx, q.y + dy); c.stroke(); }
+    c.setLineDash([18, 14]); c.lineWidth = 3;
+    const rq = proj(o); if (rq && rq.r < view * 1.1) {               // labels kept inside the chart's edges
+      const fit = (txt, y) => labelX(c, txt, rq.x, y);
+      c.fillStyle = col(255, 215, 140); c.textAlign = 'center';
+      let txt = `☄︎ ${o.label} radiant`; c.font = 'bold 22px system-ui'; c.fillText(txt, fit(txt, rq.y - 18), rq.y - 18);
+      txt = 'meteors anywhere in the dashed circle'; c.font = '18px system-ui'; c.fillText(txt, fit(txt, rq.y + 30), rq.y + 30);
+    }
+  }
+  const au = auroraNow();
+  if (au) {
+    const top = [], N = 60;
+    for (let k = 0; k <= N; k++) { const az = (300 + k * 120 / N) % 360; top.push({ alt: Math.max(3, au.height * Math.cos(((k / N) - 0.5) * Math.PI * 0.9)), az }); }
+    c.strokeStyle = col(120, 255, 160, 0.55 + 0.25 * Math.sin(t / 650)); path(top); c.stroke();
+    const mid = proj({ alt: Math.max(6, au.height * 0.55), az: 0 });
+    if (mid && mid.r < view * 1.3) { c.setLineDash([]); c.fillStyle = col(150, 255, 180); c.font = 'bold 22px system-ui'; c.textAlign = 'center'; const txt = `Northern lights possible (Kp ${au.kp.toFixed(1)})`; c.fillText(txt, labelX(c, txt, mid.x, mid.y), mid.y); }
+  }
+  c.restore();
+}
+
+/** Plan: what's passing through tonight — meteor showers, comets and novae from the feed, and the aurora outlook. */
+function fillEvents() {
+  const el = $('#pl-ev'); if (!el) return;
+  const P = planState(), rows = [], nt = sky.nightAt(new Date()), dark = nt.astro || nt.naut || nt.set || new Date();
+  const fmt = (d) => d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  const best = (o) => {                                // best moment tonight, every half hour across the dark hours
+    let b = null; const end = (nt.astroAm || nt.nautAm || nt.rise || new Date(dark.getTime() + 10 * 3600e3)).getTime();
+    for (let t = dark.getTime(); t <= end; t += 1800e3) { const d = new Date(t), p = sky.altAz(o, d), m = sky.moonInfo(d);
+      const r = rate(o, { alt: p.alt, sunAlt: sky.sunAlt(d), moonAlt: m.alt, moonFrac: m.frac, moonSep: sepDeg(p.alt, p.az, m.alt, m.az), nelm: skyNelm() }, profile());
+      if (r && (!b || r.margin > b.r.margin)) b = { r, d, alt: p.alt }; }
+    return b;
+  };
+  for (const o of sky.objects) {
+    if (!o.shower && !o.comet && o.t !== 'TR') continue;
+    const b = best(o), inPlan = P.items.some((x) => x.key === o.key);
+    let line;
+    if (o.shower) {
+      const sh = o.shower, dd = Math.round(sh.daysFromPeak);
+      const peak = Math.abs(sh.daysFromPeak) < 1 ? 'peak tonight' : dd > 0 ? `peaked ${dd} day${dd === 1 ? '' : 's'} ago` : `peak in ${-dd} day${dd === -1 ? '' : 's'}`;
+      line = `${peak} · ${b && b.r.hr >= 1 ? `best about ${fmt(b.d)}, maybe ${Math.round(b.r.hr)} an hour` : 'only the odd meteor tonight'}`;
+    } else {
+      line = `${o.type}${o.mag != null ? ` · about magnitude ${o.mag.toFixed(1)}` : ''}${b && b.r.level < 3 ? ` · best about ${fmt(b.d)}, ${Math.round(b.alt)}° up` : ' · not well placed tonight'}`;
+    }
+    rows.push(`<li><div class="grow tap" data-evinfo="${esc(o.key)}"><b>${esc(o.label)}</b><div class="muted small">${esc(line)}</div>${o.note ? `<div class="small">${esc(o.note)}</div>` : ''}</div><button class="mini" data-ev="${esc(o.key)}">${inPlan ? '✓ In plan' : '+ Plan'}</button></li>`);
+  }
+  const au = auroraTonight();
+  if (au && !au.none) rows.push(`<li><div class="grow"><b>Northern lights possible</b><div class="muted small">Kp ${au.kp.toFixed(1)} forecast around ${fmt(au.at)} · look low in the north, away from lights · NOAA forecast</div></div></li>`);
+  else if (au && au.none) rows.push(`<li><div class="grow"><b>Northern lights</b><div class="muted small">Not expected here tonight (NOAA forecast: Kp up to ${au.kp.toFixed(1)}; about ${Math.max(0, Math.ceil(((66.5 - 5 - geomagLat(here().lat, here().lon)) / 2.05) * 10) / 10)} or more is needed here)</div></div></li>`);
+  if (!rows.length) { el.innerHTML = ''; return; }
+  el.innerHTML = `<div class="sech"><h3>Passing through <span class="muted small">meteors, comets, aurora</span></h3></div><ul class="list hl">${rows.join('')}</ul>`;
+  el.querySelectorAll('[data-evinfo]').forEach((d) => d.onclick = () => openObject(d.dataset.evinfo, { row: rowFor(d.dataset.evinfo) }));
+  el.querySelectorAll('[data-ev]').forEach((btn) => btn.onclick = () => {
+    const k = btn.dataset.ev, i = P.items.findIndex((x) => x.key === k); if (i >= 0) P.items.splice(i, 1); else P.items.push({ key: k });
     save(); renderPlan(); fillPlanSuggestions();
   });
 }
@@ -471,13 +580,14 @@ function renderPlanHere() {
       <div class="chips wrap"><button id="pl-bytime">Order by time</button><button id="pl-nosync" ${nSync ? '' : 'disabled'}>Remove sync stars</button><button id="pl-auto">Rebuild for me</button><button id="pl-clear">Clear</button></div>
       <p class="muted small">"Best order" keeps pushes short and adds a bright star before each long jump. Centre that star and tap Sync, so the pointing is freshly corrected right where you're about to look.</p>`
     : `<div class="card" style="text-align:center"><b>No plan yet</b><p class="muted small" style="margin:4px 0 10px">Let the app pick a varied tour for this session, or add your own from the suggestions below with <b>+</b>.</p><button id="pl-auto" class="primary big">Build a plan for me</button></div>`}
+    <div id="pl-ev"></div>
     <div id="pl-hl"></div>
     <div class="sech"><h3>Suggestions <span class="muted small">for this session</span></h3></div>
     <div class="chips" id="pl-lv">${[['all', 'All'], ['0', '●●● Obvious'], ['1', '●●○ Visible'], ['2', '●○○ Challenging']].map(([k, l]) => `<button data-lv="${k}" class="${planLevel === k ? 'on' : ''}">${l}</button>`).join('')}</div>
     <div class="chips" id="pl-sort">${[['top', 'Top picks'], ['time', 'Looks best'], ['alt', 'Highest'], ['name', 'Catalog #']].map(([k, l]) => `<button data-s="${k}" class="${planSort === k ? 'on' : ''}">${l}</button>`).join('')}</div>
     <ul class="list" id="pl-sugg"><li class="muted">Working it out…</li></ul>`;
   if ($('#pl-hz')) $('#pl-hz').onclick = () => openHorizon('plan');
-  fillHighlights();
+  fillHighlights(); fillEvents();
   wireUpdateLoc($('#pl-loc'));
   $('#pl-where').onclick = () => openPlacePicker(P.site || state.site, (pick) => { P.site = pick; P.placeName = pick.name; if (!P.nameSet) P.name = null; planRows = null; rateCache.clear(); save(); renderPlan(); });
   if ($('#pl-here')) $('#pl-here').onclick = () => { P.site = null; P.placeName = planWhere(P) || null; planRows = null; rateCache.clear(); save(); renderPlan(); };
@@ -584,7 +694,16 @@ function skyQ() {
   if (q.lat != null && distKm({ lat: q.lat, lon: q.lon }, here()) > SKYQ_KM) return null;
   checkBase(q);
   if (q.src !== 'pick' && q.base == null) return null;
+  if (checkDoubt(q)) return null;
   return q;
+}
+/** A check that reads far brighter than the light-pollution map for that spot (more than 2 mag/arcsec², over 6 times
+ *  brighter) was most likely clouds, haze, the Moon, a light nearby or a test run: go by the map instead. Returns the
+ *  map estimate when the check is doubted, else null. */
+function checkDoubt(q) {
+  if (!q || q.src === 'pick' || q.base == null) return null;
+  const mp = skyGlowAt(q.lat ?? state.site.lat, q.lon ?? state.site.lon);
+  return mp && nelmToSqm(q.base) < mp.sqm - 2 ? mp : null;
 }
 /** Moonless limiting magnitude from a check (the darkest picture means "this dark or darker": go by the map if darker). */
 function checkNelm(q = skyQ()) {
@@ -624,6 +743,9 @@ function bindPlanList() {
   ul.querySelectorAll('[data-up]').forEach((b) => b.onclick = () => mv(+b.dataset.up, +b.dataset.up - 1));
   ul.querySelectorAll('[data-dn]').forEach((b) => b.onclick = () => mv(+b.dataset.dn, +b.dataset.dn + 1));
   ul.querySelectorAll('[data-rm]').forEach((b) => b.onclick = () => { P.items.splice(+b.dataset.rm, 1); redo(); });
+  // Tap a planned target for its preview (eyepiece views, rating, best time); step through the plan with the arrows.
+  const keys = P.items.map((x) => x.key);
+  ul.querySelectorAll('[data-goplan]').forEach((d) => d.onclick = () => { if (planReorder) return; const k = d.dataset.goplan; openObject(k, { row: rowFor(k), keys, rowFor }); });
   // Drag a row by its grip. The row follows the finger and the others slide aside; letting go saves the new order.
   // Nothing is moved in the page until the drop (rows are only shifted visually), so the touch is never interrupted.
   ul.querySelectorAll('[data-grip]').forEach((g) => {
@@ -1251,6 +1373,7 @@ function drawReticle(cur, tgt, o, opt = {}) {
     c.fillStyle = col(Math.min(255, 140 + (magLim - q.mag) * 25), 20, 10); c.beginPath(); c.arc(q.x, q.y, r, 0, 7); c.fill();
   }
 
+  drawZones(c, proj, view, col, s);
   // catalog objects, asterisms, named stars
   c.font = '20px system-ui'; c.textAlign = 'left';
   for (const n of sky.objects) {
@@ -2659,7 +2782,8 @@ function renderLightHere() {
 function lightHereHTML(g, here) {
   const sq = skyQ(), old = state.skyq && !sq ? state.skyq : null;
   const checkLine = sq ? `<p class="small">Your sky darkness check (${esc(shortDate(sq.when))}): <b>${esc(sq.label)}</b>, about Bortle ${bortleOfNelm(checkNelm(sq))}, stars to magnitude ${checkNelm(sq).toFixed(1)}. The app uses your check, not the map.</p>` : '';
-  const oldLine = old ? `<p class="muted small">Your last darkness check (${esc(shortDate(old.when))}) ${old.lat != null && distKm({ lat: old.lat, lon: old.lon }, state.site) > SKYQ_KM ? 'was taken somewhere else' : `was taken when ${old.moonUp ? 'the Moon' : 'twilight'} was too bright to see the light pollution under it`}. The app goes by the map here until you check again.</p>` : '';
+  const dbt = old ? checkDoubt(old) : null;
+  const oldLine = old ? `<p class="muted small">Your last darkness check (${esc(shortDate(old.when))}) ${dbt ? `read much brighter than the map says for this spot (about Bortle ${bortleOfNelm(old.base)} against Bortle ${dbt.bortle}). Clouds, haze, the Moon, a light nearby or a test run can do that, so` : old.lat != null && distKm({ lat: old.lat, lon: old.lon }, state.site) > SKYQ_KM ? 'was taken somewhere else, so' : `was taken when ${old.moonUp ? 'the Moon' : 'twilight'} was too bright to see the light pollution under it, so`} the app goes by the map here until you check again.</p>` : '';
   if (!here) return `<p class="muted small">This spot is outside the built-in light-pollution map (it covers about 30°–50° N, 70°–100° W). The 30-second check below measures your sky anywhere.</p>${checkLine}${oldLine}`;
   return `<p class="small">Light-pollution map: <b>about Bortle ${here.bortle}</b> — ${BORTLE_NAME[here.bortle].toLowerCase()}. Sky brightness about ${here.sqm.toFixed(1)} mag/arcsec², stars to about magnitude ${here.nelm.toFixed(1)} overhead on a clear moonless night.</p>
     ${checkLine}${oldLine}
@@ -2821,7 +2945,13 @@ function whereText() {
 /** An "Update location" button: GPS now, then whatever shows the location redraws itself (see getGPS). */
 function wireUpdateLoc(btn) {
   if (!btn) return;
-  btn.onclick = async () => { btn.disabled = true; btn.textContent = 'Finding you…'; await getGPS(); if (btn.isConnected) { btn.disabled = false; btn.textContent = 'Update location'; } };
+  btn.onclick = async () => {
+    btn.disabled = true; btn.textContent = 'Finding you…';
+    const ok = await getGPS();
+    if (!btn.isConnected) return;                       // success redraws the screen with the new place
+    btn.disabled = false; btn.textContent = 'Update location';
+    if (!ok) { const row = btn.closest('.whereline, .hzrow') || btn.parentElement; let m = row.nextElementSibling; if (!m || !m.classList.contains('gpserr')) { m = document.createElement('p'); m.className = 'gpserr small'; row.after(m); } m.textContent = gpsError || 'No location came back from the phone.'; }
+  };
 }
 /** A name for a spot on the map: the town it's in or near, else its coordinates. */
 function spotName(lat, lon) {
@@ -2880,9 +3010,11 @@ function openPlacePicker(start, onPick) {
   info(); draw();
 }
 /** GPS fix → state.site. Resolves true when the location was set, false (with a message unless quiet) when not. */
+let gpsError = '';
 async function getGPS(quiet = false) {
+  gpsError = '';
   if (!quiet) toast('Getting GPS fix…', 8000);
-  const say = (m) => { if (!quiet) toast(m, 7000); return false; };
+  const say = (m) => { gpsError = m; if (!quiet) toast(m, 7000); return false; };
   const OFF = 'Location is off for this app. On the iPhone: Settings → Privacy & Security → Location Services → Skyward Push-To → While Using the App.';
   const done = (lat, lon, elev, acc) => {
     state.site = { lat: +lat.toFixed(5), lon: +lon.toFixed(5), elev: Math.round(elev || state.site.elev || 0), source: `GPS ±${Math.round(acc)} m, ${new Date().toLocaleString()}` };
@@ -3026,7 +3158,7 @@ function openObject(key, opt = {}) {
     ${r ? `<p class="rateline"><span class="dots lv${r.level}">${DOTS[r.level]}</span> <b>${LEVEL_NAMES[r.level]}</b> ${row ? 'at its best in your session' : 'right now'} — ${esc(row ? row.desc : describe(o, r))}</p>` : (o.alt <= 0 ? '<p class="rateline muted">Below the horizon right now.</p>' : '')}
     ${blurb ? `<p class="blurb">${esc(blurb)}</p>` : ''}
     ${doubleNature(o) ? `<p class="small">${esc(NATURE_NOTE[doubleNature(o)])}</p>` : ''}
-    ${tooWide(o, profile()) && o.t === 'AS' ? `<p class="small"><b>A naked-eye pattern.</b> At ${(o.maj / 60).toFixed(0)}° across it is far bigger than any eyepiece field, so there is no eyepiece view. Use Push to it and the sky chart to find it, then look up.</p>` : isTarget && o.alt != null ? `<div class="eprow" id="sh-eps">${profile().eyepieces.map((e, i) => ({ e, i })).sort((a, b) => b.e.fl - a.e.fl).map(({ e, i }) => `<figure><canvas width="300" height="300" data-epi="${i}"></canvas><figcaption><b>${esc(e.name)}</b><span>${(profile().fl / e.fl).toFixed(0)}×<span id="sh-epn${i}"></span></span></figcaption></figure>`).join('')}</div>
+    ${o.shower ? `<p class="small"><b>No telescope needed.</b> Meteors can appear anywhere in the sky; they only seem to come from the radiant, ${o.alt > 0 ? `${Math.round(o.alt)}° up in the ${compassName(o.az)} right now` : 'below the horizon right now; the best rates come after it rises'}. Lie back, face about halfway up, away from lights and the Moon, and give your eyes 20 minutes. The sky view shows the radiant as a big dashed circle.</p>` : tooWide(o, profile()) && o.t === 'AS' ? `<p class="small"><b>A naked-eye pattern.</b> At ${(o.maj / 60).toFixed(0)}° across it is far bigger than any eyepiece field, so there is no eyepiece view. Use Push to it and the sky chart to find it, then look up.</p>` : isTarget && o.alt != null ? `<div class="eprow" id="sh-eps">${profile().eyepieces.map((e, i) => ({ e, i })).sort((a, b) => b.e.fl - a.e.fl).map(({ e, i }) => `<figure><canvas width="300" height="300" data-epi="${i}"></canvas><figcaption><b>${esc(e.name)}</b><span>${(profile().fl / e.fl).toFixed(0)}×<span id="sh-epn${i}"></span></span></figcaption></figure>`).join('')}</div>
       <p class="muted small hidden" id="sh-more" style="text-align:right;margin:0">swipe for more ›</p>
       <p class="muted small" id="sh-epcap" style="text-align:center;margin-top:2px">In each of your eyepieces, to scale. Brightness is not to scale. Add or change eyepieces in Setup.</p>` : ''}
     <div class="kv">
@@ -3828,7 +3960,8 @@ function runSkyCheck() {
       : top
         ? `Faintest stars you can see: magnitude ${m.toFixed(1)} or fainter — Bortle ${bortleOfNelm(m)} or darker. This check can't tell darker skies apart${mp && eff > m ? `, so the app goes by the light-pollution map here: about Bortle ${mp.bortle}` : ''}.`
         : `Faintest stars you can see: about magnitude ${m.toFixed(1)} — about Bortle ${bortleOfNelm(m)}.${mp ? ` The light-pollution map estimated about Bortle ${mp.bortle} here.` : ''}`;
-    card.innerHTML = `<h3 style="margin-top:0">${label}</h3><p>${verdict}</p><p class="small">${means}</p>
+    const dq = checkDoubt(q), doubtNote = dq ? `<p class="small"><b>That's much brighter than the light-pollution map expects here (Bortle ${dq.bortle}).</b> Clouds, haze, the Moon or a light nearby can do that. The app keeps using the map for now; check again on a clear night.</p>` : '';
+    card.innerHTML = `<h3 style="margin-top:0">${label}</h3><p>${verdict}</p>${doubtNote}<p class="small">${means}</p>
       <button id="sq-done" class="primary" style="width:100%">${flow ? 'Continue' : 'Done'}</button>`;
     $('#sq-done').onclick = () => { if (flow) return flowNext(); box.classList.add('hidden'); rateCache.clear(); if (tab === 'more') renderMore(); if (tab === 'find') renderFind(); };
   };
@@ -3895,6 +4028,10 @@ async function init() {
   if (state.v < 3) { state.sort = 'best'; state.v = 3; }   // v3: Find opens on what looks best right now
   if (!Array.isArray(state.log)) state.log = [];
   // The light-pollution map loads in the background; when it arrives, ratings that rely on a guess are redone.
+  syncTransients();                                                   // tonight's meteor showers (built in)
+  loadHighlights().then(() => { syncTransients(); if (tab === 'plan') { renderPlan(); fillPlanSuggestions(); } });   // comets and novae from the weekly feed
+  refreshAurora().then(() => { if (tab === 'plan') fillEvents(); });
+  setInterval(() => { syncTransients(); refreshAurora(); }, 30 * 60e3);
   loadSkyGlow().then((g) => { if (g && !skyQ() && mapSky()) { planRows = null; rateCache.clear(); try { renderLaunch(); } catch (e) { /* launch screen not built yet */ } if (tab === 'plan') renderPlan(); else if (tab === 'find') renderFind(); } }).catch(() => {});
   sound.mode = state.sound || 'chime';
   if (state.rot180 == null) state.rot180 = true;
