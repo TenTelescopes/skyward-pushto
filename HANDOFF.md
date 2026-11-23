@@ -402,3 +402,8 @@ unrelated extra star in the object-page sentence. Still open with Bryan: whether
 - App Store prep in `scripts/patch-native.mjs`: `ITSAppUsesNonExemptEncryption = NO`, iPhone-only
   (`TARGETED_DEVICE_FAMILY = 1`), Xcode build number = the "Build NN" label. Version stays 1.0.
 - Owner enrolling in the Apple Developer Program as an individual (not incorporated).
+- Audit fixes (same build): Plan tab crashed (`state.skyq.label` of undefined) for anyone inside the light-pollution
+  map with no sky check (Build 96 regression); the start screen and ratings now refresh when the map loads
+  (`rateCache` was keeping ratings made with the default sky); sky names now follow the Bortle class
+  (`skyLabel` uses `bortleOfNelm`), and the Plan sky picker lists Bortle 9 to 1.
+- Icon (same build): the Ten Telescopes "Ten" mark from the website header (T drawn as a Newtonian spider star), white on the app's night-blue gradient; the TELESCOPES line is left off so it stays legible at icon size. Source: website header PNG; build script inline (PIL), not kept.
