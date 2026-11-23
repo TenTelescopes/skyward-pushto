@@ -465,3 +465,20 @@ unrelated extra star in the object-page sentence. Still open with Bryan: whether
   to name itself). No offline download of street tiles (OSM policy forbids it).
   Coverage of the light-pollution map: 30°–50° N, 70°–100° W, ~5.65 million km², every cell has data; within ~250 km
   of the edges the sky glow is underestimated (towns beyond the edge are not counted).
+
+## Build 102 (Nov 22)
+- Start screen, Explore: Star alignment is offered as an optional stop ("optional — 2 min, makes the chart match the
+  real sky"), off by default with its own switch (`state.launch.alignExplore`, `stepKey`), so ticking it for Explore
+  doesn't change Observe's.
+- Top-left telescope button reads "Scope:" over the name ("200 Visual"), two lines so it fits on a 375 px phone.
+- Start screen path heading: "Start-up refinements — tap a star to add or skip one" (was "Your path — tap a star to skip a stop").
+- Sky darkness check pictures also show the faintest-star magnitude, so "Two stars" (2.8) and "Three stars" (3.5) read differently though both are Bortle 9 (the scale lumps every sky brighter than about magnitude 4 into class 9).
+- Streets contrast: tiles load with CORS and go through `contrastTile` (OSM pale-blue water → dark blue, white and coloured main roads kept bright, everything else ×0.55); veil 0.5 → 0.2 and Bortle colours 40 % → 32 %. If the tile server refuses CORS, the plain tile is used with the lighter veil. Checked with a stand-in tile in OSM colours; real tiles still to be seen on the phone.
+- Web app (GitHub Pages) home-screen icon: a red monochrome version of the iPhone icon (Ten mark, Skyward, Push-To in red on near-black), icons/icon-192/512.png and a new 180 px icons/apple-touch-icon.png. The iPhone app keeps the full-colour icon (native/ios/AppIcon-1024.png). Phones show a new web icon only after removing the home-screen shortcut and adding it again from Safari.
+- "This week's highlights" in Plan (above Suggestions): reads docs/data/highlights.json (`loadHighlights`,
+  `fillHighlights`); the iPhone app tries the live GitHub Pages copy first, then its bundled one. Items past their end
+  are hidden; "+ Plan" when `target` matches a catalogue object or planet (`hlTarget`). The file is written weekly
+  by the "Eyepiece Daily debrief" scheduled task (claude.ai, 7:07 am Toronto) on a `highlights/<date>` branch with a
+  pull request that the owner merges. Schema: { generated, validUntil, region, items: [{ id, title, start, end, look
+  (eye|binoculars|telescope|any), what, why, target, source }] }. No file yet: the section stays hidden.
+  The daily debrief page (feedback by taps) is a claude.ai artifact, not part of this repo.

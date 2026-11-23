@@ -389,6 +389,41 @@ function dayLabel(d) {
   const diff = Math.round((b - a) / 864e5);
   return diff === 0 ? (d.getHours() < 16 ? 'Today' : 'Tonight') : diff === 1 && d.getHours() < 6 ? 'Tonight' : diff === 1 ? 'Tomorrow' : d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
 }
+// ---- This week's highlights (Build 102): a short list of visual sights for Southern Ontario, prepared weekly by the
+// Eyepiece Daily scheduled task as docs/data/highlights.json (it opens a pull request; the owner merges). The iPhone app
+// reads the live copy from the website when online, so it stays current between app updates.
+let highlights; // undefined: not loaded yet; null: none
+async function loadHighlights() {
+  if (highlights !== undefined) return highlights;
+  const live = 'https://tentelescopes.github.io/skyward-pushto/data/highlights.json';
+  const urls = /github\.io$/.test(location.hostname) ? ['data/highlights.json'] : [live, 'data/highlights.json'];
+  highlights = null;
+  for (const u of urls) {
+    try { const r = await fetch(u, { cache: 'no-cache' }); if (r.ok) { const j = await r.json(); if (j && Array.isArray(j.items)) { highlights = j; break; } } } catch (e) { /* offline or not there yet */ }
+  }
+  return highlights;
+}
+const hlTarget = (t) => { if (!t) return null; const k = String(t).toLowerCase().replace(/\s+/g, ''); return sky.objects.find((o) => [o.label, o.id, o.name].some((x) => x && String(x).toLowerCase().replace(/\s+/g, '') === k)) || null; };
+const HL_LOOK = { eye: 'Naked eye', binoculars: 'Binoculars', telescope: 'Telescope', any: 'Eye or telescope' };
+async function fillHighlights() {
+  const el = $('#pl-hl'); if (!el) return;
+  const H = await loadHighlights(); if (!el.isConnected) return;
+  const today = new Date().toISOString().slice(0, 10), now = Date.now();
+  const items = H && (!H.validUntil || H.validUntil >= today) ? H.items.filter((it) => { const end = Date.parse(it.end || it.start || ''); return isNaN(end) || end > now - 6 * 3600e3; }) : [];
+  if (!items.length) { el.innerHTML = ''; return; }
+  const P = planState();
+  const when = (it) => { const d = new Date(it.start); return isNaN(d) ? '' : d.toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); };
+  el.innerHTML = `<div class="sech"><h3>This week's highlights <span class="muted small">${esc(H.region || '')}</span></h3></div>
+    <ul class="list hl">${items.map((it, i) => { const o = hlTarget(it.target), inPlan = o && P.items.some((x) => x.key === o.key);
+      return `<li><div class="grow"><b>${esc(it.title)}</b><div class="muted small">${esc(HL_LOOK[it.look] || '')}${when(it) ? ' · ' + esc(when(it)) : ''}</div>
+        ${it.what ? `<div class="small">${esc(it.what)}</div>` : ''}${it.why ? `<div class="small hlwhy">${esc(it.why)}</div>` : ''}</div>
+        ${o ? `<button class="mini" data-hl="${i}">${inPlan ? '✓ In plan' : '+ Plan'}</button>` : ''}</li>`; }).join('')}</ul>`;
+  el.querySelectorAll('[data-hl]').forEach((b) => b.onclick = () => {
+    const o = hlTarget(items[+b.dataset.hl].target); if (!o) return;
+    const i = P.items.findIndex((x) => x.key === o.key); if (i >= 0) P.items.splice(i, 1); else P.items.push({ key: o.key });
+    save(); renderPlan(); fillPlanSuggestions();
+  });
+}
 function renderPlan() { return withPlanSite(renderPlanHere); }
 function renderPlanHere() {
   const el = $('#tab-plan'), P = planState();
@@ -436,11 +471,13 @@ function renderPlanHere() {
       <div class="chips wrap"><button id="pl-bytime">Order by time</button><button id="pl-nosync" ${nSync ? '' : 'disabled'}>Remove sync stars</button><button id="pl-auto">Rebuild for me</button><button id="pl-clear">Clear</button></div>
       <p class="muted small">"Best order" keeps pushes short and adds a bright star before each long jump. Centre that star and tap Sync, so the pointing is freshly corrected right where you're about to look.</p>`
     : `<div class="card" style="text-align:center"><b>No plan yet</b><p class="muted small" style="margin:4px 0 10px">Let the app pick a varied tour for this session, or add your own from the suggestions below with <b>+</b>.</p><button id="pl-auto" class="primary big">Build a plan for me</button></div>`}
+    <div id="pl-hl"></div>
     <div class="sech"><h3>Suggestions <span class="muted small">for this session</span></h3></div>
     <div class="chips" id="pl-lv">${[['all', 'All'], ['0', '●●● Obvious'], ['1', '●●○ Visible'], ['2', '●○○ Challenging']].map(([k, l]) => `<button data-lv="${k}" class="${planLevel === k ? 'on' : ''}">${l}</button>`).join('')}</div>
     <div class="chips" id="pl-sort">${[['top', 'Top picks'], ['time', 'Looks best'], ['alt', 'Highest'], ['name', 'Catalog #']].map(([k, l]) => `<button data-s="${k}" class="${planSort === k ? 'on' : ''}">${l}</button>`).join('')}</div>
     <ul class="list" id="pl-sugg"><li class="muted">Working it out…</li></ul>`;
   if ($('#pl-hz')) $('#pl-hz').onclick = () => openHorizon('plan');
+  fillHighlights();
   wireUpdateLoc($('#pl-loc'));
   $('#pl-where').onclick = () => openPlacePicker(P.site || state.site, (pick) => { P.site = pick; P.placeName = pick.name; if (!P.nameSet) P.name = null; planRows = null; rateCache.clear(); save(); renderPlan(); });
   if ($('#pl-here')) $('#pl-here').onclick = () => { P.site = null; P.placeName = planWhere(P) || null; planRows = null; rateCache.clear(); save(); renderPlan(); };
@@ -2648,18 +2685,34 @@ function wireLightMap(el, g) {
 /** OpenStreetMap tiles, fetched only for what's on screen and kept for reuse (their usage policy: no bulk or offline
  *  downloading, credit on the map). Returns the image once loaded, else null (and calls onload when it arrives). */
 const OSM_TILES = new Map();
+/** Make an OpenStreetMap tile easier to read under the light-pollution colours: water (OSM's pale blue) becomes a
+ *  strong dark blue, roads (white and the coloured main roads) stay bright, everything else is darkened so the roads
+ *  stand out. Needs the tile server's CORS permission; without it the tile is used as it is. */
+function contrastTile(img) {
+  const c = document.createElement('canvas'); c.width = c.height = 256; const x = c.getContext('2d');
+  x.drawImage(img, 0, 0, 256, 256); const d = x.getImageData(0, 0, 256, 256), a = d.data;
+  for (let i = 0; i < a.length; i += 4) {
+    const r = a[i], g = a[i + 1], b = a[i + 2], mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+    if (b > r + 25 && b >= g - 4 && g > r + 15) { a[i] = 22; a[i + 1] = 52; a[i + 2] = 118; continue; }          // water
+    if (mn > 246 || (mx > 225 && mx - mn > 45 && r > b + 30)) { a[i] = Math.min(255, r + 10); a[i + 1] = Math.min(255, g + 10); a[i + 2] = Math.min(255, b + 10); continue; }   // roads: white, and the pink/orange/yellow main roads
+    a[i] = r * 0.55; a[i + 1] = g * 0.55; a[i + 2] = b * 0.55;                                                     // land, buildings, parks: darker
+  }
+  x.putImageData(d, 0, 0); return c;
+}
 function osmTile(z, x, y, onload) {
   const N = 2 ** z; if (y < 0 || y >= N) return null; x = ((x % N) + N) % N;
   const key = `${z}/${x}/${y}`; let t = OSM_TILES.get(key);
   if (!t) {
-    t = { img: new Image(), ok: false, cbs: [] };
-    t.img.onload = () => { t.ok = true; t.cbs.splice(0).forEach((f) => f()); };
-    t.img.onerror = () => { OSM_TILES.delete(key); };
-    t.img.src = `https://tile.openstreetmap.org/${key}.png`;
+    t = { img: new Image(), ok: false, cbs: [], cors: true };
+    const load = () => { t.img.src = `https://tile.openstreetmap.org/${key}.png`; };
+    t.img.crossOrigin = 'anonymous';
+    t.img.onload = () => { try { t.draw = t.cors ? contrastTile(t.img) : t.img; } catch (e) { t.draw = t.img; } t.ok = true; t.cbs.splice(0).forEach((f) => f()); };
+    t.img.onerror = () => { if (t.cors) { t.cors = false; t.img = Object.assign(new Image(), { onload: t.img.onload, onerror: () => OSM_TILES.delete(key) }); load(); } else OSM_TILES.delete(key); };
+    load();
     OSM_TILES.set(key, t); if (OSM_TILES.size > 300) OSM_TILES.delete(OSM_TILES.keys().next().value);
   }
   if (!t.ok && onload && !t.cbs.includes(onload)) t.cbs.push(onload);
-  return t.ok ? t.img : null;
+  return t.ok ? t.draw : null;
 }
 const streetsOn = () => state.streets !== false && navigator.onLine !== false;
 function drawLightMap(cv, g, opt = {}) {
@@ -2697,7 +2750,7 @@ function drawLightMap(cv, g, opt = {}) {
     for (let ty = Math.floor(oy / ts); ty <= Math.floor((oy + H) / ts); ty++) for (let tx = Math.floor(ox / ts); tx <= Math.floor((ox + W) / ts); tx++) {
       const im = osmTile(zt, tx, ty, opt.onTile); if (im) { ctx.drawImage(im, tx * ts - ox, ty * ts - oy, ts, ts); streets = true; }
     }
-    if (streets) { ctx.fillStyle = 'rgba(4,7,22,0.5)'; ctx.fillRect(0, 0, W, H); ctx.globalAlpha = 0.4; ctx.drawImage(off, 0, 0, W, H); ctx.globalAlpha = 1; }
+    if (streets) { ctx.fillStyle = 'rgba(4,7,22,0.2)'; ctx.fillRect(0, 0, W, H); ctx.globalAlpha = 0.32; ctx.drawImage(off, 0, 0, W, H); ctx.globalAlpha = 1; }
   }
   // Town names (dot + label), skipping any that would overlap one already drawn or the "You" marker.
   ctx.font = '600 11px system-ui, sans-serif'; ctx.textBaseline = 'middle';
@@ -2864,7 +2917,7 @@ function pointState() {
   return align.suspect ? 'resync' : 'aligned';
 }
 function updateStatus() {
-  const short = profile().name.replace(/^Skyward\s+/, ''), sc = $('#st-scope'); if (sc.textContent !== short) sc.textContent = short;
+  const short = profile().name.replace(/^Skyward\s+/, ''), sc = $('#st-scope'); if (sc.dataset.name !== short) { sc.dataset.name = short; sc.innerHTML = `<small>Scope:</small><span>${esc(short)}</span>`; sc.setAttribute('aria-label', `Scope: ${short} — telescope settings`); }
   const st = pointState();
   const txt = { off: 'Sensors off — tap', nodata: 'No sensor data — tap', compass: 'Compass mode', unaligned: 'Not aligned — tap',
     resync: 'Re-sync on a star', aligned: cap1(syncAgo()) }[st];
@@ -3081,12 +3134,14 @@ const STEP_INFO = {
   align: ['Star alignment', '2 min — point at two bright stars'],
 };
 /** The stops that make sense on the way to each activity. Planning and exploring need no phone check-up. */
-const PATH = { observe: ['check', 'sky', 'horizon', 'align'], game: ['check', 'horizon', 'align'], explore: ['sky', 'horizon'], plan: ['sky', 'horizon'], resume: ['check', 'sky', 'horizon', 'align'] };
+const PATH = { observe: ['check', 'sky', 'horizon', 'align'], game: ['check', 'horizon', 'align'], explore: ['sky', 'horizon', 'align'], plan: ['sky', 'horizon'], resume: ['check', 'sky', 'horizon', 'align'] };
 /** Is a stop switched on? Blocked sky starts on until this spot has a map, then stays off unless the user ticks it. */
-const stepOn = (k) => (k === 'horizon' ? (state.launch.horizon ?? (!horizonNow() && !curPlace())) : !!state.launch[k]);
+// Exploring offers the alignment too, but it starts off there (exploring needs no set-up): its own switch.
+const stepKey = (k, act) => (k === 'align' && act === 'explore' ? 'alignExplore' : k);
+const stepOn = (k, act) => (k === 'horizon' ? (state.launch.horizon ?? (!horizonNow() && !curPlace())) : !!state.launch[stepKey(k, act)]);
 const GO = { observe: 'Start observing', explore: 'Start exploring', game: 'Start the game', plan: 'Start planning' };
 let flow = null;   // { steps: [..], i, dest, started, quiet }
-const stepsFor = (dest) => (PATH[dest] || []).filter((k) => stepOn(k) && !(k === 'align' && alignedNow()));
+const stepsFor = (dest) => (PATH[dest] || []).filter((k) => stepOn(k, dest) && !(k === 'align' && alignedNow()));
 /** "Dark from 6:32 PM · Moon 27% lit, sets 8:58 PM · Saturn and Jupiter are up" */
 function tonightLine() {
   try {
@@ -3126,9 +3181,9 @@ function renderLaunch() {
     <h3 class="lq">What are we up to?</h3>
     <div class="lgrid">${ACTIVITIES.map(([k, t, sub, ic]) => `<button class="act${k === act ? ' on' : ''}" data-act="${k}"><svg class="ic" viewBox="0 0 24 24">${ic}</svg><b>${t}</b><span class="muted">${sub}</span></button>`).join('')}</div>
     <div class="path">
-      <div class="pnote">Your path — tap a star to skip a stop</div>
+      <div class="pnote">Start-up refinements — tap a star to add or skip one</div>
       ${['check', 'sky', 'horizon', 'align'].map((k) => (stops.includes(k)
-    ? `<label class="stop"><input type="checkbox" data-step="${k}" ${stepOn(k) ? 'checked' : ''}><span><b>${STEP_INFO[k][0]}</b><span class="muted">${k === 'horizon' ? (stepOn(k) || horizonNow() || placeLabel() ? status[k] : 'skipped') : esc(stepOn(k) ? status[k] : k === 'check' && !chk ? 'optional — 4 min, shows how far to trust the arrows' : k === 'sky' && !sq && mapSky() ? `skipped — using the map estimate, about Bortle ${mapSky().bortle}` : 'skipped')}</span></span>${k === 'horizon' ? '<button id="l-hz" class="mini" type="button">Open</button>' : ''}</label>`
+    ? `<label class="stop"><input type="checkbox" data-step="${stepKey(k, act)}" ${stepOn(k, act) ? 'checked' : ''}><span><b>${STEP_INFO[k][0]}</b><span class="muted">${k === 'horizon' ? (stepOn(k) || horizonNow() || placeLabel() ? status[k] : 'skipped') : esc(stepOn(k, act) ? status[k] : k === 'check' && !chk ? 'optional — 4 min, shows how far to trust the arrows' : k === 'align' && act === 'explore' ? (alignedNow() ? 'already aligned' : 'optional — 2 min, makes the chart match the real sky') : k === 'sky' && !sq && mapSky() ? `skipped — using the map estimate, about Bortle ${mapSky().bortle}` : 'skipped')}</span></span>${k === 'horizon' ? '<button id="l-hz" class="mini" type="button">Open</button>' : ''}</label>`
     : `<div class="stop na"><input type="checkbox" disabled aria-hidden="true"><span><b>${STEP_INFO[k][0]}</b><span class="muted">not needed for this</span></span></div>`)).join('')}
       <div class="stop end"><span class="dest"></span><button id="l-go" class="primary">${GO[act]}</button></div>
     </div>
@@ -3747,7 +3802,7 @@ function runSkyCheck() {
     <button id="sq-ok" class="primary" style="width:100%;margin-top:8px">That's my sky — OK</button>
     <button id="sq-skip" style="width:100%;margin-top:6px">Can't see it (cloud, trees, not dark) — skip</button>`;
   const show = () => {
-    $('#sq-svg').innerHTML = chart(); $('#sq-title').textContent = SKY_LEVELS[lv][2]; $('#sq-cap').textContent = `${SKY_LEVELS[lv][3]} · about Bortle ${bortleOfNelm(SKY_LEVELS[lv][0])}${lv === SKY_LEVELS.length - 1 ? ' or darker' : ''}`;
+    $('#sq-svg').innerHTML = chart(); $('#sq-title').textContent = SKY_LEVELS[lv][2]; $('#sq-cap').textContent = `${SKY_LEVELS[lv][3]} · faintest stars magnitude ${SKY_LEVELS[lv][0].toFixed(1)}${lv === SKY_LEVELS.length - 1 ? ' or fainter' : ''} · about Bortle ${bortleOfNelm(SKY_LEVELS[lv][0])}${lv === SKY_LEVELS.length - 1 ? ' or darker' : ''}`;
     $('#sq-dots').innerHTML = SKY_LEVELS.map((_, i) => `<i class="${i === lv ? 'on' : ''}"></i>`).join('');
     $('#sq-less').disabled = lv === 0; $('#sq-more').disabled = lv === SKY_LEVELS.length - 1;
   };

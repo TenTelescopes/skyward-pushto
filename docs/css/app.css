@@ -438,3 +438,9 @@ body.camwin-open { overflow: hidden; }
 .whereline > span { flex: 1; min-width: 0; }
 .whereline > button { flex: none; }
 .btncol { display: flex; flex-direction: column; gap: 6px; flex: none; }
+/* Top-left telescope button: "Scope:" over the name, so the name fits on narrow phones */
+#st-scope { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; line-height: 1.15; max-width: 30%; }
+#st-scope small { font-size: 10.5px; opacity: .8; }
+#st-scope span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; color: var(--fg); }
+.list.hl .hlwhy { font-style: italic; opacity: .85; margin-top: 2px; }
+.list.hl button.mini { white-space: nowrap; flex: none; }
