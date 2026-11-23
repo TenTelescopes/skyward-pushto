@@ -437,3 +437,4 @@ body.camwin-open { overflow: hidden; }
 .whereline { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 4px 0 8px; }
 .whereline > span { flex: 1; min-width: 0; }
 .whereline > button { flex: none; }
+.btncol { display: flex; flex-direction: column; gap: 6px; flex: none; }

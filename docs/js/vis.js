@@ -37,6 +37,24 @@ export function starLimit(B, F = F_EYE) {
 /** Sky brightness (mag/arcsec²) for a naked-eye limiting magnitude — the widely used empirical conversion. */
 export function skyFromNelm(nelm) { return 21.58 - 5 * Math.log10(Math.max(1e-3, 10 ** (1.586 - nelm / 5) - 1)); }
 
+/** The inverse: naked-eye limiting magnitude for a sky brightness (mag/arcsec²). */
+export function nelmFromSky(sb) { return 5 * (1.586 - Math.log10(1 + 10 ** ((21.58 - sb) / 5))); }
+
+/**
+ * A sky darkness check made with the Moon up or in twilight measures light pollution + moonlight + twilight together.
+ * Take away the modelled moonlight and twilight in the direction looked at (the Little Dipper) to get the moonless sky
+ * (light pollution only), which is what the ratings start from; they add the Moon back for each target and time.
+ * Returns { nelm, share } (share = the part of the measured sky that is light pollution), or null when the Moon and
+ * twilight make up nearly all of what was seen, so the light pollution underneath can't be told.
+ */
+export function moonlessNelm({ nelm, moonAlt = -90, moonFrac = 0, sepDeg = 180, targetAlt = 45, sunAlt = -30 }) {
+  const Btot = cdFromSB(skyFromNelm(nelm));
+  const Bextra = moonlight({ moonAlt, moonFrac, sepDeg, targetAlt }) + twilight(sunAlt);
+  const Bbase = Btot - Bextra, share = Bbase / Btot;
+  if (share < 0.15) return null;
+  return { nelm: nelmFromSky(sbFromCd(Bbase)), share };
+}
+
 /** Moonlight at the target, cd/m² (Krisciunas & Schaefer 1991). */
 export function moonlight({ moonAlt, moonFrac, sepDeg, targetAlt }) {
   if (moonAlt <= 0 || targetAlt <= 0) return 0;

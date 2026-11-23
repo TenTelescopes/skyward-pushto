@@ -2,5 +2,8 @@
   "appId": "com.tentelescopes.skyward",
   "appName": "Skyward Push-To",
   "webDir": "docs",
-  "ios": { "contentInset": "always" }
+  "ios": {
+    "contentInset": "always"
+  },
+  "appendUserAgent": "SkywardPushTo/1.0 (+https://tentelescopes.com)"
 }

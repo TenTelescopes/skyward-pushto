@@ -428,3 +428,40 @@ unrelated extra star in the object-page sentence. Still open with Bryan: whether
 - "Update location" buttons (GPS, fresh fix: `maximumAge 0` when pressed) with a "📍 place · coordinates · GPS today
   8:15 PM" line (`whereText`, `wireUpdateLoc`) on the start screen, in Plan's Tonight box and on the "Your sky" page;
   Setup's button now reads "Update location (GPS)". `getGPS` redraws all of them when the fix arrives.
+
+## Build 101 (Nov 22)
+- Owner's phone showed "your sky about Bortle 9" after Update location: it came from a sky darkness check made under
+  a 96% Moon, which overrode the map everywhere and was then counted twice (the ratings add the Moon again).
+  Now: a check counts only within 15 km of where it was taken (`skyQ`). A check made with the Moon up or in
+  twilight measured light pollution + moonlight; `moonlessNelm` (vis.js) takes the modelled moonlight (Krisciunas &
+  Schaefer, Moon vs Polaris direction) and twilight away to get the light pollution alone (`q.base`), which the
+  ratings start from before adding the Moon back per target and time. If the Moon is >85% of what was seen, the
+  light pollution can't be told: the check isn't used for ratings and the map is. Checks saved earlier get `base`
+  worked out from their time (`checkBase`). Result page and tonight line say which happened
+  ("your sky about Bortle 6 (your check, Moon glow taken away)").
+- `getGPS` now resolves true/false and says why it failed (location off for the app → where to turn it on in
+  Settings; no fix in 30 s; browser blocked). Update location buttons return to normal straight away on failure.
+- Plan for another place: Plan's Tonight box → "Plan for another place" opens `openPlacePicker` (the light-pollution
+  map: drag to pan, Closer/Wider over 5 spans, tap to drop a pin, or type coordinates; shows the spot's name from
+  `LP_TOWNS` via `spotName` and its Bortle class). Stored as `plan.site {lat, lon, name}`. `withPlanSite(fn)` swaps the
+  Sky's site to it while the plan and its suggestions are worked out (`renderPlan`, `fillPlanSuggestions`), and
+  `here()` makes the map estimate, the 15 km check rule and the blocked sky (that place's saved one, if any) follow
+  it. Your own location, the start screen and Observe are untouched. "Use where I am" clears it. The rating cache key
+  now includes the place. `drawLightMap(cv, g, {center, pin, hLat, aspect})` returns its view for taps.
+  Not done: the route preview from a plan elsewhere still uses your location.
+- Town names: every place of 500+ people in the map's area from GeoNames cities500 (CC BY 4.0; 16,736 places after
+  dropping neighbourhoods/historical; `tools/towns/build.py` → `docs/data/towns.txt`, 526 kB, ~250 kB gzipped,
+  largest first). The Nov 2026 copy was taken in the built-in browser (range requests + DecompressionStream, cut to
+  the area there). `docs/js/towns.js`: `loadTowns`, `nearestName` (dark-sky site within 6 km, else nearest town with a
+  small preference for bigger ones, "near X, ON" beyond 3 km, none beyond 30 km), `DARK_SITES` (10 RASC/IDA sites,
+  coordinates from Wikipedia and go-astronomy.com). The maps label dark-sky sites first (gold star), then towns by
+  size until about one label per 3,500 px², skipping overlaps and keeping the scale bar and north clear.
+  Known gap: GeoNames has no population for some hamlets (e.g. Bala, Washago), so they don't appear.
+- Streets layer (with internet): the light-pollution maps are now Web Mercator (`drawLightMap` returns `px`/`ll`) so
+  OpenStreetMap tiles line up; tiles for the view only (`osmTile`, in-memory cache of 300, browser HTTP cache does the
+  rest; the service worker ignores cross-origin requests), under a dark veil with the Bortle colours at 40 % on top,
+  "© OpenStreetMap" on the map, Hide/Show streets (`state.streets`), hidden when offline. Picker zooms to ~3 km.
+  `appendUserAgent: "SkywardPushTo/1.0 (+https://tentelescopes.com)"` in capacitor.config.json (OSM requires an app
+  to name itself). No offline download of street tiles (OSM policy forbids it).
+  Coverage of the light-pollution map: 30°–50° N, 70°–100° W, ~5.65 million km², every cell has data; within ~250 km
+  of the edges the sky glow is underestimated (towns beyond the edge are not counted).
