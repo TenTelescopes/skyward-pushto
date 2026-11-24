@@ -446,7 +446,12 @@ body.camwin-open { overflow: hidden; }
 .list.hl button.mini { white-space: nowrap; flex: none; }
 .gpserr { color: var(--warn, #ffb08a); margin: -4px 0 8px; }
 .list li .tap, .list li [data-goplan] { cursor: pointer; }
-.epzoom { position: fixed; inset: 0; z-index: 60; background: rgba(0,0,0,0.94); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: max(12px, env(safe-area-inset-top)) 8px max(12px, env(safe-area-inset-bottom)); }
+.epzoom { position: fixed; inset: 0; z-index: 60; background: rgba(0,0,0,0.97); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: max(12px, env(safe-area-inset-top)) 8px max(12px, env(safe-area-inset-bottom)); }
 .epzoom .epz-h { width: 100%; max-width: 640px; display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
 .epzoom canvas { border-radius: 50%; }
 #sh-eps canvas { cursor: zoom-in; }
+.epzoom { touch-action: pan-y; }
+.epzoom .epz-nav { display: flex; align-items: center; gap: 16px; }
+.epzoom .epz-nav button:disabled { opacity: .3; }
+.epzoom #epz-dots i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin: 0 4px; background: var(--line, #555); }
+.epzoom #epz-dots i.on { background: var(--fg, #fff); }

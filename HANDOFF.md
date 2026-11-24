@@ -519,3 +519,8 @@ unrelated extra star in the object-page sentence. Still open with Bryan: whether
 ## Build 104 (Nov 23): labelled doubles, full-screen eyepiece view
 - Eyepiece pictures of doubles: each star is labelled with its catalogue letter (A, B; C for an AC pair). The full-size view adds the name and magnitude ("Polaris B (mag 9.1)"); a pair the scope can't split gets one "A+B" label. A faint companion is now drawn clear of the bright star's glow. Before, Polaris B at 75× sat inside Polaris A's glow and couldn't be seen. "Split at this power" uses the same `splitArcsec` rule as the ratings.
 - Tap an eyepiece preview in a target's sheet to fill the screen with it (`openEpZoom`). It redraws every 4 s and closes on a tap.
+
+## Build 105 (Nov 23): swipe between eyepieces in the full-screen view
+- `openEpZoom`: swipe left or right, or tap the ‹ › buttons, to move to the next or previous eyepiece, in the same order
+  as the previews (longest first). Dots show which eyepiece you're on. Tapping the picture itself no longer closes it;
+  tap outside the picture or ✕ to close.

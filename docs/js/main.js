@@ -3141,28 +3141,52 @@ function renderLog() {
 // ---------------------------------------------------------------- OBJECT SHEET: what it is, how it looks tonight, what to do with it
 function closeSheet() { $('#sheet').classList.add('hidden'); }
 let sheetStep = null;                               // steps the open target page through the list it came from
-/** One eyepiece view filling the screen (tap a small preview). Redrawn every few seconds as the sky turns. */
+/** One eyepiece view filling the screen (tap a small preview). Swipe, or tap ‹ ›, for the next eyepiece; tap elsewhere
+ *  to close. Same order as the previews (longest focal length first). Redrawn every few seconds as the sky turns. */
 function openEpZoom(o, epi) {
-  const p = profile(), e = p.eyepieces[epi]; if (!e) return;
+  const p = profile(); if (!p.eyepieces[epi]) return;
+  const order = p.eyepieces.map((e, i) => ({ e, i })).sort((a, b) => b.e.fl - a.e.fl).map((x) => x.i);
+  let at = Math.max(0, order.indexOf(epi));
   let box = $('#epzoom'); if (box) box.remove();
   box = document.createElement('div'); box.id = 'epzoom'; box.className = 'epzoom';
-  const side = Math.min(window.innerWidth - 16, window.innerHeight - 170), dpr = Math.min(3, window.devicePixelRatio || 1);
-  box.innerHTML = `<div class="epz-h"><div><b>${esc(o.label)}</b> in the ${esc(e.name)} · ${(p.fl / e.fl).toFixed(0)}×<div class="muted small" id="epz-note"></div></div><button class="ibtn" id="epz-x" aria-label="Close">✕</button></div>
+  const side = Math.min(window.innerWidth - 16, window.innerHeight - 200), dpr = Math.min(3, window.devicePixelRatio || 1);
+  box.innerHTML = `<div class="epz-h"><div><b>${esc(o.label)}</b> <span id="epz-t"></span><div class="muted small" id="epz-note"></div></div><button class="ibtn" id="epz-x" aria-label="Close">✕</button></div>
     <canvas id="epz-cv" width="${Math.round(side * dpr)}" height="${Math.round(side * dpr)}" style="width:${side}px;height:${side}px"></canvas>
-    <p class="muted small" id="epz-cap">To scale for this eyepiece; brightness is not to scale. Tap anywhere to close.</p>`;
+    <div class="epz-nav"><button class="ibtn" id="epz-prev" aria-label="Previous eyepiece">‹</button><span id="epz-dots"></span><button class="ibtn" id="epz-next" aria-label="Next eyepiece">›</button></div>
+    <p class="muted small" id="epz-cap"></p>`;
   document.body.appendChild(box);
   const draw = () => {
     if (!box.isConnected) return clearInterval(tick);
+    const e = p.eyepieces[order[at]];
+    $('#epz-t').textContent = `in the ${e.name} · ${(p.fl / e.fl).toFixed(0)}×`;
+    $('#epz-dots').innerHTML = order.map((_, k) => `<i class="${k === at ? 'on' : ''}"></i>`).join('');
+    $('#epz-prev').disabled = at === 0; $('#epz-next').disabled = at === order.length - 1;
+    let cap = 'To scale for this eyepiece; brightness is not to scale.';
     try {
       const cv = $('#epz-cv'), now = new Date(), tg = sky.altAz(o, now), longest = p.eyepieces.reduce((a, x) => (x.fl > a.fl ? x : a), p.eyepieces[0]);
       const res = drawEyepiece(cv, sky, o.pairs && o.key.startsWith('st:') ? { ...o, t: 'DS' } : o, tg, e, p, { matrix: state.rot180 ? newtonianMatrix(tg, p.focuser ?? 90) : null, bright: vis(), refExit: p.aperture / (p.fl / longest.fl), date: now });
       if (res) $('#epz-note').textContent = [res.note, `field ${res.tfov >= 1 ? res.tfov.toFixed(1) + '°' : (res.tfov * 60).toFixed(0) + '′'}`].filter(Boolean).join(' · ');
-      if (res && res.widened) $('#epz-cap').textContent = 'Close pairs are drawn a little wider than scale so the split the eye sees shows up. Tap anywhere to close.';
-      if (res && res.enlarged) $('#epz-cap').textContent = `The planet is drawn ${res.enlarged}× larger than scale. Tap anywhere to close.`;
+      if (res && res.widened) cap = 'Close pairs are drawn a little wider than scale so the split the eye sees shows up.';
+      if (res && res.enlarged) cap = `The planet is drawn ${res.enlarged}× larger than scale.`;
     } catch (err) { console.error(err); }
+    $('#epz-cap').textContent = `${cap} ${order.length > 1 ? 'Swipe for the next eyepiece; ' : ''}tap outside the view to close.`;
   };
+  const go = (d) => { const n = Math.max(0, Math.min(order.length - 1, at + d)); if (n !== at) { at = n; draw(); } };
+  const close = () => { clearInterval(tick); box.remove(); };
   const tick = setInterval(draw, 4000); draw();
-  box.onclick = () => { clearInterval(tick); box.remove(); };
+  let x0 = null, y0 = 0, swiped = false;
+  box.addEventListener('pointerdown', (ev) => { x0 = ev.clientX; y0 = ev.clientY; swiped = false; });
+  box.addEventListener('pointerup', (ev) => {
+    if (x0 == null) return; const dx = ev.clientX - x0, dy = ev.clientY - y0; x0 = null;
+    if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy) * 1.2) { swiped = true; go(dx < 0 ? 1 : -1); }
+  });
+  box.onclick = (ev) => {
+    if (swiped) { swiped = false; return; }
+    if (ev.target.closest('#epz-prev')) return go(-1);
+    if (ev.target.closest('#epz-next')) return go(1);
+    if (ev.target.id === 'epz-cv' || ev.target.closest('.epz-nav')) return;   // a tap on the view itself keeps it open
+    close();
+  };
 }
 function openObject(key, opt = {}) {
   const o = objByKey(key); if (!o) return;
