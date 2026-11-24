@@ -111,7 +111,7 @@ export function outlook(rows, { moonUp, nelm, fromCheck = false, restOfNight = f
   if (tr != null && tr <= 2) hints.push('Hazy air dims faint things before it bothers bright ones: a night for clusters, doubles and planets.');
   if (seeingWord(see) === 'poor') hints.push('Unsteady air blurs planets at high power. Stay at medium power, or wait: the air often settles later in the night.');
   if (seeingWord(see) === 'good' && tr != null && tr <= 3) hints.push('Steady air often comes with a little haze — the same calm, moist air. Good news for planets and doubles.');
-  hints.push('Transparency is how clear the air is (faint things); seeing is how steady it is (fine detail). They are different nights.');
+  hints.push('Transparency is how clear the air is, which matters for faint galaxies and nebulae. Seeing is how steady it is, which matters for detail on planets and close doubles. The two rarely peak together: crisp nights after a cold front are often unsteady, and calm, slightly hazy nights are often the steadiest.');
   return { kind, from: best.from, to: new Date(best.to.getTime() + 3600000), seeing: see, transp: tr, brightMoon, effNelm,
     text: `${window}${bits.length ? ', with ' + bits.join(', ') : ''}.`, best: out, hints };
 }

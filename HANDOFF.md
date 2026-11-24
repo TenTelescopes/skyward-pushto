@@ -714,3 +714,10 @@ unrelated extra star in the object-page sentence. Still open with Bryan: whether
   - Bug fixed: once steady air had been checked or picked that day (for example with Plan's "Steady air" picker), the
     step was silently dropped, so the flow jumped from the previous step straight to blocked-sky tracing. It now
     always runs when its star is on, showing "Earlier tonight: … check again, or keep it".
+
+## Build 108 (Nov 24): faces and hour labels on the forecast strip; clearer tips
+- Forecast strip, second pass:
+  - Emoji-style faces per hour (`FACEPIC`), drawn rather than real emoji so Night stays red. Filled in the `--q0…3`
+    colours with dark features: star-eyed grin (great), smile (good), flat mouth (so-so), frown behind a cloud (cloud).
+  - Every tile is labelled with its hour; am/pm shows on the first and last tiles and on 12a/12p.
+  - The key under the strip uses the same faces.

@@ -525,11 +525,18 @@ body[data-tab="find"] #st-pill, body[data-tab="plan"] #st-pill, body[data-tab="m
 
 /* Night strip: one little sky picture per hour; dark tile = fully dark, lighter = twilight; Moon above when bright */
 .cbar { margin-top: 6px; }
-.cbar > i { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 1px; height: 38px; padding: 2px 0 3px; border-radius: 5px; background: var(--press); font-style: normal; }
+.cbar > i { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 2px; padding: 3px 0 2px; border-radius: 5px; background: var(--press); font-style: normal; }
+.cbar > i b { font-size: 11px; font-weight: 600; color: var(--dim); line-height: 1; }
+.cbar > i em.skg { display: block; height: 10px; }
 .cbar > i.dk { background: var(--chart); }
 .cbar > i.q0 { color: var(--q0); } .cbar > i.q1 { color: var(--q1); } .cbar > i.q2 { color: var(--q2); } .cbar > i.q3 { color: var(--q3); }
-.cbar .skp { width: 18px; height: 18px; }
+.cbar .skp { width: 20px; height: 20px; max-width: 100%; }
 .cbar .skm { width: 10px; height: 10px; color: var(--dim); }
 .cbar .qkey .skm { display: inline-block; vertical-align: -1px; }
 .glance svg.face { width: 18px; height: 18px; }
 .glance span.go svg.face.q0 { color: var(--q0); }
+
+.cbar .cbl { justify-content: center; }
+.cbar .qkey { flex-wrap: wrap; justify-content: center; gap: 2px 4px; }
+.cbar .qkey .skp { width: 13px; height: 13px; vertical-align: -2px; }
+.cbar .qkey .skp:nth-of-type(1) { color: var(--q0); } .cbar .qkey .skp:nth-of-type(2) { color: var(--q1); } .cbar .qkey .skp:nth-of-type(3) { color: var(--q2); } .cbar .qkey .skp:nth-of-type(4) { color: var(--q3); }

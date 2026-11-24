@@ -3255,6 +3255,15 @@ const SKYPIC = [
   `<svg viewBox="0 0 24 24" class="skp"><path fill="currentColor" d="${spark(17, 6, 3.6)}"/><path d="${CLOUD}" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>`,   // poor: a star peeking past a cloud
   `<svg viewBox="0 0 24 24" class="skp"><path d="${CLOUD}" fill="currentColor"/></svg>`,                                                                               // clouded out
 ];
+/** Emoji-style faces for each hour, filled in the level's colour with dark features (drawn, so Night stays red):
+ *  star-eyed grin, smile, flat mouth, frown behind a cloud. */
+const FACEPIC = [0, 1, 2, 3].map((l) => {
+  const ink = 'var(--bg)', eyes = l === 0 ? `<path fill="${ink}" d="${spark(8.4, 9.6, 3)}${spark(15.6, 9.6, 3)}"/>` : `<circle cx="8.8" cy="9.8" r="1.5" fill="${ink}"/><circle cx="15.2" cy="9.8" r="1.5" fill="${ink}"/>`;
+  const mouth = [`<path d="M6.8 13.3h10.4a5.2 5.2 0 0 1-10.4 0z" fill="${ink}"/>`, `<path d="M8 14.3a4.6 4.6 0 0 0 8 0" fill="none" stroke="${ink}" stroke-width="1.8" stroke-linecap="round"/>`,
+    `<path d="M8.4 15.6h7.2" stroke="${ink}" stroke-width="1.8" stroke-linecap="round"/>`, `<path d="M8.3 16.6a4.4 4.4 0 0 1 7.4 0" fill="none" stroke="${ink}" stroke-width="1.8" stroke-linecap="round"/>`][l];
+  const cloud = l === 3 ? `<path d="${'M7 19h10a4 4 0 0 0 .5-8 6 6 0 0 0-11.4 1.5A3.3 3.3 0 0 0 7 19z'}" transform="translate(5 6) scale(.75)" fill="currentColor" stroke="${ink}" stroke-width="1.4"/>` : '';
+  return `<svg viewBox="0 0 24 24" class="skp"><circle cx="12" cy="12" r="10.5" fill="currentColor"/>${eyes}${mouth}${cloud}</svg>`;
+});
 const MOONPIC = '<svg viewBox="0 0 24 24" class="skm"><path fill="currentColor" d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/></svg>';
 /** Tonight in one face: star-eyed (clear, dark, no bright Moon), smiling, so-so, or behind a cloud. */
 function verdictFace(o) {
@@ -3283,11 +3292,13 @@ function glanceHTML(rec, n, t = new Date()) {
     // shown above the hour rather than counted against it: it spoils galaxies, not planets, doubles or the Moon.
     const q = (r) => (r.cloud == null ? 2 : r.cloud >= 80 ? 3 : r.cloud >= 50 ? 2 : r.cloud >= 20 || (r.transp && r.transp <= 2) ? 1 : 0);
     const QN = ['good', 'OK', 'poor', 'clouded out'];
-    const cells = rec.rows.map((r) => {
+    const cells = rec.rows.map((r, ix) => {
       const dk = sky.sunAlt(r.t) <= -18, mi = sky.moonInfo(r.t), moon = mi.alt > 0 && mi.frac > 0.4;
-      return `<i class="q${q(r)}${dk ? ' dk' : ''}" title="${hh(r.t)}: ${QN[q(r)]}${dk ? ', fully dark' : ', twilight'}${moon ? ', bright Moon up' : ''}">${moon ? MOONPIC : ''}${SKYPIC[q(r)]}</i>`;
+      const h = r.t.getHours(), ap = h < 12 ? 'a' : 'p', edge = ix === 0 || ix === rec.rows.length - 1;
+      const lab = h === 0 ? '12a' : h === 12 ? '12p' : `${h % 12}${edge ? ap : ''}`;          // am/pm on the ends and at midnight
+      return `<i class="q${q(r)}${dk ? ' dk' : ''}" title="${hh(r.t)}: ${QN[q(r)]}${dk ? ', fully dark' : ', twilight'}${moon ? ', bright Moon up' : ''}">${moon ? MOONPIC : '<em class="skg"></em>'}${FACEPIC[q(r)]}<b>${lab}</b></i>`;
     }).join('');
-    chips.push(`<div class="cbar" role="img" aria-label="Sky by hour: ${rec.rows.map((r) => QN[q(r)]).join(', ')}">${cells}<div class="cbl"><span>${hh(rec.rows[0].t)}</span><span class="qkey">dark tile = fully dark · ${MOONPIC} bright Moon up</span><span>${hh(rec.rows[rec.rows.length - 1].t)}</span></div></div>`);
+    chips.push(`<div class="cbar" role="img" aria-label="Sky by hour: ${rec.rows.map((r) => QN[q(r)]).join(', ')}">${cells}<div class="cbl"><span class="qkey">${FACEPIC[0]} great · ${FACEPIC[1]} good · ${FACEPIC[2]} so-so · ${FACEPIC[3]} cloud · dark tile = fully dark · ${MOONPIC} bright Moon</span></div></div>`);
   }
   return `<div class="glance">${chips.join('')}${o && o.best && o.best.length ? `<div class="muted small" style="flex-basis:100%">Best for ${esc(o.best[0])}.</div>` : ''}</div>`;
 }
@@ -3377,7 +3388,7 @@ const TIPS = [
   'The Moon is best near first and last quarter, when shadows along the line between light and dark show the craters. A full Moon is flat and glaring.',
   'Not sure a faint glow is there? Tap the tube gently. The eye notices a faint object much more easily while it moves.',
   'Find with low power, look with more. The widest eyepiece makes finding easy; then step up one at a time.',
-  'Twinkling tells you how steady the air is. Steady air brings out planets and close doubles; dark, clear air brings out galaxies. They are different nights.',
+  'Twinkling tells you how steady the air is. Steady air brings out planets and close doubles; dark, clear air brings out galaxies. They are often different nights: crisp, sparkling skies after a cold front tend to be unsteady.',
   'Doubles are perfect for Moon nights and city skies: moonlight and streetlights barely touch them.',
   'Let the telescope cool for 20–30 minutes before trying high power. A warm mirror makes its own shimmer.',
   'Sketching, even badly, makes you see more. You look longer and notice details you would otherwise skip.',
