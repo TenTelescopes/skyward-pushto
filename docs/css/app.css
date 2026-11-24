@@ -28,7 +28,7 @@ h2 { font-size: 19px; margin: 6px 0 8px; color: var(--hi); font-weight: 700; }
 h3 { font-size: 15px; margin: 16px 0 6px; color: var(--fg); font-weight: 600; }
 p { margin: 6px 0; }
 .muted { color: var(--dim); font-size: 14px; }
-.small { font-size: 13px; }
+.small { font-size: 14px; }
 .hidden { display: none !important; }
 a { color: var(--hi); }
 svg.ic { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; display: block; }
@@ -93,7 +93,7 @@ details.more[open] > summary::before { content: '– '; }
 .list li { display: flex; gap: 10px; align-items: center; padding: 10px 2px; border-bottom: 1px solid var(--row); min-height: 56px; }
 .list li .main { flex: 1; min-width: 0; }
 .list li .t1 { color: var(--hi); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.list li .t2 { color: var(--dim); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.list li .t2 { color: var(--dim); font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .list li .r { flex: none; text-align: right; font-size: 13px; color: var(--dim); }
 .list li.sel { background: var(--sel); }
 .list li.below .t1, .list li.done .t1 { color: var(--dim); }
@@ -163,7 +163,7 @@ canvas.chart.big { width: min(100%, max(280px, calc(100dvh - 340px))); }
 .overlay.sheet .card { margin: 0; max-width: 520px; max-height: 100%; overflow-y: auto; border-radius: 16px 16px 0 0; border-bottom: 0; padding-bottom: calc(16px + var(--safe-b)); }
 .sheet-h { display: flex; align-items: flex-start; gap: 8px; }
 .sheet-h > div { flex: 1; min-width: 0; }
-#toast { position: fixed; left: 50%; bottom: calc(132px + var(--safe-b)); transform: translateX(-50%); background: var(--press); border: 1px solid var(--fg); color: var(--hi); padding: 10px 16px; border-radius: 10px; z-index: 20; width: max-content; max-width: 90%; text-align: center; }
+#toast { position: fixed; left: 50%; bottom: calc(64px + var(--safe-b)); transform: translateX(-50%); background: var(--press); border: 1px solid var(--line); color: var(--hi); padding: 8px 14px; border-radius: 10px; z-index: 20; width: max-content; max-width: 92%; text-align: center; font-size: 14px; box-shadow: 0 4px 16px rgba(0,0,0,.5); }
 .bar { height: 8px; background: var(--bar); border-radius: 4px; overflow: hidden; margin: 8px 0; }
 .bar > div { height: 100%; background: var(--fg); width: 0; }
 table.res { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
@@ -215,7 +215,7 @@ svg.umi text.muted { fill: var(--dim); font-size: 10px; }
 .picks::-webkit-scrollbar { display: none; }
 .picks button { flex: none; width: 132px; min-height: 84px; text-align: left; padding: 8px 10px; }
 .picks button b { display: block; color: var(--hi); font-size: 17px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.picks button span { display: block; font-size: 12px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.picks button span { display: block; font-size: 13px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sech { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin: 4px 0 6px; }
 .sech h3 { margin: 0; }
 
@@ -267,11 +267,11 @@ body::before, #gate::before { content: ""; position: fixed; inset: 0; z-index: -
 .lgrid button.act.on svg.ic { color: var(--hi); }
 .path { position: relative; margin: 14px 0 6px; padding-left: 4px; }
 .path::before { content: ""; position: absolute; left: 20px; top: 34px; bottom: 26px; border-left: 2px dotted var(--line); }
-.pnote { font-size: 13px; color: var(--dim); margin: 0 0 4px 44px; }
+.pnote { font-size: 14px; color: var(--dim); margin: 0 0 4px 44px; }
 .stop { position: relative; display: flex; align-items: center; gap: 12px; min-height: 50px; }
 .stop > span { flex: 1; min-width: 0; font-size: 15px; }
 .stop > span b { font-weight: 600; }
-.stop > span .muted { display: block; font-size: 12px; }
+.stop > span .muted { display: block; font-size: 13px; }
 .stop input { -webkit-appearance: none; appearance: none; flex: none; width: 34px; height: 34px; min-height: 0; margin: 0; padding: 0; border: 0; border-radius: 0; background: var(--line); cursor: pointer;
   -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 1.5l2.6 7.9 8.4 2.6-8.4 2.6L12 22.5l-2.6-7.9L1 12l8.4-2.6z'/%3E%3C/svg%3E") center / contain no-repeat;
   mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 1.5l2.6 7.9 8.4 2.6-8.4 2.6L12 22.5l-2.6-7.9L1 12l8.4-2.6z'/%3E%3C/svg%3E") center / contain no-repeat; transition: transform .2s, background .2s; transform: scale(.62); }
@@ -283,7 +283,10 @@ body::before, #gate::before { content: ""; position: fixed; inset: 0; z-index: -
 
 /* ---- splash: two seconds of fun, then out of the way. Pure CSS so it shows before the app has loaded. */
 #splash { position: fixed; inset: 0; z-index: 60; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; pointer-events: none;
-  background: linear-gradient(#05091e, #121842 55%, #3a2c60); color: #e9edff; animation: splout .6s ease 1.9s forwards; }
+  background: linear-gradient(#05091e, #121842 55%, #3a2c60); color: #e9edff; animation: splout .5s ease 1.9s forwards; }
+/* The start screen waits until the splash has gone, then fades in: no ghost of the logo over its text. */
+#launch { animation: lin .35s ease 2.35s both; }
+@keyframes lin { from { opacity: 0; } to { opacity: 1; } }
 .spl-art { position: relative; width: min(62vw, 260px, 34vh); margin-bottom: 18px; }
 .spl-sky { position: absolute; inset: -8% -12%; width: 124%; height: 116%; overflow: visible; }
 .spl-scope { position: relative; display: block; width: 100%; height: auto; animation: rise .7s ease both; }
@@ -295,7 +298,7 @@ body::before, #gate::before { content: ""; position: fixed; inset: 0; z-index: -
 @keyframes twinkle { from { opacity: .35; } to { opacity: 1; } }
 @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
 @keyframes splout { to { opacity: 0; visibility: hidden; } }
-@media (prefers-reduced-motion: reduce) { #splash { animation-delay: .9s; } .spl-scope, .spl-stars circle, .spl-name, .spl-tag { animation: none; } }
+@media (prefers-reduced-motion: reduce) { #splash { animation-delay: .9s; } #launch { animation-delay: 1.35s; } .spl-scope, .spl-stars circle, .spl-name, .spl-tag { animation: none; } }
 
 /* start screen holds still when you switch activity: it sits at the top, and every activity shows the same three stops */
 #gate > .card { margin: 0 0 auto; }
@@ -450,8 +453,70 @@ body.camwin-open { overflow: hidden; }
 .epzoom .epz-h { width: 100%; max-width: 640px; display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
 .epzoom canvas { border-radius: 50%; }
 #sh-eps canvas { cursor: zoom-in; }
-.epzoom { touch-action: pan-y; }
 .epzoom .epz-nav { display: flex; align-items: center; gap: 16px; }
 .epzoom .epz-nav button:disabled { opacity: .3; }
 .epzoom #epz-dots i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin: 0 4px; background: var(--line, #555); }
 .epzoom #epz-dots i.on { background: var(--fg, #fff); }
+.seebtns { display: grid; gap: 8px; margin: 10px 0; }
+.seebtns button { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; padding: 10px 12px; }
+.seebtns.pics { grid-template-columns: repeat(3, 1fr); }
+.seebtns.pics button { align-items: center; text-align: center; font-size: 13px; }
+.seepic { width: 64px; height: 64px; color: var(--hi, #fff); }
+ul.how { padding-left: 18px; margin: 6px 0; } ul.how li { margin: 4px 0; }
+.fc { margin: 8px 0 4px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; }
+.fcgrid { display: flex; gap: 2px; overflow-x: auto; padding: 6px 0; -webkit-overflow-scrolling: touch; }
+.fch { display: flex; flex-direction: column; align-items: center; min-width: 38px; font-size: 12px; gap: 3px; }
+.fch.lab { align-items: flex-start; min-width: 62px; color: var(--dim); position: sticky; left: 0; background: var(--panel); }
+.fch span { height: 18px; line-height: 18px; white-space: nowrap; }
+.fcc { width: 34px; text-align: center; border-radius: 4px; border: 1px solid var(--line); background: color-mix(in srgb, var(--fg) calc(var(--c) * 45%), transparent); }
+.fcattr { font-size: 11px; opacity: .8; }
+
+/* Pointing status only where pointing matters (Observe, Play, Align and the like) */
+body[data-tab="find"] #st-pill, body[data-tab="plan"] #st-pill, body[data-tab="more"] #st-pill { visibility: hidden; }
+/* Target sheet: why this eyepiece, full width under the facts */
+.why { margin: 8px 0 4px; padding: 8px 10px; border-left: 2px solid var(--line); font-size: 14px; }
+.why .tip { margin-top: 4px; color: var(--dim); font-style: italic; }
+/* Tonight at a glance */
+.glance { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 2px; }
+.glance span { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border: 1px solid var(--line); border-radius: 14px; font-size: 14px; white-space: nowrap; }
+.glance span.go { color: var(--hi); border-color: var(--fg); }
+.glance svg.ic { width: 15px; height: 15px; }
+
+/* Line icons inside text (instead of emoji, which turn colourful on iPhones and break night mode) */
+.small svg.ic, .muted svg.ic, .tipline svg.ic, .fc svg.ic, .whereline svg.ic, #pp-info svg.ic { display: inline-block; vertical-align: -3px; width: 15px; height: 15px; margin-right: 4px; }
+.fc b svg.ic { width: 17px; height: 17px; }
+/* Find: labels over the two rows of round buttons */
+.chiplab { font-size: 13px; color: var(--dim); margin: 8px 0 2px; text-transform: uppercase; letter-spacing: .6px; }
+/* The night's cloud, one segment per hour */
+.cbar { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 2px; margin-top: 4px; }
+.cbar i { flex: 1; height: 8px; border-radius: 2px; background: color-mix(in srgb, var(--hi) calc((1 - var(--c)) * 85%), var(--line)); }
+.cbar .cbl { flex-basis: 100%; display: flex; justify-content: space-between; font-size: 12px; color: var(--dim); }
+.glance .cbl span { border: 0; padding: 0; border-radius: 0; font-size: 12px; }
+/* Native-feeling swipes: the phone's own scrolling, snapping card by card */
+.epz-track { display: flex; width: 100%; max-width: 640px; overflow-x: auto; scroll-snap-type: x mandatory; overscroll-behavior-x: contain; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+.epz-track::-webkit-scrollbar { display: none; }
+.epz-page { flex: 0 0 100%; display: flex; justify-content: center; scroll-snap-align: center; scroll-snap-stop: always; }
+.epzoom { touch-action: auto; }
+.eprow, .picks { scroll-snap-type: x mandatory; overscroll-behavior-x: contain; }
+.eprow figure, .picks button { scroll-snap-align: start; }
+#sheet-card { touch-action: pan-y; will-change: transform; }
+.epz-mode { width: 100%; max-width: 520px; }
+.epz-mode .chips { gap: 6px; }
+.epz-mode .chips button { min-height: 36px; padding: 4px 12px; font-size: 14px; opacity: .55; }
+.epz-mode .chips button.on { opacity: 1; color: var(--hi); border-color: var(--fg); background: var(--sel); }
+.epz-mode .mini { margin: 4px 4px 0 0; }
+/* Telescope simulator */
+.simview { display: flex; justify-content: center; margin: 8px 0 4px; }
+.simview canvas { border-radius: 50%; background: #000; }
+.simrow { display: flex; flex-direction: column; gap: 2px; margin: 8px 0; }
+.simrow > span:first-child { display: flex; justify-content: space-between; font-size: 15px; }
+.simrow input[type=range] { width: 100%; min-height: 36px; }
+#sm-f button { min-height: 36px; padding: 4px 12px; font-size: 14px; opacity: .55; }
+#sm-f button.on { opacity: 1; color: var(--hi); border-color: var(--fg); background: var(--sel); }
+/* Basic / Advanced: the advanced controls only show when switched on */
+.adv { display: none; }
+.show-adv .adv { display: block; }
+.advseg { margin: 8px 0; }
+.advseg button.on { color: var(--hi); background: var(--sel); }
+.eprow figure.notrec canvas { opacity: .55; }
+.eprow figcaption .flag { display: block; white-space: normal; color: var(--hi); font-size: 12px; line-height: 1.25; margin-top: 2px; }

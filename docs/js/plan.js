@@ -2,7 +2,7 @@
 // Pure apart from the Sky instance it is handed (positions only), so it can be unit-tested in Node.
 
 import { rate, describe, LEVEL_NAMES, DEFAULT_NELM } from './vis.js';
-import { BLURBS } from '../data/blurbs.js';
+import { BLURBS, PAIR_CLASS } from '../data/blurbs.js';
 import { blocked } from './horizon.js';
 
 export const LEVELS = LEVEL_NAMES.slice(0, 3);       // Obvious, Visible, Challenging ("Not tonight" is left out)
@@ -32,7 +32,9 @@ export function planTargets(sky, { start, hours, scope, nelm = DEFAULT_NELM, min
       if (!from) from = t; to = t;
       if (!bestR || r.margin > bestR.margin + 0.05 || (Math.abs(r.margin - bestR.margin) <= 0.05 && p.alt > pos.alt)) { bestR = r; bi = i; pos = p; }
     });
-    if (bestR) out.push({ o, key: o.key, level: bestR.level, margin: bestR.margin, ep: bestR.ep, cause: bestR.cause, desc: describe(o, bestR), best: times[bi], alt: pos.alt, az: pos.az, from, to });
+    if (bestR) { const cm = cond[bi].moon;
+      out.push({ o, key: o.key, level: bestR.level, margin: bestR.margin, ep: bestR.ep, epSteady: bestR.epSteady || null, cause: bestR.cause, desc: describe(o, bestR), best: times[bi], alt: pos.alt, az: pos.az, from, to,
+        moonSep: cm.alt > 0 ? sepP(pos.alt, pos.az, cm.alt, cm.az) : 180, moonFrac: cm.frac, setting: pos.az > 180 && bi === 0 }); }
   }
   return out.sort((a, b) => a.best - b.best || a.level - b.level);
 }
@@ -174,12 +176,28 @@ const COMPANIONS = new Set(['M32', 'M110', 'M43']);     // seen in the same view
 export function interest(o) {
   if (o.planet) return ({ Moon: 6.5, Saturn: 6.5, Jupiter: 6.5, Mars: 5, Venus: 4.5, Mercury: 3, Uranus: 2.5, Neptune: 2 })[o.id] ?? 2;
   const k = kindOf(o), key = o.key || '';
-  if (key.startsWith('st:')) return k === 'DS' ? 4.5 : 2.5;          // showpiece stars: famous doubles rank with the good Messiers
+  if (k === 'DS') return doubleInterest(o);
+  if (key.startsWith('st:')) return 2.5;
   let s = isM(o) ? 3 : isC(o) ? 1.5 : (o.cats || []).includes('H400') ? 0.8 : 0;
   if (o.name) s += 1;                                                // has a common name: people have heard of it
   if ((BLURBS[o.label] || BLURBS[o.id]) && !COMPANIONS.has(o.label)) s += 1.5;   // one of the written-up showpieces
-  if (k === 'DS') s += /^(HD|HR|BD|STF|\d)/.test(o.label || '') ? 1.3 : 2.3;      // a double with a real name is easier to care about
   if (k === 'AS') s += 0.6;
+  return s;
+}
+/** Spectral classes in order of colour, blue to red, for judging how much two stars' colours differ. */
+const SPEC = 'OBAFGKM';
+/**
+ * How much of a crowd-pleaser a double star is: both stars bright enough to see at a glance, colours that differ, and
+ * fame. Being in the Messier list counts for nothing here: M40 is two dim stars (9.7 and 10.1), famously disappointing.
+ */
+export function doubleInterest(o) {
+  const p = (o.pairs && o.pairs[0]) || {}, ms = String(p.mags || '').split('/').map(Number).filter((x) => !Number.isNaN(x));
+  const faint = ms.length ? Math.max(...ms) : (o.mag ?? 8) + 1;
+  let s = 2 + (faint <= 6 ? 2 : faint <= 7.5 ? 1 : faint <= 9 ? 0 : -1.5);    // the companion easy, fair, hard, or a struggle
+  const cl = PAIR_CLASS[o.label] || PAIR_CLASS[o.id];
+  if (cl && Math.abs(SPEC.indexOf(cl[0]) - SPEC.indexOf(cl[1])) >= 2) s += 1;   // gold-and-blue kind of contrast
+  if (faint <= 8 && (cl || BLURBS[o.label] || BLURBS[o.id])) s += 1.5;            // a famous, written-up showpiece
+  if (/^(HD|HR|BD|STF|\d)/.test(o.label || '')) s -= 1;                            // only a catalogue number
   return s;
 }
 /** Tonight's ranking: fame first, then how far above the visibility limit it is, and a comfortable height. */
@@ -197,24 +215,40 @@ export function varied(ranked, n, perKind = 2) {
  * Build a plan automatically from planTargets() rows: mostly Obvious and Visible showpieces of different kinds,
  * plus one or two Challenging ones for longer sessions. About four targets an hour. Returns rows (unordered).
  */
-export function autoPlan(rows, { hours = 2 } = {}) {
+/** Objects seen in the same eyepiece view as a bigger neighbour: left out of an automatic plan when the neighbour is up. */
+const HOST = { M32: 'M31', M110: 'M31', M43: 'M42' };
+const mLabel = (o) => (o.cats || []).find((c) => /^M\d+$/.test(c)) || o.label;
+export function autoPlan(rows, { hours = 2, seen = null } = {}) {
   const n = Math.max(5, Math.min(14, Math.round(hours * 4)));
-  const ranked = rows.map((r) => ({ ...r, s: pickScore(r.o, r, r.alt) })).sort((a, b) => b.s - a.s || (a.key < b.key ? -1 : 1));
+  const up = new Set(rows.map((r) => mLabel(r.o)));
+  rows = rows.filter((r) => {
+    const h = HOST[mLabel(r.o)]; if (h && up.has(h)) return false;                     // M32 goes with M31, M43 with M42
+    // Glare: a bright Moon within 15° fills an open-tube telescope with scattered light (planets and the Moon itself excepted).
+    if (!r.o.planet && r.moonSep != null && r.moonSep < 15 && r.moonFrac > 0.3) return false;
+    return true;
+  });
+  const score = (r) => pickScore(r.o, r, r.alt)
+    - (seen && seen.has(r.key) && !r.o.planet ? 0.8 : 0)                              // something new beats a repeat
+    + (r.setting ? 0.4 : 0);                                                           // low in the west at dark: catch it before it's gone for the season
+  const ranked = rows.map((r) => ({ ...r, s: score(r) })).sort((a, b) => b.s - a.s || (a.key < b.key ? -1 : 1));
   const roomy = (r) => !r.to || !r.from || r.to - r.from >= 30 * 60000;          // skip things only briefly above the limit
-  const easy = ranked.filter((r) => r.level <= 1 && roomy(r)), hard = ranked.filter((r) => r.level === 2 && interest(r.o) >= 3 && roomy(r));
+  const easy = ranked.filter((r) => r.level <= 1 && roomy(r)), hard = ranked.filter((r) => r.level === 2 && r.margin >= 0.1 && interest(r.o) >= 3 && roomy(r));   // a real chance, not a coin toss
   const nHard = hours >= 2 ? Math.min(hard.length, hours >= 3 ? 2 : 1) : 0, want = n - nHard;
   const group = (r) => { const k = kindOf(r.o); return k === 'CN' || k === 'NB' ? 'NB' : k; };
   // One of each kind first (a planet, a double, a cluster, a globular, a nebula, a galaxy…), then the best of the rest.
   const pick = [];
   for (const g of ['PL', 'DS', 'OC', 'GC', 'PN', 'GX', 'NB']) { const r = easy.find((x) => group(x) === g); if (r && pick.length < want) pick.push(r); }
-  const perKind = Math.max(2, Math.ceil(n / 4)), count = {};
+  // Doubles: two at most on a dark night (the faint stuff deserves the time), three when a bright Moon is up.
+  const brightMoon = rows.some((r) => r.moonSep < 180 && r.moonFrac > 0.5);
+  const perKind = Math.max(2, Math.ceil(n / 4)), count = {}, cap = (g) => (g === 'DS' && !brightMoon ? 2 : perKind);
   for (const r of pick) count[group(r)] = (count[group(r)] || 0) + 1;
   for (const r of easy) {
     if (pick.length >= want) break; if (pick.includes(r)) continue;
-    const g = group(r); if ((count[g] || 0) >= perKind) continue;
+    const g = group(r); if ((count[g] || 0) >= cap(g)) continue;
     if (pick.some((p) => p.o.name && p.o.name === r.o.name)) continue;      // not both halves of the Double Cluster / Leo Triplet
     count[g] = (count[g] || 0) + 1; pick.push(r);
   }
-  for (const h of hard.slice(0, nHard)) pick.push(h);
+  let nh = 0;
+  for (const h of hard) { if (nh >= nHard) break; if (pick.some((p) => p.o.name && p.o.name === h.o.name)) continue; pick.push(h); nh++; }
   return pick.sort((a, b) => b.s - a.s);
 }

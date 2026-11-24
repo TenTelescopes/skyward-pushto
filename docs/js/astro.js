@@ -52,8 +52,31 @@ for (let i = 0; i < FIELD_N; i++) {
 const LINE_STARS = new Set(LINES.flatMap(([, seg]) => seg));
 export { LINES, j2000Vec };
 
+/** Open clusters: the magnitude of the 5th-brightest member star (the 3rd or 4th when only 3–4 are in the star list,
+ *  which goes to magnitude 8). A cluster of bright stars shows even under moonlight, which its averaged surface
+ *  brightness hides: the Pleiades' members are 2.9–4.3, the Beehive's 6.3–6.7. Clusters of fainter stars get none. */
+/** Bright cores worth judging on their own (size in arcminutes, V magnitude). Cited, not guessed:
+ *  M31: the bulge holds about 23% of the galaxy's light (V 3.44 total, so about 5.0) and has an effective radius of
+ *  1.0 kpc, about 4.4′ (Courteau et al. 2011, arXiv:1106.3564); half that light (about 5.8) lies inside 8.8′. Observers
+ *  under light pollution see this core as "a slightly fuzzy star" (observing.skyhound.com, M31). */
+const CORES = { 'NGC 224': { size: 8.8, mag: 5.8 } };
+function clusterMembers(objs) {
+  for (const o of objs) if (CORES[o.id]) o.core = CORES[o.id];
+  const cosR = (deg) => Math.cos(deg * Math.PI / 180);
+  for (const o of objs) {
+    if (o.t !== 'OC' || !o.maj || o.ra == null) continue;
+    const r = o.maj / 120, c = cosR(r), ra = o.ra * Math.PI / 180, de = o.dec * Math.PI / 180;
+    const x = Math.cos(de) * Math.cos(ra), y = Math.cos(de) * Math.sin(ra), z = Math.sin(de), ms = [];
+    for (let i = 0; i < FIELD_N; i++) {
+      if (Math.abs(FIELD[3 * i + 1] - o.dec) > r) continue;
+      if (FV[3 * i] * x + FV[3 * i + 1] * y + FV[3 * i + 2] * z >= c) ms.push(FIELD[3 * i + 2]);
+    }
+    if (ms.length >= 3) { ms.sort((a, b) => a - b); o.members = { n: ms.length, m5: ms[Math.min(4, ms.length - 1)] }; }
+  }
+}
+
 export class Sky {
-  constructor() { this.lat = 43.65; this.lon = -79.38; this.elev = 100; this.objects = buildObjects(); this.stars = this.objects.filter((o) => o.key.startsWith('st:')); }
+  constructor() { this.lat = 43.65; this.lon = -79.38; this.elev = 100; this.objects = buildObjects(); clusterMembers(this.objects); this.stars = this.objects.filter((o) => o.key.startsWith('st:')); }
   setSite(lat, lon, elev = 0) { this.lat = lat; this.lon = lon; this.elev = elev; this.rotT = 0; }
   observer() { return new A.Observer(this.lat, this.lon, this.elev); }
   _rot(date) {

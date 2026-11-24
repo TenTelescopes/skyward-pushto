@@ -4,7 +4,7 @@
 import { tangentOffset, D2R, vecFromAltAz, cross, norm, dot } from './model.js';
 import { tint, starTint, theme } from './theme.js';
 import { PAIR_CLASS, STAR_CLASS } from '../data/blurbs.js';
-import { splitArcsec } from './vis.js';
+import { splitArcsec, splitLimit, cdFromSB, sbFromCd, skyFromNelm, nelmFromSky, extinctionAt } from './vis.js';
 
 /** Unit direction (in the alt-az tangent plane, x right / y up) of celestial north and east at a target. */
 function skyAxes(sky, o, date) {
@@ -28,20 +28,42 @@ export function drawEyepiece(cv, sky, o, tgt, ep, scope, opts = {}) {
   const date = opts.date || new Date();
   const mag = scope.fl / ep.fl, tfov = ep.afov / mag, rad = tfov / 2, s = Rpx / rad;   // px per degree
   // Surface brightness of extended things (and of the sky background) scales with exit pupil², capped at the eye's
-  // pupil (~7 mm). Stars are points and stay as bright. `refExit` is the longest eyepiece's exit pupil, so its view = 1.
-  const eye = 7, exit = Math.min(eye, scope.aperture / mag), refExit = Math.min(eye, opts.refExit || exit);
-  const rel = (exit / refExit) ** 2;                 // true relative surface brightness
-  const shown = Math.sqrt(rel);                      // compressed for display (an actual 33× drop would be black on a phone)
+  // pupil (~7 mm), the same for every telescope: a 7 mm exit pupil shows a glow as bright as the naked eye can see it.
+  // So the same eyepiece looks brighter on a faster mirror (bigger exit pupil, lower power), and at equal power a bigger
+  // mirror looks brighter. Focal ratio itself changes nothing (Sky & Telescope, "Focal ratio vs. aperture").
+  const eye = (opts.env && opts.env.pupil) || 7, exit = Math.min(eye, scope.aperture / mag);   // your own pupil caps it (about 7 mm young, 5 mm at 70)
+  const rel = (exit / 7) ** 2;                       // true surface brightness against a fully open 7 mm eye
+  // Which real-world effects to include (the full-screen view lets you switch each one off). All off = raw catalogue.
+  const F = { moon: true, lp: true, twilight: true, transp: true, altitude: true, seeing: true, dawes: true, aperture: true, coma: true, ...(opts.factors || {}) };
+  const raw = !!opts.raw || !Object.values(F).some(Boolean);
+  const env = opts.env || {};
+  // The sky in this view: light pollution (your darkness check or the map; off = a pristine 6.8 sky), plus moonlight
+  // toward the target, then forecast haze. Gives an effective naked-eye limit.
+  let skyB = cdFromSB(skyFromNelm(F.lp ? (env.nelm ?? opts.nelm ?? 5.5) : 6.8));
+  if (F.moon && env.moonCd) skyB += env.moonCd;
+  if (F.twilight && env.twiCd) skyB += env.twiCd;
+  const nelmEff = nelmFromSky(sbFromCd(skyB)) + (F.transp ? (env.transpAdj || 0) : 0);
+  const skyLum = raw ? 0 : Math.max(0, Math.min(1, (6.6 - nelmEff) / 3.5));     // 0 = dark sky, 1 = city with a full Moon
+  const shown = raw || !F.aperture ? 1 : Math.max(0.12, rel ** 0.45);         // compressed for display (an actual 30× drop would be black on a phone)
+  // Stars are points: their brightness follows the mirror's light grasp. Drawn relative to a 150 mm mirror (a 200 mm
+  // shows every star 0.6 magnitude brighter). Stars fainter than the scope reaches under this sky are left out.
+  const apGain = raw || !F.aperture ? 0 : 5 * Math.log10(scope.aperture / 150);
+  // Low in the sky, starlight crosses more air: everything dims by the extinction at the target's altitude.
+  const ext = F.altitude && !raw ? extinctionAt(env.alt ?? tgt.alt) : 0;
+  const reach = raw ? 99 : nelmEff - ext + 5 * Math.log10((F.aperture ? scope.aperture : 150) / 7) - 1;   // rough telescopic limit, a magnitude in hand
+  // Seeing: the air smears every star by about this much (arcseconds); magnified past about 1′ the eye sees it swell.
+  const seeArc = F.seeing ? (env.seeingArc ?? splitLimit(1e9)) : 0, smear = seeArc * mag / 60;   // arcminutes as seen
+  const bloat = smear > 1 ? 1 + Math.min(1.2, (smear - 1) * 0.25) : 1;
   // M maps a naked-eye offset (x toward increasing azimuth, y toward zenith) to the eyepiece view; identity = naked-eye.
   const M = opts.matrix || [[1, 0], [0, 1]];
   const P = (dx, dy) => { const [X, Y] = applyM(M, dx, dy); return { x: cx + X * s, y: cy - Y * s }; };
   const screenAngle = (dx, dy) => { const [X, Y] = applyM(M, dx, dy); return Math.atan2(-Y, X); };
   c.clearRect(0, 0, W, H);
   c.save(); c.beginPath(); c.arc(cx, cy, Rpx, 0, 7); c.clip();
-  c.fillStyle = col(4 + 10 * shown, 0, 0); c.fillRect(0, 0, W, H);   // sky glow darkens with magnification
+  c.fillStyle = col(4 + 10 * shown + 46 * skyLum * shown, 0, 0); c.fillRect(0, 0, W, H);   // sky glow: brighter with light pollution and moonlight, darker with magnification
 
-  // deep-sky shape (drawn first, stars on top) — dimmed by surface brightness
-  c.globalAlpha = shown;
+  // deep-sky shape (drawn first, stars on top) — dimmed by surface brightness and washed out by a bright sky
+  c.globalAlpha = shown * (1 - 0.75 * skyLum) * 10 ** (-0.4 * ext);
   const ax = skyAxes(sky, o, date);
   const ell = (maj, min, pa, draw) => {               // maj/min in arcmin; PA from north through east
     const a = (maj / 60 / 2) * s, b = ((min || maj) / 60 / 2) * s;
@@ -54,8 +76,9 @@ export function drawEyepiece(cv, sky, o, tgt, ep, scope, opts = {}) {
   // scale with brightness, so a faint star is a small dim glow and a bright one a larger, stronger glow. Veils add where
   // they overlap, so close stars blend at the edges while their centres stay distinct. `paint(alpha)` gives the colour.
   const u = Math.max(1, W / 300);
-  const starR = (m) => Math.max(2.6, Math.min(13, 4 + 1.25 * (7 - m))) * u;      // radius of a star's drawn glow
+  const starR = (m) => Math.max(2.6, Math.min(13, 4 + 1.25 * (7 - m))) * u * bloat;      // radius of a star's drawn glow
   const star = (x, y, m, paint) => {
+    m = m - apGain + ext;
     const lum = Math.max(0.42, Math.min(1, 1 - (m - 2.5) * 0.085));
     const R = starR(m);
     const g = c.createRadialGradient(x, y, 0, x, y, R);
@@ -100,28 +123,52 @@ export function drawEyepiece(cv, sky, o, tgt, ep, scope, opts = {}) {
     const off = best && tangentOffset(tgt, best);
     if (off && Math.hypot(off.x, off.y) > rad * 0.45) { tgt = { alt: best.alt, az: best.az }; note = 'Wider than this eyepiece: centred on its brightest star'; }
   }
-  const field = sky.fieldNear(tgt.alt, tgt.az, rad * 1.3, 8, date);
+  // Coma: a parabolic mirror turns stars away from the centre into little comets pointing outward. The tail grows with
+  // distance from the centre and with how fast the mirror is: about 3θ / (16 N²) (θ off-axis, N the focal ratio), so
+  // an f/4 shows four times the coma of an f/8. Drawn only when the eye could notice it (about 1′ as seen).
+  const fN = scope.fl / scope.aperture;
+  const coma = (x, y, thetaDeg, m) => {
+    // Stars here are drawn far bigger than their true size, so the tail is drawn in proportion to the star's glow:
+    // nothing under about 1.5′ as seen, growing to 2.5 glow-radii for very bad coma.
+    const app = (3 * thetaDeg / (16 * fN * fN)) * mag * 60, R = starR(m);   // coma as seen, arcminutes
+    if (app < 1.5) return;
+    const len = R * Math.min(2.5, (app - 1.5) / 4 + 0.4);
+    const dx = x - cx, dy = y - cy, r = Math.hypot(dx, dy) || 1, ux = dx / r, uy = dy / r;
+    const lum = Math.max(0.25, Math.min(0.8, 1 - (m - 2.5) * 0.1));
+    for (let k = 1; k <= 4; k++) {
+      const f = k / 4, rr = R * (0.45 + 0.6 * f) * Math.min(1, len / (R * 2) + 0.4);
+      c.fillStyle = plain(lum * (0.55 - 0.1 * k)); c.beginPath(); c.arc(x + ux * len * f, y + uy * len * f, rr, 0, 7); c.fill();
+    }
+  };
+  const field = sky.fieldNear(tgt.alt, tgt.az, rad * 1.3, 8, date), labels = [];
   for (const [, v] of field) {
-    if (v.mag > 8) continue;
+    if (v.mag > 8 || v.mag > reach) continue;
     const off = tangentOffset(tgt, v); if (!off) continue;
     // The pair itself is drawn below. Catalogue positions are rounded, so its own stars can sit a few arcminutes off centre.
     if (isPair && Math.hypot(off.x, off.y) < Math.max(0.07, (o.pairs[0].sep || 0) / 3600 * 1.5) && v.mag <= pairFaint + 0.8) continue;
     const q = P(off.x, off.y);
     star(q.x, q.y, v.mag, plain);
+    if (F.coma && !raw && scope.type !== 'refractor') coma(q.x, q.y, Math.hypot(off.x, off.y), v.mag);   // lenses don't have a mirror's coma
+    if (raw && !opts.thumb && v.mag <= 7.5) labels.push({ x: q.x, y: q.y, m: v.mag });
+  }
+  if (raw && labels.length) {                        // catalogue magnitudes beside the brighter field stars
+    c.font = `${Math.round(8 * u)}px system-ui`; c.fillStyle = col(255, 150, 100, 0.85); c.textAlign = 'left'; c.textBaseline = 'middle';
+    for (const L of labels.sort((a, b) => a.m - b.m).slice(0, 25)) c.fillText(L.m.toFixed(1), L.x + 6 * u, L.y);
   }
 
   // planets / Moon / double stars at the centre
   if (t === 'PL') {
     const d = sky.diameter(o.id, date);
     // In the small previews a planet drawn to scale is a pixel or two, so it is drawn 4x larger there (the caption says so).
-    const boost = opts.thumb && d && d < 2 ? 4 : 1;
+    const boost = !raw && opts.thumb && d && d < 2 ? 4 : 1;
     const r = d ? (d / 60 / 2) * s * boost : 3;
     if (r > 3) c.globalAlpha = Math.max(0.35, shown);  // a resolved disc is an extended object too
     const pc = col(255, 110, 60);
+    if (seeArc > 0 && smear > 1 && d && r > 3) c.filter = `blur(${Math.min(r * 0.4, r * (seeArc / (d * 60)) * 2).toFixed(1)}px)`;   // unsteady air smears the disc by the seeing blur, in proportion to its size
     c.fillStyle = pc; c.beginPath(); c.arc(cx, cy, Math.max(1.5, r), 0, 7); c.fill();
     if (o.id === 'Saturn' && r > 1.2) { c.strokeStyle = pc; c.lineWidth = Math.max(1, r * 0.22); c.beginPath(); c.ellipse(cx, cy, r * 2.25, r * 0.7, -0.3, 0, 7); c.stroke(); }
     if (o.id === 'Jupiter' && r > 4) { c.strokeStyle = 'rgba(0,0,0,0.45)'; c.lineWidth = Math.max(1, r * 0.13); for (const y of [-0.3, 0.3]) { const w = r * Math.sqrt(1 - y * y); c.beginPath(); c.moveTo(cx - w, cy + y * r); c.lineTo(cx + w, cy + y * r); c.stroke(); } }
-    c.globalAlpha = 1;
+    c.globalAlpha = 1; c.filter = 'none';
     note = d ? `${o.id} disc ${d >= 1 ? d.toFixed(1) + '′' : (d * 60).toFixed(0) + '″'} across` : '';
     if (boost > 1) enlarged = boost;
   } else if (t === 'DS' && o.pairs && o.pairs.length) {
@@ -131,15 +178,19 @@ export function drawEyepiece(cv, sky, o, tgt, ep, scope, opts = {}) {
     // Split: separation above the Dawes limit (116/D″) and magnified enough for the eye: 4′ apparent for a matched pair,
     // more when the companion is much fainter and sits in the bright star's glare (splitArcsec, the same rule as the ratings).
     const dm = mags.length > 1 && !Number.isNaN(mags[1]) ? Math.abs(mags[1] - mags[0]) : 0;
-    const dawes = 116 / scope.aperture, resolved = pr.sep >= dawes, split = resolved && mag * pr.sep >= splitArcsec(dm);
+    // What the scope can separate: the Dawes limit (116″ ÷ aperture in mm: 0.77″ for 150 mm, 0.58″ for 200 mm), or what
+    // tonight's air allows if that is worse. Just above it a pair looks like a figure 8; just below, an egg-shaped star.
+    const dawes = 116 / scope.aperture, lim = Math.max(F.dawes ? dawes : 0, F.seeing ? seeArc : 0), resolved = lim === 0 || pr.sep >= lim;
+    const split = resolved && pr.sep >= lim * 1.3 && mag * pr.sep >= splitArcsec(dm);
+    const touching = lim > 0 && resolved && pr.sep < lim * 1.3, egg = !resolved && pr.sep >= lim * 0.6;
     // The eye resolves far finer detail than this picture has pixels, so a pair drawn strictly to scale would merge even
     // when the eyepiece splits it cleanly. Draw what the eye would make of it instead: clearly apart when split, just
     // touching when tight, one star when below the telescope's limit. Wider pairs keep their true spacing.
     const L = Math.hypot(dx, dy) || 1, truePx = L * s, app = mag * pr.sep / 60;                                   // how far apart the pair looks to the eye, arcminutes
-    let want = !resolved ? 0 : split ? Math.min(18, 7 + 3 * Math.log2(app / 4)) * u : 4.5 * u, px = truePx >= want ? truePx : truePx + 0.4 * (want - truePx);   // wider at higher power; only 40% of the way from true scale to that spacing
-    // A faint companion must sit clear of the bright star's soft veil, or the picture hides what the eye can see.
     const rA = starR(mags[0] || 4), rB = starR(mags[1] || 6);
-    if (split && px < rA * 0.85 + rB + 2 * u) px = rA * 0.85 + rB + 2 * u;
+    let want = !resolved ? (egg ? (rA + rB) * 0.3 : 0) : touching ? (rA + rB) * 0.55 : split ? Math.min(18, 7 + 3 * Math.log2(app / 4)) * u : 4.5 * u, px = raw || truePx >= want ? truePx : truePx + 0.4 * (want - truePx);   // wider at higher power; only 40% of the way from true scale to that spacing
+    // A faint companion must sit clear of the bright star's soft veil, or the picture hides what the eye can see.
+    if (raw) { /* true spacing, even if the dots merge */ } else if (split && px < rA * 0.85 + rB + 2 * u) px = rA * 0.85 + rB + 2 * u;
     else if (resolved && !split && dm >= 2 && px < rA * 0.6 + rB) px = rA * 0.6 + rB;
     const hx = (dx / L) * px / 2 / s, hy = (dy / L) * px / 2 / s;
     const A = P(-hx, -hy), B = P(hx, hy);
@@ -161,9 +212,9 @@ export function drawEyepiece(cv, sky, o, tgt, ep, scope, opts = {}) {
     if (resolved && px >= rA * 0.6 + rB) {
       put(A.x, A.y, -1, `${nm}${la}${opts.thumb ? '' : ` (mag ${(+mags[0]).toFixed(1)})`}`, rA);
       put(B.x, B.y, 1, `${nm}${lb}${opts.thumb ? '' : ` (mag ${(+mags[1]).toFixed(1)})`}`, rB);
-    } else { c.textAlign = 'left'; c.fillText(`${nm}${la}+${lb}`, A.x + rA + 6 * u, A.y - rA); }
+    } else { c.textAlign = 'left'; c.fillText(`${nm}${la}+${lb}${touching && !opts.thumb ? ' (touching)' : ''}`, Math.max(A.x, B.x) + rA + 6 * u, Math.min(A.y, B.y) - rA); }
     c.textBaseline = 'alphabetic';
-    note = `${pr.c}: ${pr.sep}″ — ${pr.sep < dawes ? `below this scope's ${dawes.toFixed(2)}″ resolution limit` : split ? 'split at this power' : 'tight at this power; try a shorter eyepiece'}`;
+    note = `${pr.c}: ${pr.sep}″ — ${!resolved ? (F.dawes && pr.sep < dawes ? `closer than this mirror's ${dawes.toFixed(2)}″ limit (Dawes: 116 ÷ ${scope.aperture} mm)${egg ? ': an egg-shaped star at best' : ''}` : `closer than tonight's air allows (about ${lim.toFixed(1)}″)`) : touching ? `right at the limit (${lim.toFixed(2)}″): a figure 8 at high power, in steady air` : split ? 'split at this power' : 'tight at this power; try a shorter eyepiece'}`;
   }
   c.restore();
 

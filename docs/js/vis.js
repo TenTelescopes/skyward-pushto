@@ -22,6 +22,8 @@ export const sbFromCd = (b) => 12.58 - 2.5 * Math.log10(b);
 const luxFromMag = (m) => 10 ** (-0.4 * (m + 13.99));                       // star of V mag → illuminance
 const nLtoCd = (nl) => nl * 3.183e-6;
 const airmass = (alt) => 1 / Math.sqrt(1 - 0.96 * Math.cos(Math.max(1, alt) * D2R) ** 2);
+/** Magnitudes lost to the air at an altitude, relative to overhead (for the eyepiece pictures). */
+export const extinctionAt = (alt) => K_EXT * (airmass(alt) - 1);
 
 /** Crumey scotopic threshold contrast for a uniform target of solid angle A (sr) on background B (cd/m²). */
 export function threshold(B, A) {
@@ -99,11 +101,49 @@ function starMargins(m, Bsky, scope) {
   });
 }
 
-/** Eyepiece to suggest for a solar-system object: the whole Moon in view; for planets, as much power as the aperture supports. */
+/** How steady the air is: 'poor', 'average' (the default) or 'good'. Southern Ontario's jet stream keeps most nights
+ *  "average", when the air rather than the mirror sets the useful power: about 150× (see planetEp). */
+let SEEING = 'average';
+export function setSeeing(s) { SEEING = ['poor', 'average', 'good'].includes(s) ? s : 'average'; }
+export const seeing = () => SEEING;
+/** Closest pair a telescope can split tonight, in arcseconds: the Dawes limit (116″ ÷ aperture in mm) or what the air
+ *  allows, whichever is bigger. */
+export const splitLimit = (aperture) => Math.max(116 / aperture, SEEING_SPLIT[SEEING]);
+/** Most power the air supports tonight, and the smallest gap (″) it lets the eye split. */
+// Even good nights here rarely hold more than about 300×.
+const SEEING_CAP = { poor: 100, average: 150, good: 300 }, SEEING_SPLIT = { poor: 2.5, average: 1.5, good: 1.0 };
+const powerCap = (scope) => Math.min(1.3 * scope.aperture, SEEING_CAP[SEEING]);
+/** Eyepiece to suggest for a solar-system object: the whole Moon in view; for planets, as much power as the aperture
+ *  and tonight's air support. epSteady: a higher power worth trying when the air settles (null if none). */
 function planetEp(o, scope) {
   const list = mags(scope).sort((a, b) => a.M - b.M);                            // low power first
   if (o.id === 'Moon') return (list.filter((x) => x.ep.afov / x.M >= 0.6).pop() || list[0]).ep;
-  return (list.filter((x) => x.M <= 1.3 * scope.aperture).pop() || list[0]).ep;
+  return (list.filter((x) => x.M <= powerCap(scope)).pop() || list[0]).ep;
+}
+function planetSteady(o, scope) {
+  if (!o.planet || o.id === 'Moon') return null;
+  const top = mags(scope).filter((x) => x.M <= Math.min(1.3 * scope.aperture, SEEING_CAP.good)).sort((a, b) => b.M - a.M)[0], ep = planetEp(o, scope);
+  return top && top.ep !== ep ? top.ep : null;
+}
+/**
+ * Eyepiece that gives the best VIEW of an extended object, as long as it stays at the same rating as the easiest one.
+ * The threshold model alone favours whatever makes an object easiest to detect, which put every globular at 33× and
+ * faint galaxies at 188×. Instead: frame the object to a sensible share of the field (globulars a third, so they break
+ * into stars; small planetaries big enough to show their shape), and never dimmer than a useful exit pupil (2 mm for
+ * galaxies and nebulae, which fade into the background beyond that).
+ */
+const VIEW = { GX: [2.0, 0.35], NB: [2.0, 0.6], CN: [2.0, 0.6], OC: [1.5, 0.6], GC: [0.9, 0.3], PN: [0.7, 0.12], CM: [2.0, 0.3], AS: [2.0, 0.8] };
+function viewEp(o, list, bestOne, scope) {
+  const [pupil, frac] = VIEW[o.t] || [1.5, 0.5], lv = levelOf(bestOne.margin), size = o.maj || 5;
+  const L = list.map((x) => ({ ...x, tf: (x.ep.afov || 62) / x.M * 60 }));
+  const widest = L.reduce((a, b) => (b.tf > a.tf ? b : a));
+  // Globulars and planetaries are about detail, so a step down from Obvious to Visible is worth it for a view that shows it.
+  const floor = ['GC', 'PN'].includes(o.t) ? Math.max(lv, 1) : lv;
+  let ok = L.filter((x) => levelOf(x.margin) <= floor && scope.aperture / x.M >= pupil && x.M <= powerCap(scope) * 1.25);
+  if (!ok.length) return bestOne;
+  const want = size / frac;                                                    // field width that frames it nicely
+  const score = (x) => Math.abs(Math.log(x.tf / want)) + (x.tf < size * 1.05 && x !== widest ? 3 : 0);
+  return ok.sort((a, b) => score(a) - score(b))[0];
 }
 /** A pair looks comfortably split when the eyepiece shows it this far apart: 4 arcminutes (2′ is only just separable). */
 export const SPLIT_ARCSEC = 240;
@@ -156,7 +196,7 @@ export function rate(o, cond, scope) {
     const level = hr >= 15 ? 0 : hr >= 5 ? 1 : hr >= 1 ? 2 : 3;
     return { level, margin: Math.log10(hr + 0.01), ep: null, cause: level === 3 ? 'few' : Bm > 0 && level > 0 ? 'moon' : null, hr };
   }
-  if (o.planet && DAY_PLANETS.includes(o.id)) return { level: 0, margin: 5, ep: planetEp(o, scope), cause: null };
+  if (o.planet && DAY_PLANETS.includes(o.id)) return { level: 0, margin: 5, ep: planetEp(o, scope), epSteady: planetSteady(o, scope), cause: null };
   if (sunAlt > 0) return { level: 3, margin: -9, ep: null, cause: 'daylight' };   // with the Sun up: Moon, Venus, Jupiter, Saturn, Mars only
   if (o.planet) {
     if (o.id === 'Mercury') return { level: sunAlt < -3 ? 1 : 2, margin: 1, ep: null, cause: 'twilight' };
@@ -173,7 +213,7 @@ export function rate(o, cond, scope) {
     if (isDouble) {                                                            // also needs splitting
       const p = (o.pairs && o.pairs[0]) || {}, sep = p.sep ?? o.sep;
       if (!sep) return null;
-      const limit = Math.max(116 / scope.aperture, 1.5), maxM = Math.max(...mags(scope).map((x) => x.M));
+      const limit = Math.max(116 / scope.aperture, SEEING_SPLIT[SEEING]), maxM = Math.min(Math.max(...mags(scope).map((x) => x.M)), powerCap(scope) * 1.3);
       const ms = String(p.mags || '').split('/').map(Number).filter((x) => !Number.isNaN(x)), dm = ms.length > 1 ? Math.abs(ms[1] - ms[0]) : 0;
       const split = sep / limit, needM = splitArcsec(dm) / sep;     // enough power for a comfortable split
       let lv = levelOf(one.margin);
@@ -181,12 +221,28 @@ export function rate(o, cond, scope) {
       else { if (split < 1.5 || needM > maxM) lv = Math.max(lv, 2); else if (split < 3) lv = Math.max(lv, 1); if (dm >= 3 && sep < 6) lv = Math.min(3, lv + 1); }
       if (lv === 0 && ms.length && Math.min(...ms) > 8.5) lv = 1;          // a pair of faint stars is easy to see but nothing jumps out: never "Obvious"
       const epSplit = mags(scope).filter((x) => x.M >= needM).sort((a, b) => a.M - b.M)[0] || mags(scope).sort((a, b) => b.M - a.M)[0];
-      return { level: lv, margin: one.margin, ep: epSplit.ep, cause: split < 3 ? 'close' : cause(o, cond, scope, lv) };
+      return { level: lv, margin: one.margin, ep: epSplit.ep, cause: lv === 0 ? null : split < 3 ? 'close' : cause(o, cond, scope, lv) };
     }
   } else {
     const g = objectGeometry(o); if (!g) return null;
-    const calc = (B) => best(extendedMargins(g.sb + ext, g.area, B, scope));
+    // An open cluster of bright stars: judged by its brighter members too (needing to beat the star limit by 2 magnitudes
+    // to stand out as a group), in the highest-power eyepiece that still frames it (else the widest). Whichever judgement is better wins.
+    const frame = () => { const L = mags(scope).map((x) => ({ ...x, tf: (x.ep.afov || 62) / x.M * 60 })).sort((a, b) => a.M - b.M);
+      return (L.filter((x) => x.tf >= o.maj * 1.2).pop() || L[0]); };
+    // Big galaxies with a bright core (M31): also judged by the core alone, so the city observer's "fuzzy star" counts.
+    const gc = o.core ? { sb: o.core.mag + 2.5 * Math.log10(Math.PI / 4 * o.core.size ** 2) + 8.89, area: Math.PI / 4 * o.core.size ** 2 } : null;
+    const each = (B) => {                                                     // margin in every eyepiece, by the better judgement
+      const sb = extendedMargins(g.sb + ext, g.area, B, scope), co = gc ? extendedMargins(gc.sb + ext, gc.area, B, scope) : null;
+      const st = o.members ? starMargins(o.members.m5 + ext, B, scope) : null, f = o.members ? frame() : null;
+      return sb.map((x, i) => {
+        let m = x.margin; if (co) m = Math.max(m, co[i].margin);
+        if (st && st[i].ep === f.ep) m = Math.max(m, st[i].margin - 2);
+        return { ep: x.ep, M: x.M, margin: m };
+      });
+    };
+    const calc = (B) => best(each(B));
     one = calc(Bsky);
+    one = { ...one, ep: viewEp(o, each(Bsky), one, scope).ep };
     const lv = levelOf(one.margin);
     if (lv === 0) return { level: 0, margin: one.margin, ep: one.ep, cause: null };
     // What is holding it back most?
@@ -202,7 +258,7 @@ export function rate(o, cond, scope) {
   let lv = levelOf(one.margin);
   if (o.planet && lv < 1) lv = 1;                                               // Uranus and Neptune: there, but tiny and star-like — not a showpiece
   const ep = o.planet ? planetEp(o, scope) : mags(scope).sort((a, b) => a.M - b.M)[0].ep;   // a single star looks best, and is easiest to find, at low power
-  return { level: lv, margin: one.margin, ep, cause: lv ? cause(o, cond, scope, lv) : null };
+  return { level: lv, margin: one.margin, ep, epSteady: planetSteady(o, scope), cause: lv ? cause(o, cond, scope, lv) : null };
 }
 function cause(o, cond, scope, lv) { return cond.alt < 25 ? 'low' : 'faint'; }
 
@@ -215,7 +271,7 @@ export function describe(o, r) {
     GX: ['Bright oval glow with a brighter centre', 'Faint grey smudge — look slightly to one side of it', 'Barely there — you may only catch it from the corner of your eye'],
     NB: ['Clear glowing cloud', 'Soft faint glow — averted vision helps', 'Very faint — a nebula filter helps a lot'],
     CN: ['Stars wrapped in a glowing cloud', 'Stars with a faint glow around them', 'The stars show; the glow is very hard'],
-    PN: ['Small, clear disc or ring', 'Small faint disc — try the 10 mm', 'Very faint — sweep slowly'],
+    PN: ['Small, clear disc or ring', 'Small faint disc — find it at low power, then add magnification', 'Very faint — sweep slowly'],
     GC: ['Bright ball of stars, edges sparkle', 'Round fuzzy glow, brighter centre', 'Faint round smudge'],
     OC: ['Rich, sparkling group of stars', 'A loose group of fainter stars', 'A few faint stars — hard to pick out from the background'],
     AS: ['Easy star pattern', 'Faint star pattern', 'Hard to make out'],

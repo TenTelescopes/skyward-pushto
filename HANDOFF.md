@@ -524,3 +524,167 @@ unrelated extra star in the object-page sentence. Still open with Bryan: whether
 - `openEpZoom`: swipe left or right, or tap the ‹ › buttons, to move to the next or previous eyepiece, in the same order
   as the previews (longest first). Dots show which eyepiece you're on. Tapping the picture itself no longer closes it;
   tap outside the picture or ✕ to close.
+
+## Build 106 (Nov 24): bright open clusters rated by their stars; fewer pointless eyepiece previews
+- The Pleiades were rated "Challenging … Moon washes it out" near tonight's full Moon (about 8–11° away). The rating
+  spread the cluster's total light over its 2.5° size and judged it as a faint glow, which is wrong for a group of
+  2.9–4.3 magnitude stars.
+- Now `clusterMembers` (astro.js) finds each open cluster's member stars in the star list (to magnitude 8) and records
+  the 5th-brightest. `rate()` also judges the cluster as that star, which has to beat the star limit by 2 magnitudes, in
+  the highest-power eyepiece that still frames it. The better of the two judgements wins.
+- Results, 150 Compact under a full Moon 9° away: M45 Obvious, M44 Obvious, M7 Obvious. Clusters of fainter stars
+  (M35, M67) are unchanged.
+- Eyepiece previews (`epsFor`): an eyepiece whose field is less than half the object's width is left out, and the
+  caption says which ones were left out and why. The widest eyepiece is always shown. The full-screen swipe uses the
+  same list.
+- Automatic plan audit. 192 plans: new Moon and full Moon each month from Dec 2026 to Nov 2027, Guelph (Bortle 8 on
+  the map) and Little Esson Lake (Bortle 4), both scopes, 2 and 3 hours. Fixed:
+  - Doubles (`doubleInterest`, plan.js) are scored by how they look: how bright the companion is, colour contrast
+    (PAIR_CLASS) and fame. Being a Messier object counts for nothing. M40 went from 78 of 96 plans to 0; Albireo went
+    from 8 to about 45. At most 2 doubles on a dark night, 3 with a bright Moon.
+  - Viewing eyepiece (`viewEp`, vis.js): for extended objects, among the eyepieces that keep the same rating, pick the
+    one that frames the object (globulars a third of the field, small planetaries 12%, galaxies 35%), with a minimum exit
+    pupil (galaxies and nebulae 2 mm, globulars 0.9, planetaries 0.7). Globulars and planetaries may drop from Obvious
+    to Visible for the better view. Globulars at 33× went from about 100 per site to 4–8; galaxies at 188× went from
+    37 to 0.
+  - Seeing (`setSeeing`; Plan form, "Steady air"): poor, average or good caps planet power at 100×, 150× or
+    1.3 × aperture. It also sets the smallest split for doubles: 2.5″, 1.5″ or 1.0″. Planets get the 10 mm, plus
+    `epSteady`: "4 mm when the air is steady", shown in the target sheet.
+  - The M31 core (`CORES`, astro.js) is judged on its own: the bulge holds about 23% of the light, half of it inside
+    8.8′ (Courteau et al. 2011). From Guelph M31 now rates Visible or Obvious instead of Challenging.
+  - Companions (M32, M110, M43) are left out when their host is up. Only one of a named group is kept, including the
+    Challenging picks.
+  - Nothing deep-sky goes within 15° of a Moon more than 30% lit (scattered light in an open tube).
+  - Already-logged objects lose 0.8 points. Something low in the west at the start gets +0.4 ("catch it before it's
+    gone"). With a simulated log, the year's different targets go from 39 to 53 (city, 2 h) and from 44 to 65 (dark).
+  - Challenging picks need a margin of at least 0.1, not a coin toss (M33 from the city dropped out).
+- New test file: `test/picks.test.mjs`.
+- Not changed, for lack of published numbers: core brightness for M42 and M8. M42 still rates only Visible from a
+  Bortle 8 city.
+- Steady air check (`openSeeingCheck`): a start-up refinement for observing, exploring and planning, on by default and
+  skipped once done tonight. It also runs from Plan ("Steady air: … Test it (10 s)").
+  - Twinkle test: a star of magnitude 2.2 or brighter at least 45° up (30° if none). Three answers.
+  - Optional eyepiece test in the shortest eyepiece: three SVG pictures, from steady rings to a boiling blob. This
+    follows Astronomy magazine's observing-basics advice (twinkle rate for a ballpark, a bright star at high power for
+    more).
+  - The answer goes in `state.seeingCheck` and counts until noon the next day (`seeingTonight`); otherwise average is
+    assumed. The Plan form's "Steady air" picker records a check of kind 'pick'.
+- Teaching: Plan shows a tip of the night (`TIPS`, 12 items, the same one all evening) and a "How this plan was picked"
+  section: sky source, Moon rule, steady air, what's chosen, eyepieces, each with a "Do it yourself" line. The target
+  sheet's eyepiece row explains why (`epReason`) and gives a rule of thumb (`EP_TIP`), for example power × gap ≈ 240
+  for doubles.
+- Environment Canada forecast (`forecast.js`): for each hour from nautical dusk (or now) to dawn, point values from MSC
+  GeoMet WMS GetFeatureInfo (JSON):
+  - cloud from HRDPS.CONTINENTAL_NT, falling back to RDPS_10km_TotalCloudCover beyond about 48 h;
+  - RDPS_10km_SeeingIndex and RDPS_10km_SkyTransparencyIndex, scored 0–5 (0 = cloudy). The scales are from ECCC's
+    seeing and transparency forecast pages.
+  - Six requests at a time; cached for 90 minutes per place and night. CORS checked from tentelescopes.github.io; the
+    iPhone app's capacitor:// origin is untested.
+  - `outlook()`: the longest run of hours under 35% cloud; median seeing and transparency (ignoring 0s); whether a
+    Moon more than 40% lit is up; "Best for" a list of kinds of target; teaching hints.
+  - Shown on the start screen (`#l-fc`) and in Plan (`#pl-fc`, with "Start at the clear spell" when cloud comes first).
+    The ATTRIB line and a licence link are required by the ECCC licence.
+  - The seeing forecast feeds `seeingFor(t)` unless you checked yourself that night. Transparency adjusts the map-based
+    limit (`planNelm`: 1 → −0.8, 2 → −0.4, 3 → 0, 4 → +0.15, 5 → +0.3). That mapping is my estimate, anchored to ECCC's
+    roughly 1-magnitude dry-versus-humid range. It is not applied to your own darkness check.
+- Tests: `test/forecast.test.mjs`.
+- UI audit, first group (Nov 24):
+  - "Tonight" at a glance (`glanceHTML`) on the start screen and in Plan: chips for forecast, dark, Moon, Bortle and
+    steady air, plus one "Best for" line. The details (sky lines, the full forecast card, steady air, location, blocked
+    sky) sit under "Tonight in detail"; Plan remembers whether that is open in `state.ui.plTonight`. "Start at the
+    clear spell" (`clearSpellBtn`) stays visible.
+  - Toasts: a small bar just above the tab bar. The "Browsing without sensors" hint shows once per session
+    (`onceToast`).
+  - The pointing pill is hidden on Find, Plan and More (`body[data-tab]`).
+  - Target sheet: "Why the 23 mm?" is a full-width block under the facts (`.why`), not squeezed into the key/value
+    column.
+  - Observe with sensors off: one message. No chart banner, and the empty Turn/Tilt boxes are hidden.
+  - Night-mode fix: the forecast strip used grey-blue colours; it now uses the theme's own.
+- UI audit, second group:
+  - One tip per screen: Plan's forecast card hides its own hint, because Plan shows the tip of the night.
+  - Find: "Show" and "Sort and filter" labels over the two chip rows (`.chiplab`). The "Best right now" cards put
+    the rating and the direction on separate lines, so nothing gets cut off.
+  - Text: `.small` 13 → 14 px; list subtitles, pick cards and start-up step notes 1 px larger. The night-mode dim red
+    is unchanged on purpose (dark adaptation).
+  - Line icons (`ICON.pin`, `ICON.bulb`, `ICON.star`, `ICON.half`, `ICON.cloud`) replace the emoji.
+  - Cloud bar (`.cbar`) in the glance: one segment per hour, bright = clear.
+  - Start-up step wording: "tap a star to turn that step on or off (bright = on)".
+  - Splash: the start screen waits until the splash has gone, then fades in (`#launch` animation), so the logo no
+    longer ghosts over its text.
+- Eyepiece previews, physically comparable across scopes (`drawEyepiece`):
+  - Glow brightness is measured against a 7 mm exit pupil (what the naked eye sees), not against your own widest
+    eyepiece. The same eyepiece is brighter on the 200 f/4 (5.75 mm against 4.6 mm, because it gives lower power), and
+    a bigger mirror is brighter at equal power. Display compression: rel^0.45, never below 0.12.
+  - Stars are drawn brighter by 5·log10(D/150) magnitudes (+0.6 for 200 mm). Field stars fainter than a rough
+    telescopic limit (NELM + 5·log10(D/7) − 1) are left out. The previews pass `nelm: skyNelm()`.
+  - Doubles use `splitLimit(D)` (vis.js), the larger of Dawes (116/D) and the steady-air floor (2.5 / 1.5 / 1.0″):
+    - below 0.6 × the limit: one star;
+    - 0.6–1 × the limit: an egg-shaped star;
+    - 1–1.3 × the limit: "touching", a figure 8;
+    - above that: split, if the power is enough.
+    The notes explain each case with the Dawes figure.
+  - Target sheet: a "Your scope splits … tonight" row for doubles; two new tips (Dawes, and f/4 against aperture).
+- Swiping that follows the finger:
+  - Full-screen eyepiece view: a native scroll-snap track (`.epz-track`, one page per eyepiece), giving iOS momentum
+    and bounce. The header, dots and caption follow the page; ‹ › scroll smoothly.
+  - Target sheet: the card follows a horizontal drag (`touch-action: pan-y`), with resistance at the ends. Past 22% of
+    the width, or on a quick flick, it slides out and the next target slides in from the other side (`slideSheet`). The
+    arrows use the same animation.
+  - The eyepiece preview row and the "Best right now" cards snap card by card.
+  - `tick()`: a light Taptic tap on each snap through `Capacitor.Plugins.Haptics`. It does nothing until
+    @capacitor/haptics is installed in the iPhone app (`npm install @capacitor/haptics@8 && npx cap sync ios`; Bryan
+    runs it, since npm is blocked from the Claude sandbox).
+- Full-screen eyepiece view, "As you'd see it" / "Catalogue data" switch (`state.ui.epRaw`, `opts.raw` in
+  drawEyepiece). Catalogue data means:
+  - true positions and pair spacing, even if the two dots merge;
+  - no exit-pupil dimming and no aperture or sky-limit allowance;
+  - planets at true size;
+  - every star to magnitude 8, with up to 25 labelled with their magnitude.
+- Full-screen eyepiece view: effect switches replace the two-way catalogue switch (`EP_FACTORS`, `state.ui.epF`,
+  `opts.factors`/`opts.env` in drawEyepiece; `eyeEnv(tg)` builds the environment):
+  - Moon: `moonlight()` toward the target is added to the sky.
+  - Light pollution: your check or the map; off means a pristine 6.8 sky.
+  - Twilight: `twilight(sunAlt)`.
+  - Transparency: forecast haze, map-based skies only.
+  - Altitude: extinction 0.25 × (airmass − 1), so stars and glows dim low down (`extinctionAt`, vis.js).
+  - Seeing: the steady-air smear swells star images once magnified past about 1′ and blurs planet discs in proportion
+    to their size; it also sets the closest split.
+  - Dawes limit: 116/D.
+  - Aperture brightness: exit-pupil dimming, 5·log10(D/150) on stars, and the scope's reach.
+  - The effective naked-eye limit sets the background glow, glow contrast (`skyLum`) and how faint the stars go. All off
+    gives the raw catalogue: true spacing, every star to magnitude 8, magnitudes labelled. The small previews always
+    use everything.
+- Telescope simulator (`renderSim`, `#tab-sim`, More → "Telescope simulator", or "Open in the simulator" from the
+  full-screen eyepiece view, which copies that target, scope, eyepiece and tonight's conditions via `simFrom`):
+  - Sliders: focal length 50–3000 mm (log scale), f/2–f/20, eyepiece 2–56 mm (log), apparent field 30–120°, Bortle
+    1–9 (class-middle SQM → NELM), Moon % (Moon 40° up) and its distance from the target, Sun −18…0°,
+    transparency 1–5, target altitude, seeing 0.5–5″, eye pupil 3–8 mm.
+  - Effect switches as in the eyepiece view, plus Coma.
+  - Numbers shown: aperture, magnification (warns outside the useful range D/pupil … 2D), exit pupil (warns when it
+    is wider than your eye), true field, glow brightness against the naked eye, Dawes against seeing, faintest stars,
+    and coma at the field edge (a coma corrector is suggested above 2′ as seen).
+  - Saved in `state.sim`.
+- Coma in `drawEyepiece` (switch `coma`): 3θ/(16N²) at each field star. The tail is drawn outward, in proportion to the
+  star's drawn glow, once it would be over 1.5′ as seen.
+- Your eye's pupil (`env.pupil`) caps the useful exit pupil.
+- Basic / Advanced (`state.ui.adv`, `.adv` / `.show-adv`):
+  - The simulator's Basic mode shows only target, focal length, f-ratio, eyepiece, light pollution and Moon, with 5
+    numbers.
+  - The full-screen eyepiece view shows its effect switches only in Advanced; Basic always uses every effect.
+- Two more scopes in DEFAULT_PROFILES, with the same three default eyepieces. Existing installs get them through the
+  "add missing profiles" migration.
+  - `sw400`, "Skyward 400 (16-inch)": 406 mm, 1624 mm, f/4, focuser 90. These are placeholder figures: confirm the
+    real mirror.
+  - `ed80`, "Orion 80ED": 80 mm, 600 mm, f/7.5 (Orion ED80), with `type: 'refractor'` and `diagonal: true`.
+  - `viewMatrix(p, tg)`: a refractor with a diagonal is mirror-reversed; straight-through it is upside down; Newtonians
+    keep `newtonianMatrix`. Setup shows a star-diagonal switch for refractors instead of the focuser picker.
+  - No coma drawn for refractors. Collimation shows a "nothing to collimate" note for refractors, and the f-ratio
+    advice now comes from the numbers.
+  - Good seeing now caps planet power at 300×, which also limits the "when steady" eyepiece. On the 16-inch that is
+    the 10 mm (162×), not the 4 mm (406×).
+- Eyepiece previews flag poor choices (`epFlag`), dimming the picture and adding a one-line reason:
+  - over 2× the aperture in mm: "more power than N mm can use";
+  - over 300×: "more power than the air allows most nights";
+  - exit pupil over 7.2 mm: wider than your eye;
+  - for faint glows, exit pupil under 0.6 mm: "too dim at this power".
+  The full-screen view's title carries the same note.
