@@ -4,6 +4,7 @@
 import { tangentOffset, D2R, vecFromAltAz, cross, norm, dot } from './model.js';
 import { tint, starTint, theme } from './theme.js';
 import { PAIR_CLASS, STAR_CLASS } from '../data/blurbs.js';
+import { splitArcsec } from './vis.js';
 
 /** Unit direction (in the alt-az tangent plane, x right / y up) of celestial north and east at a target. */
 function skyAxes(sky, o, date) {
@@ -53,9 +54,10 @@ export function drawEyepiece(cv, sky, o, tgt, ep, scope, opts = {}) {
   // scale with brightness, so a faint star is a small dim glow and a bright one a larger, stronger glow. Veils add where
   // they overlap, so close stars blend at the edges while their centres stay distinct. `paint(alpha)` gives the colour.
   const u = Math.max(1, W / 300);
+  const starR = (m) => Math.max(2.6, Math.min(13, 4 + 1.25 * (7 - m))) * u;      // radius of a star's drawn glow
   const star = (x, y, m, paint) => {
     const lum = Math.max(0.42, Math.min(1, 1 - (m - 2.5) * 0.085));
-    const R = Math.max(2.6, Math.min(13, 4 + 1.25 * (7 - m))) * u;
+    const R = starR(m);
     const g = c.createRadialGradient(x, y, 0, x, y, R);
     g.addColorStop(0, paint(lum)); g.addColorStop(0.16, paint(lum * 0.95)); g.addColorStop(0.36, paint(lum * 0.42)); g.addColorStop(0.65, paint(lum * 0.12)); g.addColorStop(1, paint(0));
     c.save(); c.globalCompositeOperation = 'lighter'; c.fillStyle = g; c.beginPath(); c.arc(x, y, R, 0, 7); c.fill();
@@ -126,19 +128,41 @@ export function drawEyepiece(cv, sky, o, tgt, ep, scope, opts = {}) {
     const pr = o.pairs[0], sepDeg = pr.sep / 3600, mags = String(pr.mags).split('/').map(Number);
     let dx = 0, dy = sepDeg;
     if (ax) { dx = (Math.cos(pr.pa * D2R) * ax.n.x + Math.sin(pr.pa * D2R) * ax.e.x) * sepDeg; dy = (Math.cos(pr.pa * D2R) * ax.n.y + Math.sin(pr.pa * D2R) * ax.e.y) * sepDeg; }
-    // Split: separation above the Dawes limit (116/D″) and magnified to at least 4′ apparent, a comfortable eye separation.
-    const dawes = 116 / scope.aperture, resolved = pr.sep >= dawes, split = resolved && mag * pr.sep >= 240;
+    // Split: separation above the Dawes limit (116/D″) and magnified enough for the eye: 4′ apparent for a matched pair,
+    // more when the companion is much fainter and sits in the bright star's glare (splitArcsec, the same rule as the ratings).
+    const dm = mags.length > 1 && !Number.isNaN(mags[1]) ? Math.abs(mags[1] - mags[0]) : 0;
+    const dawes = 116 / scope.aperture, resolved = pr.sep >= dawes, split = resolved && mag * pr.sep >= splitArcsec(dm);
     // The eye resolves far finer detail than this picture has pixels, so a pair drawn strictly to scale would merge even
     // when the eyepiece splits it cleanly. Draw what the eye would make of it instead: clearly apart when split, just
     // touching when tight, one star when below the telescope's limit. Wider pairs keep their true spacing.
     const L = Math.hypot(dx, dy) || 1, truePx = L * s, app = mag * pr.sep / 60;                                   // how far apart the pair looks to the eye, arcminutes
-    const want = !resolved ? 0 : split ? Math.min(18, 7 + 3 * Math.log2(app / 4)) * u : 4.5 * u, px = truePx >= want ? truePx : truePx + 0.4 * (want - truePx);   // wider at higher power; only 40% of the way from true scale to that spacing
+    let want = !resolved ? 0 : split ? Math.min(18, 7 + 3 * Math.log2(app / 4)) * u : 4.5 * u, px = truePx >= want ? truePx : truePx + 0.4 * (want - truePx);   // wider at higher power; only 40% of the way from true scale to that spacing
+    // A faint companion must sit clear of the bright star's soft veil, or the picture hides what the eye can see.
+    const rA = starR(mags[0] || 4), rB = starR(mags[1] || 6);
+    if (split && px < rA * 0.85 + rB + 2 * u) px = rA * 0.85 + rB + 2 * u;
+    else if (resolved && !split && dm >= 2 && px < rA * 0.6 + rB) px = rA * 0.6 + rB;
     const hx = (dx / L) * px / 2 / s, hy = (dy / L) * px / 2 / s;
     const A = P(-hx, -hy), B = P(hx, hy);
     const pc = PAIR_CLASS[o.label] || '';
     const paintOf = (cls) => (starTint(cls, 1, k) ? (al) => starTint(cls, al, k) : (al) => col(255, 120, 70, al));
     star(B.x, B.y, mags[1] || 6, paintOf(pc[1])); star(A.x, A.y, mags[0] || 4, paintOf(pc[0]));
     if (px > truePx * 1.3 && resolved) widened = true;
+    // Name each star of the pair (A, B… as in the double-star catalogues), out beyond each star along the line joining
+    // them; one label when the scope can't split them. The full-size view adds the name and magnitudes.
+    const [la, lb] = String(pr.c || 'AB').length >= 2 ? [pr.c[0], pr.c[1]] : ['A', 'B'];
+    const nm = opts.thumb ? '' : `${o.label} `, fs = Math.round((opts.thumb ? 15 : 9) * u);
+    c.font = `bold ${fs}px system-ui`; c.textBaseline = 'middle'; c.fillStyle = col(255, 160, 110);
+    const ux = (B.x - A.x) / (Math.hypot(B.x - A.x, B.y - A.y) || 1), uy = (B.y - A.y) / (Math.hypot(B.x - A.x, B.y - A.y) || 1);
+    const put = (x, y, dir, txt, r) => {                                     // just past the star's glow, on the far side from its partner
+      const vx = dir * ux, vy = dir * uy, d = r + 4 * u;
+      c.textAlign = vx > 0.35 ? 'left' : vx < -0.35 ? 'right' : 'center'; c.textBaseline = vy > 0.35 ? 'top' : vy < -0.35 ? 'bottom' : 'middle';
+      c.fillText(txt, x + vx * d, y + vy * d);
+    };
+    if (resolved && px >= rA * 0.6 + rB) {
+      put(A.x, A.y, -1, `${nm}${la}${opts.thumb ? '' : ` (mag ${(+mags[0]).toFixed(1)})`}`, rA);
+      put(B.x, B.y, 1, `${nm}${lb}${opts.thumb ? '' : ` (mag ${(+mags[1]).toFixed(1)})`}`, rB);
+    } else { c.textAlign = 'left'; c.fillText(`${nm}${la}+${lb}`, A.x + rA + 6 * u, A.y - rA); }
+    c.textBaseline = 'alphabetic';
     note = `${pr.c}: ${pr.sep}″ — ${pr.sep < dawes ? `below this scope's ${dawes.toFixed(2)}″ resolution limit` : split ? 'split at this power' : 'tight at this power; try a shorter eyepiece'}`;
   }
   c.restore();

@@ -3141,6 +3141,29 @@ function renderLog() {
 // ---------------------------------------------------------------- OBJECT SHEET: what it is, how it looks tonight, what to do with it
 function closeSheet() { $('#sheet').classList.add('hidden'); }
 let sheetStep = null;                               // steps the open target page through the list it came from
+/** One eyepiece view filling the screen (tap a small preview). Redrawn every few seconds as the sky turns. */
+function openEpZoom(o, epi) {
+  const p = profile(), e = p.eyepieces[epi]; if (!e) return;
+  let box = $('#epzoom'); if (box) box.remove();
+  box = document.createElement('div'); box.id = 'epzoom'; box.className = 'epzoom';
+  const side = Math.min(window.innerWidth - 16, window.innerHeight - 170), dpr = Math.min(3, window.devicePixelRatio || 1);
+  box.innerHTML = `<div class="epz-h"><div><b>${esc(o.label)}</b> in the ${esc(e.name)} · ${(p.fl / e.fl).toFixed(0)}×<div class="muted small" id="epz-note"></div></div><button class="ibtn" id="epz-x" aria-label="Close">✕</button></div>
+    <canvas id="epz-cv" width="${Math.round(side * dpr)}" height="${Math.round(side * dpr)}" style="width:${side}px;height:${side}px"></canvas>
+    <p class="muted small" id="epz-cap">To scale for this eyepiece; brightness is not to scale. Tap anywhere to close.</p>`;
+  document.body.appendChild(box);
+  const draw = () => {
+    if (!box.isConnected) return clearInterval(tick);
+    try {
+      const cv = $('#epz-cv'), now = new Date(), tg = sky.altAz(o, now), longest = p.eyepieces.reduce((a, x) => (x.fl > a.fl ? x : a), p.eyepieces[0]);
+      const res = drawEyepiece(cv, sky, o.pairs && o.key.startsWith('st:') ? { ...o, t: 'DS' } : o, tg, e, p, { matrix: state.rot180 ? newtonianMatrix(tg, p.focuser ?? 90) : null, bright: vis(), refExit: p.aperture / (p.fl / longest.fl), date: now });
+      if (res) $('#epz-note').textContent = [res.note, `field ${res.tfov >= 1 ? res.tfov.toFixed(1) + '°' : (res.tfov * 60).toFixed(0) + '′'}`].filter(Boolean).join(' · ');
+      if (res && res.widened) $('#epz-cap').textContent = 'Close pairs are drawn a little wider than scale so the split the eye sees shows up. Tap anywhere to close.';
+      if (res && res.enlarged) $('#epz-cap').textContent = `The planet is drawn ${res.enlarged}× larger than scale. Tap anywhere to close.`;
+    } catch (err) { console.error(err); }
+  };
+  const tick = setInterval(draw, 4000); draw();
+  box.onclick = () => { clearInterval(tick); box.remove(); };
+}
 function openObject(key, opt = {}) {
   const o = objByKey(key); if (!o) return;
   refreshSky(false);
@@ -3184,6 +3207,7 @@ function openObject(key, opt = {}) {
       const n = $('#sh-epn' + cv.dataset.epi); if (n && res) n.textContent = ` · ${res.tfov >= 1 ? res.tfov.toFixed(1) + '°' : (res.tfov * 60).toFixed(0) + '′'}`;
       if (res && res.widened) { const cap = $('#sh-epcap'); if (cap) cap.textContent = 'In each of your eyepieces. Close pairs are drawn a little wider than scale, so a split the eye would see is not lost in the small picture.'; }
       if (res && res.enlarged) { const cap = $('#sh-epcap'); if (cap) cap.textContent = `In each of your eyepieces. The planet is drawn ${res.enlarged}× larger than scale so you can see its shape. In the real eyepiece it looks smaller than this, but sharp.`; }
+      cv.onclick = () => openEpZoom(o, +cv.dataset.epi);
     } catch (err) { console.error(err); }
   });
   box.onclick = (e) => { if (e.target === box) closeSheet(); };
