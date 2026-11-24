@@ -715,9 +715,37 @@ unrelated extra star in the object-page sentence. Still open with Bryan: whether
     step was silently dropped, so the flow jumped from the previous step straight to blocked-sky tracing. It now
     always runs when its star is on, showing "Earlier tonight: … check again, or keep it".
 
+## Build 109 (Nov 24): alignment-star sheet, tuck-away eyepiece controls, physical sky background, pinned simulator view
+- Alignment stars (sheet for a star that is only there to line up): an "Alignment star" badge by the name and a card in
+  place of the eyepiece previews (`alignCardHTML`): a drawn field with one star and a centring ring, "Nothing to study
+  here, and that is the point", and why it is useful (bright, easy to find, a point centres exactly, then Sync). The
+  pointless "Your log" row is dropped for them.
+- Full-screen eyepiece view: the controls live in a drawer (`.epz-drawer`) with a handle. Tap it or flick it down to tuck
+  the controls away; the handle then says "Show controls · N effects off". The view sizes itself to the room left
+  (`fit()`), growing when the drawer is tucked; choice kept in `state.ui.epzMin`. Effect chips are one sideways-scrolling
+  row; explanation shortened.
+- "Open in the simulator" now closes the target sheet too (it stayed on top of the simulator).
+- Sky background in every eyepiece picture is now physical: the sky's surface brightness (light pollution + Moon toward
+  the target via Krisciunas & Schaefer + twilight + haze) dimmed by 5·log10(7 mm / exit pupil), mapped on a log scale
+  (24 mag/arcsec² black, 16 mid grey). Before, it was a narrow linear ramp on top of the theme's 25% grey floor, so the
+  Moon changed it by only a few grey levels. The zoom header shows "background NN.N mag/arcsec²". Checked: dark site
+  (NELM 6.5), full Moon well away from M29: 22.6 → 19.6 at 33× (clearly grey); Toronto (NELM 4): 18.9 → 18.5 (a small
+  step, which is real: the Moon adds little to a city sky).
+- Simulator: the view and a one-line summary (aperture, f-ratio, power, exit pupil, field) are pinned at the top
+  (`.simdock`, sticky) while the sliders scroll under it; each slider's explanation is behind an ⓘ; the full numbers
+  moved to "The numbers" below the sliders; Basic/Advanced sits above the view.
+
 ## Build 108 (Nov 24): faces and hour labels on the forecast strip; clearer tips
 - Forecast strip, second pass:
   - Emoji-style faces per hour (`FACEPIC`), drawn rather than real emoji so Night stays red. Filled in the `--q0…3`
     colours with dark features: star-eyed grin (great), smile (good), flat mouth (so-so), frown behind a cloud (cloud).
   - Every tile is labelled with its hour; am/pm shows on the first and last tiles and on 12a/12p.
   - The key under the strip uses the same faces.
+- "Tonight in detail" (`details.more.tdetail`, start screen and Plan): no divider above it; the divider now sits below, so it reads as part of the forecast.
+- Explore now offers the phone check-up as an optional start-up step (`checkExplore`, off by default): "optional — once per phone, 4 min: how far to trust the sky view". Finishing or skipping the check-up switches it off for both activities.
+- The phone check-up is offered on every start-up path (Observe, Explore, Play, Plan). It's one switch, `launch.check`,
+  off by default once done: "optional — once per phone, 4 min: how far to trust the arrows and the sky view".
+- Steady air check after dark only: the step note reads "10 s, after dark". While the Sun is above −6° the start screen
+  adds "needs stars: only possible once it is dark", and the check itself shows a short note (it needs stars, come
+  back after sunset; until then the forecast or "average" is used) with "Skip for now".
+- Sky darkness check: the step note reads "30 s, once fully dark". Before the Sun is 18° down, the start screen adds "needs a fully dark sky (from …)", and the "Your sky" page explains why and falls back to the light-pollution map, with the check still available as "… anyway".

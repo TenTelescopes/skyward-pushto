@@ -449,7 +449,7 @@ body.camwin-open { overflow: hidden; }
 .list.hl button.mini { white-space: nowrap; flex: none; }
 .gpserr { color: var(--warn, #ffb08a); margin: -4px 0 8px; }
 .list li .tap, .list li [data-goplan] { cursor: pointer; }
-.epzoom { position: fixed; inset: 0; z-index: 60; background: rgba(0,0,0,0.97); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: max(12px, env(safe-area-inset-top)) 8px max(12px, env(safe-area-inset-bottom)); }
+.epzoom { position: fixed; inset: 0; z-index: 60; background: rgba(0,0,0,0.97); display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 6px; padding: max(12px, env(safe-area-inset-top)) 8px max(12px, env(safe-area-inset-bottom)); }
 .epzoom .epz-h { width: 100%; max-width: 640px; display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
 .epzoom canvas { border-radius: 50%; }
 #sh-eps canvas { cursor: zoom-in; }
@@ -494,9 +494,9 @@ body[data-tab="find"] #st-pill, body[data-tab="plan"] #st-pill, body[data-tab="m
 .cbar .cbl { flex-basis: 100%; display: flex; justify-content: space-between; font-size: 12px; color: var(--dim); }
 .glance .cbl span { border: 0; padding: 0; border-radius: 0; font-size: 12px; }
 /* Native-feeling swipes: the phone's own scrolling, snapping card by card */
-.epz-track { display: flex; width: 100%; max-width: 640px; overflow-x: auto; scroll-snap-type: x mandatory; overscroll-behavior-x: contain; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+.epz-track { flex: 1 1 auto; min-height: 0; display: flex; width: 100%; max-width: 640px; overflow-x: auto; scroll-snap-type: x mandatory; overscroll-behavior-x: contain; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
 .epz-track::-webkit-scrollbar { display: none; }
-.epz-page { flex: 0 0 100%; display: flex; justify-content: center; scroll-snap-align: center; scroll-snap-stop: always; }
+.epz-page { flex: 0 0 100%; display: flex; justify-content: center; align-items: center; scroll-snap-align: center; scroll-snap-stop: always; }
 .epzoom { touch-action: auto; }
 .eprow, .picks { scroll-snap-type: x mandatory; overscroll-behavior-x: contain; }
 .eprow figure, .picks button { scroll-snap-align: start; }
@@ -540,3 +540,49 @@ body[data-tab="find"] #st-pill, body[data-tab="plan"] #st-pill, body[data-tab="m
 .cbar .qkey { flex-wrap: wrap; justify-content: center; gap: 2px 4px; }
 .cbar .qkey .skp { width: 13px; height: 13px; vertical-align: -2px; }
 .cbar .qkey .skp:nth-of-type(1) { color: var(--q0); } .cbar .qkey .skp:nth-of-type(2) { color: var(--q1); } .cbar .qkey .skp:nth-of-type(3) { color: var(--q2); } .cbar .qkey .skp:nth-of-type(4) { color: var(--q3); }
+
+/* "Tonight in detail" belongs to the forecast above it: no divider above, one below */
+details.more.tdetail { border-top: 0; margin-top: 2px; border-bottom: 1px solid var(--row); }
+details.more.tdetail > summary { padding: 6px 0 10px; }
+
+/* Eyepiece zoom: controls live in a drawer that tucks away (tap the handle or flick it down) so the view can grow. */
+.epz-drawer { flex: none; width: 100%; max-width: 520px; background: var(--panel); border: 1px solid var(--line); border-radius: 16px 16px 12px 12px; padding: 0 12px 8px; }
+.epz-handle { display: flex; flex-direction: column; align-items: center; gap: 4px; width: 100%; min-height: 40px; padding: 6px 0 2px; border: 0; background: none; color: var(--dim); font-size: 13px; }
+.epz-handle i { display: block; width: 40px; height: 5px; border-radius: 3px; background: var(--line); }
+.epzoom.dock-min .epz-drawer > :not(.epz-handle) { display: none; }
+.epzoom.dock-min .epz-drawer { padding-bottom: 2px; }
+.epz-drawer .advseg { margin: 2px 0 8px; }
+.epz-chips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
+.epz-chips::-webkit-scrollbar { display: none; }
+.epz-chips button { flex: none; }
+.epz-hint { margin: 6px 0 0; }
+.epz-btns { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.epz-btns .adv { gap: 6px; }
+.show-adv .epz-btns .adv { display: inline-flex; }
+.epz-btns .mini { margin: 0; }
+#epz-cap { margin: 6px 0 0; }
+
+/* Alignment-star sheet: an intentional "nothing to see, very useful" card in place of the eyepiece previews. */
+.alignbadge { display: inline-block; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--hi); color: var(--hi); font-weight: 600; font-size: 12px; letter-spacing: .02em; margin-right: 2px; }
+.aligncard { display: flex; gap: 14px; align-items: flex-start; margin: 10px 0 12px; padding: 12px; border: 1px dashed var(--line); border-radius: 14px; background: var(--row); }
+.aligncard p { margin: 0 0 8px; }
+.aligncard p:last-child { margin-bottom: 0; }
+.alignpic { flex: none; width: 92px; height: 92px; }
+.alignpic .f { fill: var(--bg); stroke: var(--line); stroke-width: 2; }
+.alignpic .ring { fill: none; stroke: var(--hi); stroke-width: 1.2; stroke-dasharray: 3 3; opacity: .8; }
+.alignpic .glow { fill: var(--fg); opacity: .18; }
+.alignpic .star { fill: var(--fg); }
+
+/* Simulator: the view is pinned at the top of the page; sliders scroll under it with their explanations tucked away. */
+.simdock { position: sticky; top: 0; z-index: 3; margin: 0 -14px; padding: 6px 14px 6px; background: var(--bg); border-bottom: 1px solid var(--line); }
+.simdock .simview { margin: 0; }
+.simsum { margin: 4px 0 0; text-align: center; font-size: 13px; color: var(--fg); font-variant-numeric: tabular-nums; }
+.simrow { margin: 4px 0 6px; }
+.simrow > span:first-child { align-items: center; gap: 8px; }
+.simrow > span:first-child b { flex: none; }
+.simrow > span:first-child .num { margin-left: auto; }
+.simrow .hint { display: none; }
+.simrow.open .hint { display: block; }
+.hintbtn { display: inline-grid; place-items: center; width: 28px; height: 28px; min-height: 0; padding: 0; border-radius: 50%; border: 1px solid var(--line); background: none; color: var(--dim); font: italic 600 13px/1 Georgia, serif; vertical-align: middle; }
+.simrow.open .hintbtn { color: var(--hi); border-color: var(--hi); }
+#tab-sim h3 { margin: 12px 0 2px; }

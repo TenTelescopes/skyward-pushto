@@ -60,7 +60,14 @@ export function drawEyepiece(cv, sky, o, tgt, ep, scope, opts = {}) {
   const screenAngle = (dx, dy) => { const [X, Y] = applyM(M, dx, dy); return Math.atan2(-Y, X); };
   c.clearRect(0, 0, W, H);
   c.save(); c.beginPath(); c.arc(cx, cy, Rpx, 0, 7); c.clip();
-  c.fillStyle = col(4 + 10 * shown + 46 * skyLum * shown, 0, 0); c.fillRect(0, 0, W, H);   // sky glow: brighter with light pollution and moonlight, darker with magnification
+  // Sky background as it looks in this eyepiece. Its surface brightness (mag/arcsec²) is the sky's own (light pollution,
+  // Moon toward the target, twilight, haze), dimmed by 5·log10(7 mm / exit pupil): higher power, darker background.
+  // Shown on a log scale, like the eye: 24 (dark sky at high power) is black, 16 (city sky with a full Moon nearby
+  // at low power) is a mid grey. One magnitude of extra moonlight is the same step anywhere on that scale.
+  const sbEye = raw ? 99 : skyFromNelm(nelmEff) + (F.aperture ? 5 * Math.log10(7 / Math.max(0.3, exit)) : 0);
+  const skyL = raw ? 0.02 : 0.02 + 0.5 * Math.max(0, Math.min(1, (24 - sbEye) / 8));
+  const sh = theme.shade, dayRGB = [222 * skyL, 230 * skyL, 255 * skyL], nightR = 170 * skyL * k;
+  c.fillStyle = `rgb(${(dayRGB[0] + (nightR - dayRGB[0]) * sh) | 0},${(dayRGB[1] * (1 - sh)) | 0},${(dayRGB[2] * (1 - sh)) | 0})`; c.fillRect(0, 0, W, H);
 
   // deep-sky shape (drawn first, stars on top) — dimmed by surface brightness and washed out by a bright sky
   c.globalAlpha = shown * (1 - 0.75 * skyLum) * 10 ** (-0.4 * ext);
@@ -228,7 +235,7 @@ export function drawEyepiece(cv, sky, o, tgt, ep, scope, opts = {}) {
   };
   if (ax) { mark(ax.n.x, ax.n.y, 'N'); mark(ax.e.x, ax.e.y, 'E'); }
   mark(0, 1, '↑Z', true);
-  return { mag, tfov, note, enlarged, widened, exit, rel };
+  return { mag, tfov, note, enlarged, widened, exit, rel, sbEye };
 }
 
 // ---------------------------------------------------------------- Newtonian image orientation

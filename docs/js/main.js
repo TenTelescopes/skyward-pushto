@@ -577,7 +577,7 @@ function renderPlanHere() {
       ${(() => { const rec = ensureForecast(here(), start, () => { if (!$('#tab-plan').classList.contains('hidden')) renderPlan(); }); return glanceHTML(rec, n, start) + clearSpellBtn(rec, start); })()}
       ${P.site
         ? `<div class="sess hzrow"><div class="small">${ICON.pin}Planning for <b>${esc(P.site.name)}</b><div class="muted">${P.site.name === coordText(P.site.lat, P.site.lon) ? '' : coordText(P.site.lat, P.site.lon) + ' · '}not where you are now</div></div><div class="btncol"><button id="pl-where" class="mini">Change place</button><button id="pl-here" class="mini">Use where I am</button></div></div>` : ''}
-      <details class="more" id="pl-tonight" ${state.ui && state.ui.plTonight ? 'open' : ''}><summary>Tonight in detail</summary>
+      <details class="more tdetail" id="pl-tonight" ${state.ui && state.ui.plTonight ? 'open' : ''}><summary>Tonight in detail</summary>
       <div class="muted small">${esc(skyName)} · Moon ${moonTxt}</div>
       <div class="muted small">Sunset ${hm(n.set)} · fully dark ${hm(n.astro)} – ${hm(n.astroAm)}</div>
       <div id="pl-fc">${outlookHTML(fcFor(here(), start), { hint: false })}</div>
@@ -3351,6 +3351,13 @@ function openSeeingCheck(mode = 'twinkle') {
   const dark = sky.sunAlt(new Date()) < -6, st = dark ? seeingStar() : null;
   const hi = profile().eyepieces.reduce((a, e) => (e.fl < a.fl ? e : a), profile().eyepieces[0]);
   if (mode === 'twinkle') {
+    if (!dark) {                                  // daylight or bright twilight: no stars to judge by yet
+      const f = seeingSource() === 'forecast' ? ` Until then the app uses Environment Canada's forecast (${SEEING_WORD[seeingNow()]}).` : ' Until then the app assumes an average night.';
+      card.innerHTML = `<h3 style="margin-top:0">Steady air check</h3>
+        <p><b>This needs stars, so it only works once it is dark.</b> Come back after sunset, when bright stars are out, and it takes ten seconds.${f}</p>
+        <button id="see-close" class="primary" style="width:100%;margin-top:6px">${flow ? 'Skip for now' : 'OK'}</button>`;
+      $('#see-close').onclick = close; return;
+    }
     card.innerHTML = `<h3 style="margin-top:0">Steady air check</h3>
       ${seeingTonight() ? `<p class="small">Earlier tonight: <b>${SEEING_WORD[seeingTonight().v]}</b> (${seeingTonight().how === 'pick' ? 'picked' : 'checked'} at ${hm(new Date(seeingTonight().when))}). The air changes through the evening, so check again, or <button class="mini" id="see-keep">keep it</button></p>` : ''}
       <p>${st ? `Look at <b>${esc(st.o.label)}</b>, ${st.p.alt.toFixed(0)}° up in the ${compassName(st.p.az)}, for about ten seconds.` : dark ? 'Look at any bright star at least halfway up the sky for about ten seconds.' : 'Do this after dark: look at a bright star at least halfway up the sky for about ten seconds.'}
@@ -3465,26 +3472,46 @@ function openEpZoom(o, epi) {
   let at = Math.max(0, order.indexOf(epi));
   let box = $('#epzoom'); if (box) box.remove();
   box = document.createElement('div'); box.id = 'epzoom'; box.className = 'epzoom';
-  const side = Math.min(window.innerWidth - 24, window.innerHeight - 220), dpr = Math.min(3, window.devicePixelRatio || 1);
+  const dpr = Math.min(3, window.devicePixelRatio || 1);
   box.innerHTML = `<div class="epz-h"><div><b>${esc(o.label)}</b> <span id="epz-t"></span><div class="muted small" id="epz-note"></div></div><button class="ibtn" id="epz-x" aria-label="Close">✕</button></div>
-    <div class="epz-track" id="epz-track">${order.map((i) => `<div class="epz-page"><canvas data-epi="${i}" width="${Math.round(side * dpr)}" height="${Math.round(side * dpr)}" style="width:${side}px;height:${side}px"></canvas></div>`).join('')}</div>
+    <div class="epz-track" id="epz-track">${order.map((i) => `<div class="epz-page"><canvas data-epi="${i}" width="300" height="300"></canvas></div>`).join('')}</div>
     <div class="epz-nav"><button class="ibtn" id="epz-prev" aria-label="Previous eyepiece">‹</button><span id="epz-dots"></span><button class="ibtn" id="epz-next" aria-label="Next eyepiece">›</button></div>
-    <div class="epz-mode"><div class="seg advseg" role="group" aria-label="Controls"><button data-adv="0">Basic</button><button data-adv="1">Advanced: switch effects</button></div><div class="adv"><div class="chips wrap">${EP_FACTORS.map(([k, l]) => `<button data-f="${k}" aria-pressed="false">${l}</button>`).join('')}</div>
-      <div class="muted small">Switch an effect off to see what it does. All off is the raw catalogue: true positions and sizes, every star to magnitude 8. <button class="mini" id="epz-all">All on</button> <button class="mini" id="epz-none">All off</button> </div></div><button class="mini" id="epz-sim">Open in the simulator</button></div>
-    <p class="muted small" id="epz-cap"></p>`;
+    <div class="epz-drawer" id="epz-drawer"><button class="epz-handle" id="epz-hd" aria-expanded="true"><i></i><span id="epz-hdt">Hide controls</span></button>
+    <div class="epz-mode"><div class="seg advseg" role="group" aria-label="Controls"><button data-adv="0">Basic</button><button data-adv="1">Advanced: switch effects</button></div><div class="adv"><div class="chips epz-chips">${EP_FACTORS.map(([k, l]) => `<button data-f="${k}" aria-pressed="false">${l}</button>`).join('')}</div>
+      <div class="muted small epz-hint">Switch an effect off to see what it does. All off is the raw catalogue.</div></div>
+      <div class="epz-btns"><span class="adv"><button class="mini" id="epz-all">All on</button><button class="mini" id="epz-none">All off</button></span><button class="mini" id="epz-sim">Open in the simulator</button></div></div>
+    <p class="muted small" id="epz-cap"></p></div>`;
   document.body.appendChild(box);
   const track = $('#epz-track'), res = [];
+  // The view takes whatever room the controls leave, and grows when they are tucked away.
+  const fit = () => {
+    const side = Math.max(120, Math.floor(Math.min(track.clientWidth - 8, track.clientHeight - 4)));
+    track.querySelectorAll('canvas').forEach((cv) => { cv.style.width = cv.style.height = side + 'px'; cv.width = cv.height = Math.round(side * dpr); });
+    track.scrollLeft = at * track.clientWidth;
+  };
+  const tuck = (min) => {
+    state.ui = state.ui || {}; state.ui.epzMin = min; save();
+    box.classList.toggle('dock-min', min); $('#epz-hd').setAttribute('aria-expanded', String(!min));
+    requestAnimationFrame(() => { fit(); draw(); });
+  };
+  box.classList.toggle('dock-min', !!(state.ui && state.ui.epzMin)); $('#epz-hd').setAttribute('aria-expanded', String(!(state.ui && state.ui.epzMin)));
+  { const dr = $('#epz-drawer'); let y0 = null, x0 = 0;                     // a downward flick tucks the controls away, upward brings them back
+    dr.addEventListener('touchstart', (e) => { y0 = e.touches[0].clientY; x0 = e.touches[0].clientX; }, { passive: true });
+    dr.addEventListener('touchend', (e) => { if (y0 == null) return; const t = e.changedTouches[0], dy = t.clientY - y0, dx = t.clientX - x0; y0 = null;
+      if (Math.abs(dy) > 40 && Math.abs(dy) > 1.5 * Math.abs(dx)) { const min = dy > 0; if (min !== box.classList.contains('dock-min')) { tuck(min); tick(); } } }, { passive: true }); }
+  window.addEventListener('resize', function rs() { if (!box.isConnected) return window.removeEventListener('resize', rs); fit(); draw(); });
   const label = () => {
     const e = p.eyepieces[order[at]], r = res[at];
     $('#epz-t').textContent = `in the ${e.name} · ${(p.fl / e.fl).toFixed(0)}×${epFlag(o, e, p) ? ' · not recommended: ' + epFlag(o, e, p) : ''}`;
     $('#epz-dots').innerHTML = order.map((_, k) => `<i class="${k === at ? 'on' : ''}"></i>`).join('');
     $('#epz-prev').disabled = at === 0; $('#epz-next').disabled = at === order.length - 1;
-    $('#epz-note').textContent = r ? [r.note, `field ${r.tfov >= 1 ? r.tfov.toFixed(1) + '°' : (r.tfov * 60).toFixed(0) + '′'}`].filter(Boolean).join(' · ') : '';
+    $('#epz-note').textContent = r ? [r.note, `field ${r.tfov >= 1 ? r.tfov.toFixed(1) + '°' : (r.tfov * 60).toFixed(0) + '′'}`, r.sbEye < 90 ? `background ${r.sbEye.toFixed(1)} mag/arcsec²` : ''].filter(Boolean).join(' · ') : '';
     const advOn = !!(state.ui && state.ui.adv);
     box.classList.toggle('show-adv', advOn); box.querySelectorAll('[data-adv]').forEach((b) => b.classList.toggle('on', (b.dataset.adv === '1') === advOn));
     const f = advOn ? epFactors() : Object.fromEntries(EP_FACTORS.map(([k]) => [k, true])), raw = !Object.values(f).some(Boolean);
     box.querySelectorAll('[data-f]').forEach((b) => { b.classList.toggle('on', !!f[b.dataset.f]); b.setAttribute('aria-pressed', String(!!f[b.dataset.f])); });
     const off = EP_FACTORS.filter(([k]) => !f[k]).map(([, l]) => l.toLowerCase());
+    $('#epz-hdt').textContent = box.classList.contains('dock-min') ? `Show controls${advOn ? ` · ${raw ? 'raw catalogue' : off.length ? off.length + ' effect' + (off.length > 1 ? 's' : '') + ' off' : 'all effects on'}` : ''}` : 'Hide controls';
     const cap = raw ? 'Raw catalogue: true positions and sizes, every star to magnitude 8 with the brighter ones labelled, no allowance for the sky, the air, your mirror or your eye.'
       : off.length ? `Without: ${off.join(', ')}.`
       : r && r.enlarged ? `The planet is drawn ${r.enlarged}× larger than scale.` : r && r.widened ? 'Close pairs are drawn a little wider than scale so the split the eye sees shows up.' : 'To scale for this eyepiece; brightness shown as the eye would see it.';
@@ -3498,8 +3525,8 @@ function openEpZoom(o, epi) {
     });
     label();
   };
-  const timer = setInterval(draw, 4000); draw();
-  requestAnimationFrame(() => { track.scrollLeft = at * track.clientWidth; });
+  const timer = setInterval(draw, 4000); fit(); draw();
+  requestAnimationFrame(() => { fit(); draw(); });
   track.addEventListener('scroll', () => {
     const k = Math.round(track.scrollLeft / Math.max(1, track.clientWidth));
     if (k !== at && k >= 0 && k < order.length) { at = k; label(); tick(); }
@@ -3509,9 +3536,11 @@ function openEpZoom(o, epi) {
   box.onclick = (ev) => {
     if (ev.target.closest('#epz-prev')) return go(-1);
     if (ev.target.closest('#epz-next')) return go(1);
+    if (ev.target.closest('#epz-hd')) return tuck(!box.classList.contains('dock-min'));
+    if (ev.target.closest('.epz-drawer')) { if (!ev.target.closest('button')) return; }
     const ab = ev.target.closest('[data-adv]'); if (ab) { state.ui = state.ui || {}; state.ui.adv = ab.dataset.adv === '1'; save(); draw(); return; }
     const fb = ev.target.closest('[data-f]'); if (fb) { const f = epFactors(); f[fb.dataset.f] = !f[fb.dataset.f]; setEpFactors(f); draw(); return; }
-    if (ev.target.closest('#epz-sim')) { const e = p.eyepieces[order[at]]; simFrom(o, p, e); close(); showTab('sim'); return; }
+    if (ev.target.closest('#epz-sim')) { const e = p.eyepieces[order[at]]; simFrom(o, p, e); close(); closeSheet(); showTab('sim'); window.scrollTo(0, 0); return; }
     if (ev.target.closest('#epz-all')) { setEpFactors(Object.fromEntries(EP_FACTORS.map(([k]) => [k, true]))); draw(); return; }
     if (ev.target.closest('#epz-none')) { setEpFactors(Object.fromEntries(EP_FACTORS.map(([k]) => [k, false]))); draw(); return; }
     if (ev.target.closest('.epz-mode')) return;
@@ -3532,6 +3561,13 @@ function slideSheet(d, fromDrag = false) {
     card.style.transition = 'transform .24s cubic-bezier(.2,.8,.2,1), opacity .2s ease-out'; card.style.transform = ''; card.style.opacity = '';
   }, fromDrag ? 150 : 190);
 }
+/** For a star that is only on the list to line the telescope up: say plainly there is nothing to study, and why it is useful. */
+function alignCardHTML(o, inPlanAsSync) {
+  const pic = `<svg class="alignpic" viewBox="0 0 120 120" aria-hidden="true"><circle cx="60" cy="60" r="56" class="f"/><circle cx="60" cy="60" r="16" class="ring"/><circle cx="60" cy="60" r="9" class="glow"/><circle cx="60" cy="60" r="3.2" class="star"/></svg>`;
+  return `<div class="aligncard">${pic}<div>
+    <p><b>Nothing to study here, and that is the point.</b> In the eyepiece ${esc(o.label)} is one bright, sharp point at every magnification, so there are no eyepiece previews.</p>
+    <p class="small">It is here because it is easy: bright enough to spot by eye in twilight or a city sky, and a single point centres exactly. ${inPlanAsSync ? 'Push to it, centre it in your lowest-power eyepiece, tap <b>Sync</b>, then carry on: the arrows to the targets after it get more accurate.' : 'Centre it in your lowest-power eyepiece and tap <b>Sync</b>: the arrows to whatever you look at next get more accurate.'}</p></div></div>`;
+}
 function openObject(key, opt = {}) {
   const o = objByKey(key); if (!o) return;
   refreshSky(false);
@@ -3544,11 +3580,12 @@ function openObject(key, opt = {}) {
   sheetStep = nav ? (d) => { const k = keys[at + d]; if (k) openObject(k, { ...opt, row: opt.rowFor ? opt.rowFor(k) : null }); } : null;
   sheetCan = nav ? (d) => !!keys[at + d] : () => false;
   card.innerHTML = `<div class="sheet-h"><div><div class="target-h"><span class="name">${esc(o.label)}</span>${o.name ? `<span class="cname">${esc(o.name)}</span>` : ''}</div>
-      <div class="muted small">${esc(kindLabel(o))}${o.con ? ' in ' + esc(fullCon(o.con)) : ''}${o.key.startsWith('dso:') && o.label !== o.id ? ' · ' + esc(o.id) : ''}</div></div>
+      <div class="muted small">${isTarget ? '' : '<span class="alignbadge">Alignment star</span> '}${esc(kindLabel(o))}${o.con ? ' in ' + esc(fullCon(o.con)) : ''}${o.key.startsWith('dso:') && o.label !== o.id ? ' · ' + esc(o.id) : ''}</div></div>
       <button class="ibtn" id="sh-x" aria-label="Close">✕</button></div>
     ${nav ? `<div class="shnav"><button id="sh-prev" aria-label="Previous target" ${nav.i === 0 ? 'disabled' : ''}>${ICON.prev}</button><span>${nav.i + 1} of ${nav.n} · swipe for the next</span><button id="sh-next" aria-label="Next target" ${nav.i === nav.n - 1 ? 'disabled' : ''}>${ICON.next}</button></div>` : ''}
     ${r ? `<p class="rateline"><span class="dots lv${r.level}">${DOTS[r.level]}</span> <b>${LEVEL_NAMES[r.level]}</b> ${row ? 'at its best in your session' : 'right now'} — ${esc(row ? row.desc : describe(o, r))}</p>` : (o.alt <= 0 ? '<p class="rateline muted">Below the horizon right now.</p>' : '')}
     ${blurb ? `<p class="blurb">${esc(blurb)}</p>` : ''}
+    ${!isTarget ? alignCardHTML(o, planList().some((x) => x.key === key && x.sync)) : ''}
     ${doubleNature(o) ? `<p class="small">${esc(NATURE_NOTE[doubleNature(o)])}</p>` : ''}
     ${o.shower ? `<p class="small"><b>No telescope needed.</b> Meteors can appear anywhere in the sky; they only seem to come from the radiant, ${o.alt > 0 ? `${Math.round(o.alt)}° up in the ${compassName(o.az)} right now` : 'below the horizon right now; the best rates come after it rises'}. Lie back, face about halfway up, away from lights and the Moon, and give your eyes 20 minutes. The sky view shows the radiant as a big dashed circle.</p>` : tooWide(o, profile()) && o.t === 'AS' ? `<p class="small"><b>A naked-eye pattern.</b> At ${(o.maj / 60).toFixed(0)}° across it is far bigger than any eyepiece field, so there is no eyepiece view. Use Push to it and the sky chart to find it, then look up.</p>` : isTarget && o.alt != null ? `<div class="eprow" id="sh-eps">${epsFor(o).map(({ e, i }) => `<figure class="${epFlag(o, e, profile()) ? 'notrec' : ''}"><canvas width="300" height="300" data-epi="${i}"></canvas><figcaption><b>${esc(e.name)}</b><span>${(profile().fl / e.fl).toFixed(0)}×<span id="sh-epn${i}"></span></span>${epFlag(o, e, profile()) ? `<span class="flag">Not recommended: ${esc(epFlag(o, e, profile()))}</span>` : ''}</figcaption></figure>`).join('')}</div>
       <p class="muted small hidden" id="sh-more" style="text-align:right;margin:0">swipe for more ›</p>
@@ -3560,11 +3597,11 @@ function openObject(key, opt = {}) {
       ${o.mag != null ? `<span>Brightness</span><span>magnitude ${(+o.mag).toFixed(1)}</span>` : ''}
       ${sizeText(o) ? `<span>${o.maj ? 'Size' : 'Pair'}</span><span>${sizeText(o)}</span>` : ''}
       ${o.pairs || o.sep ? `<span>Your scope splits</span><span>${splitLimit(profile().aperture).toFixed(splitLimit(profile().aperture) < 1 ? 2 : 1)}″ tonight</span>` : ''}
-      <span>Your log</span><span>${seen ? 'Seen ✓' : last ? RESULT[last.seen] : 'Not logged yet'}${last ? ' · ' + shortDate(last.t) : ''}</span>
+      ${isTarget ? `<span>Your log</span><span>${seen ? 'Seen ✓' : last ? RESULT[last.seen] : 'Not logged yet'}${last ? ' · ' + shortDate(last.t) : ''}</span>` : ''}
     </div>
     ${r && r.ep ? `<div class="why"><b>Why the ${esc(r.ep.name)}?</b> ${esc(epReason(o, r))}${epTip(o) ? `<div class="tip">${esc(epTip(o))}</div>` : ''}</div>` : ''}
     <div class="btnrow"><button id="sh-go" class="primary">Push to it</button>${isTarget ? `<button id="sh-plan">${inPlan ? '✓ In plan — remove' : '+ Add to plan'}</button>` : ''}</div>
-    ${isTarget ? `<div class="btnrow"><button id="sh-seen">${seen ? 'Log it again ✓' : 'Log as seen ✓'}</button></div>` : '<p class="muted small">A bright star for aligning and syncing.</p>'}`;
+    ${isTarget ? `<div class="btnrow"><button id="sh-seen">${seen ? 'Log it again ✓' : 'Log as seen ✓'}</button></div>` : ''}`;
   box.classList.remove('hidden'); card.scrollTop = 0;
   { const row = $('#sh-eps'), more = $('#sh-more'); if (row && more && row.scrollWidth > row.clientWidth + 4) { more.classList.remove('hidden'); row.addEventListener('scroll', () => more.classList.add('hidden'), { once: true, passive: true }); } }
   // one small preview per eyepiece
@@ -3673,16 +3710,16 @@ const ACTIVITIES = [
 ];
 const STEP_INFO = {
   check: ['Phone check-up', 'optional, 4 min, once per phone — how far to trust the arrows'],
-  sky: ['Sky darkness check', '30 s — count Little Dipper stars'],
-  seeing: ['Steady air check', '10 s — how much the stars twinkle'],
+  sky: ['Sky darkness check', '30 s, once fully dark — count Little Dipper stars'],
+  seeing: ['Steady air check', '10 s, after dark — how much the stars twinkle'],
   horizon: ['Blocked sky', 'one slow turn with the phone, once per place'],
   align: ['Star alignment', '2 min — point at two bright stars'],
 };
 /** The stops that make sense on the way to each activity. Planning and exploring need no phone check-up. */
-const PATH = { observe: ['check', 'sky', 'seeing', 'horizon', 'align'], game: ['check', 'horizon', 'align'], explore: ['sky', 'seeing', 'horizon', 'align'], plan: ['sky', 'seeing', 'horizon'], resume: ['check', 'sky', 'seeing', 'horizon', 'align'] };
+const PATH = { observe: ['check', 'sky', 'seeing', 'horizon', 'align'], game: ['check', 'horizon', 'align'], explore: ['check', 'sky', 'seeing', 'horizon', 'align'], plan: ['check', 'sky', 'seeing', 'horizon'], resume: ['check', 'sky', 'seeing', 'horizon', 'align'] };
 /** Is a stop switched on? Blocked sky starts on until this spot has a map, then stays off unless the user ticks it. */
 // Exploring offers the alignment too, but it starts off there (exploring needs no set-up): its own switch.
-const stepKey = (k, act) => (k === 'align' && act === 'explore' ? 'alignExplore' : k);
+const stepKey = (k, act) => (act === 'explore' && k === 'align' ? 'alignExplore' : k);   // Explore keeps its own (off by default) alignment switch
 const stepOn = (k, act) => (k === 'horizon' ? (state.launch.horizon ?? (!horizonNow() && !curPlace())) : k === 'seeing' ? (state.launch.seeing ?? true) : !!state.launch[stepKey(k, act)]);
 const GO = { observe: 'Start observing', explore: 'Start exploring', game: 'Start the game', plan: 'Start planning' };
 let flow = null;   // { steps: [..], i, dest, started, quiet }
@@ -3714,16 +3751,16 @@ function renderLaunch() {
   const V = { solid: 'solid', usable: 'usable', poor: 'poor', unsuitable: 'not suitable', incomplete: 'incomplete' };
   const status = {
     check: chk ? `done — ${V[chk.result.verdict] || chk.result.verdict}` : STEP_INFO.check[1],
-    sky: sq ? `last: ${sq.label.toLowerCase()}` : STEP_INFO.sky[1],
+    sky: (sky.sunAlt() > -18 ? `needs a fully dark sky (from ${hm(sky.night().astro || sky.night().naut)}) · ` : '') + (sq ? `last: ${sq.label.toLowerCase()}` : STEP_INFO.sky[1]),
     align: alignedNow() ? 'already aligned' : STEP_INFO.align[1],
-    seeing: seeingTonight() ? `earlier tonight: ${SEEING_WORD[seeingTonight().v]} — 10 s to check again` : seeingSource() === 'forecast' ? `forecast says ${SEEING_WORD[seeingNow()]} — 10 s to check it yourself` : STEP_INFO.seeing[1],
+    seeing: (sky.sunAlt() > -6 ? 'needs stars: only possible once it is dark · ' : '') + (seeingTonight() ? `earlier tonight: ${SEEING_WORD[seeingTonight().v]} — 10 s to check again` : seeingSource() === 'forecast' ? `forecast says ${SEEING_WORD[seeingNow()]} — 10 s to check it yourself` : STEP_INFO.seeing[1]),
     horizon: horizonNow() || placeLabel() ? hzLine() : STEP_INFO.horizon[1],
   };
   const act = ACTIVITIES.some((x) => x[0] === state.launchAct) ? state.launchAct : 'observe', stops = PATH[act];
   $('#launch').innerHTML = `<div class="lhead"><h1>Skyward <span>Push-To</span></h1><button class="hbtn shadebtn" id="l-shade" aria-label="Day or night look"></button></div>
     ${(() => { const rec = ensureForecast(state.site, new Date(), () => { const f = fcFor(state.site, new Date()); const el = $('#l-fc'), g = $('#l-glance'); if (el) el.innerHTML = outlookHTML(f); if (g) g.outerHTML = glanceHTML(f, sky.nightAt(new Date())).replace('class="glance"', 'class="glance" id="l-glance"'); });
       return glanceHTML(rec, sky.nightAt(new Date())).replace('class="glance"', 'class="glance" id="l-glance"'); })()}
-    <details class="more"><summary>Tonight in detail</summary><p class="tonight">${esc(tonightLine())}</p><div id="l-fc">${outlookHTML(fcFor(state.site, new Date()))}</div></details>
+    <details class="more tdetail"><summary>Tonight in detail</summary><p class="tonight">${esc(tonightLine())}</p><div id="l-fc">${outlookHTML(fcFor(state.site, new Date()))}</div></details>
     <div class="whereline"><span class="muted small">${ICON.pin}${whereText()}</span><button id="l-loc" class="mini">Update location</button></div>
     ${pp && pp.next ? `<button id="l-resume" class="primary" style="width:100%;margin:6px 0 2px">Carry on with your plan — ${pp.done} of ${pp.total} done</button>` : ''}
     <h3 class="lq">What are we up to?</h3>
@@ -3731,7 +3768,7 @@ function renderLaunch() {
     <div class="path">
       <div class="pnote">Start-up refinements — tap a star to turn that step on or off (bright = on)</div>
       ${['check', 'sky', 'seeing', 'horizon', 'align'].map((k) => (stops.includes(k)
-    ? `<label class="stop"><input type="checkbox" data-step="${stepKey(k, act)}" ${stepOn(k, act) ? 'checked' : ''}><span><b>${STEP_INFO[k][0]}</b><span class="muted">${k === 'horizon' ? (stepOn(k) || horizonNow() || placeLabel() ? status[k] : 'skipped') : esc(stepOn(k, act) ? status[k] : k === 'check' && !chk ? 'optional — 4 min, shows how far to trust the arrows' : k === 'align' && act === 'explore' ? (alignedNow() ? 'already aligned' : 'optional — 2 min, makes the chart match the real sky') : k === 'sky' && !sq && mapSky() ? `skipped — using the map estimate, about Bortle ${mapSky().bortle}` : 'skipped')}</span></span>${k === 'horizon' ? '<button id="l-hz" class="mini" type="button">Open</button>' : ''}</label>`
+    ? `<label class="stop"><input type="checkbox" data-step="${stepKey(k, act)}" ${stepOn(k, act) ? 'checked' : ''}><span><b>${STEP_INFO[k][0]}</b><span class="muted">${k === 'horizon' ? (stepOn(k) || horizonNow() || placeLabel() ? status[k] : 'skipped') : esc(stepOn(k, act) ? status[k] : k === 'check' ? (chk ? `done — ${V[chk.result.verdict] || chk.result.verdict}` : 'optional — once per phone, 4 min: how far to trust the arrows and the sky view') : k === 'align' && act === 'explore' ? (alignedNow() ? 'already aligned' : 'optional — 2 min, makes the chart match the real sky') : k === 'sky' && !sq && mapSky() ? `skipped — using the map estimate, about Bortle ${mapSky().bortle}` : 'skipped')}</span></span>${k === 'horizon' ? '<button id="l-hz" class="mini" type="button">Open</button>' : ''}</label>`
     : `<div class="stop na"><input type="checkbox" disabled aria-hidden="true"><span><b>${STEP_INFO[k][0]}</b><span class="muted">not needed for this</span></span></div>`)).join('')}
       <div class="stop end"><span class="dest"></span><button id="l-go" class="primary">${GO[act]}</button></div>
     </div>
@@ -3953,15 +3990,16 @@ function renderSim() {
   const el = $('#tab-sim'), S = simState(), o = simObj(S.target) || simObj('M42');
   const opt = SIM_TARGETS.map((t) => simObj(t)).filter(Boolean);
   if (o && !opt.includes(o)) opt.unshift(o);
-  const SL = (id, label, min, max, step, val, help) => `<label class="simrow"><span><b>${label}</b> <span id="${id}-v" class="num"></span></span><input type="range" id="${id}" min="${min}" max="${max}" step="${step}" value="${val}"><span class="muted small">${help}</span></label>`;
-  const side = Math.min(window.innerWidth - 32, 440), dpr = Math.min(3, window.devicePixelRatio || 1);
+  // Each slider keeps its explanation behind an ⓘ, so the sliders sit close under the view.
+  const SL = (id, label, min, max, step, val, help) => `<div class="simrow"><span><b>${label}</b><button type="button" class="hintbtn" data-hint aria-label="What is ${esc(label)}?">i</button><span id="${id}-v" class="num"></span></span><input type="range" id="${id}" min="${min}" max="${max}" step="${step}" value="${val}" aria-label="${esc(label)}"><span class="muted small hint">${help}</span></div>`;
+  // The view stays pinned at the top while the sliders scroll under it.
+  const side = Math.max(150, Math.min(window.innerWidth - 32, 440, Math.round(window.innerHeight * 0.3))), dpr = Math.min(3, window.devicePixelRatio || 1);
   el.innerHTML = `${BACK}<h2>Telescope simulator</h2>
-    <p class="muted small">Build a telescope and eyepiece, set the sky, and watch what each one changes.</p>
-    <div class="seg advseg" role="group" aria-label="Controls"><button data-adv="0">Basic</button><button data-adv="1">Advanced</button></div>
     <label class="row"><span>Target</span><select id="sm-t">${opt.map((x) => `<option value="${esc(x.key)}" ${x === o ? 'selected' : ''}>${esc(x.label)}${x.name ? ' · ' + esc(x.name) : ''}</option>`).join('')}</select></label>
-    <div class="simview"><canvas id="sm-cv" width="${Math.round(side * dpr)}" height="${Math.round(side * dpr)}" style="width:${side}px;height:${side}px"></canvas></div>
-    <p class="muted small" id="sm-note" style="text-align:center"></p>
-    <div class="kv" id="sm-stats"></div>
+    <div class="seg advseg" role="group" aria-label="Controls"><button data-adv="0">Basic</button><button data-adv="1">Advanced</button></div>
+    <p class="muted small" style="margin:0 0 4px">Move a slider and watch the view; the view stays put while you scroll. Tap <span class="hintbtn" aria-hidden="true">i</span> for what a slider does.</p>
+    <div class="simdock"><div class="simview"><canvas id="sm-cv" width="${Math.round(side * dpr)}" height="${Math.round(side * dpr)}" style="width:${side}px;height:${side}px"></canvas></div>
+    <p class="simsum" id="sm-sum"></p><p class="muted small" id="sm-note" style="text-align:center;margin:0"></p></div>
     <h3>Telescope</h3>
     ${SL('sm-fl', 'Focal length', 0, 1000, 1, logPos(S.fl, 50, 3000), 'Longer gives more power with the same eyepiece.')}
     ${SL('sm-n', 'Focal ratio', 2, 20, 0.1, S.N, 'Focal length ÷ mirror size. Fast (small number) means wide fields and more coma; it does not make images brighter by itself.')}
@@ -3979,9 +4017,10 @@ function renderSim() {
     ${SL('sm-pu', 'Your eye\'s pupil', 3, 8, 0.5, S.pupil, 'About 7 mm when young, closer to 5 mm by 60–70. A bigger exit pupil than this is wasted light.')}
     <h3>Effects</h3>
     <div class="chips wrap" id="sm-f">${EP_FACTORS.map(([k, l]) => `<button data-f="${k}">${l}</button>`).join('')}</div>
-    <p class="muted small">Switch an effect off to see its share; all off is the raw catalogue: true positions and sizes, every star to magnitude 8.</p>
+    <p class="muted small">Switch an effect off to see its share; all off is the raw catalogue.</p>
     <div class="btnrow"><button class="mini" id="sm-all">All on</button><button class="mini" id="sm-none">All off (raw)</button></div></div>
-    <div class="btnrow"><button class="mini" id="sm-mine">Use my telescope</button></div>`;
+    <div class="btnrow"><button class="mini" id="sm-mine">Use my telescope</button></div>
+    <h3>The numbers</h3><div class="kv" id="sm-stats"></div>`;
   const setAdv = (on) => { state.ui = state.ui || {}; state.ui.adv = on; save(); el.classList.toggle('show-adv', on); el.querySelectorAll('[data-adv]').forEach((b) => b.classList.toggle('on', (b.dataset.adv === '1') === on)); redraw(); };
   bindBack(el);
   const fmt = (x, d = 0) => (+x).toFixed(d);
@@ -4010,6 +4049,7 @@ function renderSim() {
       ['Faintest stars', `about magnitude ${fmt(reach, 1)}`],
       ['Coma at the edge', `${fmt(coma)}″ (${fmt(coma * M / 60, 1)}′ as seen)${coma * M / 60 > 2 ? ' — a coma corrector helps' : ''}`],
     ].slice(0, adv ? 99 : 5).map(([a, b]) => `<span>${a}</span><span>${b}</span>`).join('');
+    $('#sm-sum').textContent = `${fmt(D)} mm f/${fmt(S.N, 1)} · ${fmt(M)}× · exit pupil ${fmt(exit, 1)} mm · field ${tf >= 1 ? fmt(tf, 2) + '°' : fmt(tf * 60) + '′'}${M > 2 * D ? ' · too much power' : exit > S.pupil ? ' · wider than your eye' : ''}`;
     const vals = { 'sm-fl': `${fmt(S.fl)} mm`, 'sm-n': `f/${fmt(S.N, 1)}`, 'sm-ep': `${fmt(S.ep, 1)} mm`, 'sm-af': `${S.afov}°`, 'sm-b': `Bortle ${S.bortle}`, 'sm-m': S.moon ? `${S.moon}% lit` : 'none',
       'sm-ms': `${S.moonSep}°`, 'sm-sun': S.sun <= -18 ? 'full dark' : `${S.sun}°`, 'sm-tr': `${S.transp}/5`, 'sm-alt': `${S.alt}°`, 'sm-se': `${fmt(S.seeing, 1)}″`, 'sm-pu': `${fmt(S.pupil, 1)} mm` };
     for (const [id, v] of Object.entries(vals)) { const x = $('#' + id + '-v'); if (x) x.textContent = v; }
@@ -4020,6 +4060,7 @@ function renderSim() {
   bind('sm-fl', 'fl', (v) => Math.round(logVal(+v, 50, 3000))); bind('sm-n', 'N'); bind('sm-ep', 'ep', (v) => +logVal(+v, 2, 56).toFixed(1)); bind('sm-af', 'afov');
   bind('sm-b', 'bortle'); bind('sm-m', 'moon'); bind('sm-ms', 'moonSep'); bind('sm-sun', 'sun'); bind('sm-tr', 'transp'); bind('sm-alt', 'alt'); bind('sm-se', 'seeing'); bind('sm-pu', 'pupil');
   $('#sm-t').onchange = (e) => { S.target = e.target.value; save(); redraw(); };
+  el.querySelectorAll('[data-hint]').forEach((b) => b.onclick = (e) => { e.preventDefault(); b.closest('.simrow').classList.toggle('open'); });
   el.querySelectorAll('[data-adv]').forEach((b) => b.onclick = () => setAdv(b.dataset.adv === '1'));
   el.classList.toggle('show-adv', !!(state.ui && state.ui.adv)); el.querySelectorAll('[data-adv]').forEach((b) => b.classList.toggle('on', (b.dataset.adv === '1') === !!(state.ui && state.ui.adv)));
   el.querySelectorAll('[data-f]').forEach((b) => b.onclick = () => { S.f = { ...S.f, [b.dataset.f]: S.f[b.dataset.f] === false }; save(); redraw(); });
@@ -4407,7 +4448,8 @@ function openSkyCheck() {
     card.innerHTML = `<h3 style="margin-top:0">Your sky</h3>
       <div class="whereline"><span class="muted small">${ICON.pin}${whereText()}</span><button id="sq-loc" class="mini">Update location</button></div>
       <div id="sq-lp">${g ? lightHereHTML(g, here) : '<p class="muted small">Loading the light-pollution map…</p>'}</div>
-      <button id="sq-go" class="primary" style="width:100%;margin-top:8px">${state.skyq ? 'Check again — 30 seconds' : 'Do the 30-second darkness check'}</button>
+      ${sky.sunAlt() > -18 ? `<p class="small"><b>The darkness check needs a fully dark sky</b> (from about ${hm(sky.nightAt(new Date()).astro || sky.nightAt(new Date()).naut)}, when the Sun is 18° down). Before that, twilight hides faint stars and the result would read too bright. Until then the light-pollution map is used.</p>` : ''}
+      <button id="sq-go" class="${sky.sunAlt() > -18 ? '' : 'primary'}" style="width:100%;margin-top:8px">${state.skyq ? 'Check again — 30 seconds' : 'Do the 30-second darkness check'}${sky.sunAlt() > -18 ? ' anyway' : ''}</button>
       <button id="sq-close" style="width:100%;margin-top:6px">${flow ? 'Skip' : 'Close'}</button>`;
     if (g) wireLightMap($('#sq-lp'), g);
     $('#sq-go').onclick = () => runSkyCheck();
