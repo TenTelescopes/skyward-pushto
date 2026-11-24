@@ -3246,19 +3246,48 @@ function clearSpellBtn(rec, start) {
   if (!(start < new Date(o.from.getTime() - 30 * 60000) || start > o.to)) return '';
   return `<button id="fc-start" class="mini" style="margin:4px 0">Start at the clear spell (${hm(o.from)})</button>`;
 }
+/** Little sky pictures for the forecast strip, drawn in the app's colours (emoji would turn colourful on an iPhone). */
+const spark = (x, y, r) => `M${x} ${y - r}L${x + r * 0.28} ${y - r * 0.28}L${x + r} ${y}L${x + r * 0.28} ${y + r * 0.28}L${x} ${y + r}L${x - r * 0.28} ${y + r * 0.28}L${x - r} ${y}L${x - r * 0.28} ${y - r * 0.28}Z`;
+const CLOUD = 'M7 19h10a4 4 0 0 0 .5-8 6 6 0 0 0-11.4 1.5A3.3 3.3 0 0 0 7 19z';
+const SKYPIC = [
+  `<svg viewBox="0 0 24 24" class="skp"><path fill="currentColor" d="${spark(12, 11, 7)}${spark(5, 5, 3)}${spark(19, 18, 3.2)}"/></svg>`,                              // good: sparkling stars
+  `<svg viewBox="0 0 24 24" class="skp"><path fill="currentColor" d="${spark(9, 10, 5)}${spark(17, 16, 3)}"/></svg>`,                                                  // OK: a couple of stars
+  `<svg viewBox="0 0 24 24" class="skp"><path fill="currentColor" d="${spark(17, 6, 3.6)}"/><path d="${CLOUD}" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>`,   // poor: a star peeking past a cloud
+  `<svg viewBox="0 0 24 24" class="skp"><path d="${CLOUD}" fill="currentColor"/></svg>`,                                                                               // clouded out
+];
+const MOONPIC = '<svg viewBox="0 0 24 24" class="skm"><path fill="currentColor" d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/></svg>';
+/** Tonight in one face: star-eyed (clear, dark, no bright Moon), smiling, so-so, or behind a cloud. */
+function verdictFace(o) {
+  const great = o.kind === 'clear' && !o.brightMoon && (o.transp == null || o.transp >= 3);
+  const lvl = o.kind === 'cloudy' ? 3 : great ? 0 : o.kind === 'clear' ? 1 : 2;
+  const eyes = lvl === 0 ? `<path fill="currentColor" d="${spark(8.6, 9.6, 2.6)}${spark(15.4, 9.6, 2.6)}"/>` : '<circle cx="8.8" cy="9.8" r="1.3" fill="currentColor"/><circle cx="15.2" cy="9.8" r="1.3" fill="currentColor"/>';
+  const mouth = ['<path d="M7 13.5h10a5 5 0 0 1-10 0z" fill="currentColor"/>', '<path d="M8 14.5a4.5 4.5 0 0 0 8 0" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>',
+    '<path d="M8.5 15.5h7" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>', ''][lvl];
+  const face = `<circle cx="12" cy="12" r="9.5" fill="none" stroke="currentColor" stroke-width="1.7"/>${eyes}${mouth}`;
+  const cloud = lvl === 3 ? `<path d="${CLOUD}" transform="translate(3 4) scale(.85)" fill="currentColor" stroke="var(--bg)" stroke-width="1.2"/>` : '';
+  return { svg: `<svg viewBox="0 0 24 24" class="face q${lvl}" aria-hidden="true">${face}${cloud}</svg>`, word: ['A great night', 'A good night', 'So-so', 'Clouded out'][lvl] };
+}
 /** Tonight at a glance: a few chips instead of paragraphs (forecast · dark · Moon · sky · steady air). */
 function glanceHTML(rec, n, t = new Date()) {
   const chips = [], o = rec && rec.ol;
   if (rec && rec.loading) chips.push('<span>Forecast…</span>');
-  else if (o) chips.push(o.kind === 'cloudy' ? `<span>${ICON.cloud}Cloudy</span>` : o.kind === 'clear' ? `<span class="go">${ICON.star}Clear</span>` : `<span class="go">${ICON.star}Clear ${hm(o.from)}–${hm(o.to)}</span>`);
+  else if (o) { const f = verdictFace(o); chips.push(`<span class="${o.kind === 'cloudy' ? '' : 'go'}" title="${f.word}">${f.svg}${o.kind === 'cloudy' ? 'Cloudy' : o.kind === 'clear' ? 'Clear' : `Clear ${hm(o.from)}–${hm(o.to)}`}</span>`); }
   const dark = n.astro || n.naut, now = new Date();
   chips.push(`<span>${dark && now >= dark && now < (n.astroAm || n.rise || now) && nightKey(t.getTime()) === nightKey(now.getTime()) ? 'Dark now' : 'Dark ' + hm(dark)}</span>`);
   const m = sky.moonInfo(dark || t); chips.push(`<span>${ICON.moon}${Math.round(m.frac * 100)}%</span>`);
   const bort = skyQ() ? bortleOfNelm(checkNelm()) : (mapSky() || {}).bortle; if (bort) chips.push(`<span>Bortle ${bort}</span>`);
   chips.push(`<span>Steady: ${SEEING_WORD[seeingFor(t)]}</span>`);
-  if (rec && rec.rows && rec.rows.length > 2) {                 // the night's cloud at a glance: one segment per hour
+  if (rec && rec.rows && rec.rows.length > 2) {                 // the night hour by hour
     const hh = (d) => d.toLocaleTimeString([], { hour: 'numeric' }).replace(/\s?([AP])M/i, (x, a) => a.toLowerCase());
-    chips.push(`<div class="cbar" role="img" aria-label="Cloud forecast by hour">${rec.rows.map((r) => `<i style="--c:${r.cloud == null ? 0.5 : (r.cloud / 100).toFixed(2)}"></i>`).join('')}<div class="cbl"><span>${hh(rec.rows[0].t)}</span><span>clear sky by hour · bright = clear</span><span>${hh(rec.rows[rec.rows.length - 1].t)}</span></div></div>`);
+    // Each hour: good (clear, not hazy), OK (some cloud or haze), poor (mostly cloudy), clouded out. A bright Moon is
+    // shown above the hour rather than counted against it: it spoils galaxies, not planets, doubles or the Moon.
+    const q = (r) => (r.cloud == null ? 2 : r.cloud >= 80 ? 3 : r.cloud >= 50 ? 2 : r.cloud >= 20 || (r.transp && r.transp <= 2) ? 1 : 0);
+    const QN = ['good', 'OK', 'poor', 'clouded out'];
+    const cells = rec.rows.map((r) => {
+      const dk = sky.sunAlt(r.t) <= -18, mi = sky.moonInfo(r.t), moon = mi.alt > 0 && mi.frac > 0.4;
+      return `<i class="q${q(r)}${dk ? ' dk' : ''}" title="${hh(r.t)}: ${QN[q(r)]}${dk ? ', fully dark' : ', twilight'}${moon ? ', bright Moon up' : ''}">${moon ? MOONPIC : ''}${SKYPIC[q(r)]}</i>`;
+    }).join('');
+    chips.push(`<div class="cbar" role="img" aria-label="Sky by hour: ${rec.rows.map((r) => QN[q(r)]).join(', ')}">${cells}<div class="cbl"><span>${hh(rec.rows[0].t)}</span><span class="qkey">dark tile = fully dark · ${MOONPIC} bright Moon up</span><span>${hh(rec.rows[rec.rows.length - 1].t)}</span></div></div>`);
   }
   return `<div class="glance">${chips.join('')}${o && o.best && o.best.length ? `<div class="muted small" style="flex-basis:100%">Best for ${esc(o.best[0])}.</div>` : ''}</div>`;
 }
@@ -3312,6 +3341,7 @@ function openSeeingCheck(mode = 'twinkle') {
   const hi = profile().eyepieces.reduce((a, e) => (e.fl < a.fl ? e : a), profile().eyepieces[0]);
   if (mode === 'twinkle') {
     card.innerHTML = `<h3 style="margin-top:0">Steady air check</h3>
+      ${seeingTonight() ? `<p class="small">Earlier tonight: <b>${SEEING_WORD[seeingTonight().v]}</b> (${seeingTonight().how === 'pick' ? 'picked' : 'checked'} at ${hm(new Date(seeingTonight().when))}). The air changes through the evening, so check again, or <button class="mini" id="see-keep">keep it</button></p>` : ''}
       <p>${st ? `Look at <b>${esc(st.o.label)}</b>, ${st.p.alt.toFixed(0)}° up in the ${compassName(st.p.az)}, for about ten seconds.` : dark ? 'Look at any bright star at least halfway up the sky for about ten seconds.' : 'Do this after dark: look at a bright star at least halfway up the sky for about ten seconds.'}
       <span class="muted small">Not a star near the horizon: everything twinkles down there, whatever the air is doing higher up.</span></p>
       <div class="seebtns">
@@ -3335,6 +3365,7 @@ function openSeeingCheck(mode = 'twinkle') {
   }
   card.querySelectorAll('[data-see]').forEach((b) => b.onclick = () => done(b.dataset.see));
   if ($('#see-ep')) $('#see-ep').onclick = () => openSeeingCheck('eyepiece');
+  if ($('#see-keep')) $('#see-keep').onclick = close;
   if ($('#see-back')) $('#see-back').onclick = () => openSeeingCheck('twinkle');
   $('#see-close').onclick = close;
 }
@@ -3644,7 +3675,7 @@ const stepKey = (k, act) => (k === 'align' && act === 'explore' ? 'alignExplore'
 const stepOn = (k, act) => (k === 'horizon' ? (state.launch.horizon ?? (!horizonNow() && !curPlace())) : k === 'seeing' ? (state.launch.seeing ?? true) : !!state.launch[stepKey(k, act)]);
 const GO = { observe: 'Start observing', explore: 'Start exploring', game: 'Start the game', plan: 'Start planning' };
 let flow = null;   // { steps: [..], i, dest, started, quiet }
-const stepsFor = (dest) => (PATH[dest] || []).filter((k) => stepOn(k, dest) && !(k === 'align' && alignedNow()) && !(k === 'seeing' && seeingTonight()));
+const stepsFor = (dest) => (PATH[dest] || []).filter((k) => stepOn(k, dest) && !(k === 'align' && alignedNow()));   // the steady-air check always runs when its star is on: the air changes through the evening
 /** "Dark from 6:32 PM · Moon 27% lit, sets 8:58 PM · Saturn and Jupiter are up" */
 function tonightLine() {
   try {
@@ -3674,7 +3705,7 @@ function renderLaunch() {
     check: chk ? `done — ${V[chk.result.verdict] || chk.result.verdict}` : STEP_INFO.check[1],
     sky: sq ? `last: ${sq.label.toLowerCase()}` : STEP_INFO.sky[1],
     align: alignedNow() ? 'already aligned' : STEP_INFO.align[1],
-    seeing: seeingTonight() ? `done tonight — ${SEEING_WORD[seeingTonight().v]}` : seeingSource() === 'forecast' ? `forecast says ${SEEING_WORD[seeingNow()]} — 10 s to check it yourself` : STEP_INFO.seeing[1],
+    seeing: seeingTonight() ? `earlier tonight: ${SEEING_WORD[seeingTonight().v]} — 10 s to check again` : seeingSource() === 'forecast' ? `forecast says ${SEEING_WORD[seeingNow()]} — 10 s to check it yourself` : STEP_INFO.seeing[1],
     horizon: horizonNow() || placeLabel() ? hzLine() : STEP_INFO.horizon[1],
   };
   const act = ACTIVITIES.some((x) => x[0] === state.launchAct) ? state.launchAct : 'observe', stops = PATH[act];

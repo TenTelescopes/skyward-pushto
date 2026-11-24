@@ -31,7 +31,10 @@ const TOKENS = {
   '--press': [[40, 50, 104, 1], [28, 0, 0, 1], 0], '--row': [[33, 42, 88, 1], [23, 0, 0, 1], 0], '--sel': [[44, 56, 118, 1], [23, 0, 0, 1], 0],
   '--chart': [[4, 8, 24, 1], [5, 0, 0, 1], 0], '--veil': [[4, 7, 22, 0.9], [0, 0, 0, 0.94], 0], '--bar': [[24, 31, 72, 0.96], [26, 0, 0, 1], 0],
   '--glow': [[255, 214, 128, 0.16], [255, 45, 25, 0.16], 0],
-  '--ghost': [[92, 104, 160, 1], [78, 78, 78, 1], 1],          // "you can't see this one" stars: dark grey at Night, dim enough to keep night vision
+  '--ghost': [[92, 104, 160, 1], [78, 78, 78, 1], 1],
+  // Sky quality by hour (the forecast bar): go, OK, poor, unusable. Green to grey by day; shades of red at Night.
+  '--q0': [[46, 170, 80, 1], [255, 45, 25, 1], 1], '--q1': [[150, 205, 160, 1], [150, 25, 15, 1], 1],
+  '--q2': [[190, 194, 204, 1], [70, 10, 5, 1], 1], '--q3': [[70, 74, 86, 1], [24, 0, 0, 1], 1],          // "you can't see this one" stars: dark grey at Night, dim enough to keep night vision
 };
 let starsDone = false;
 /** A sprinkling of stars as one SVG tile (same every time), set once. */

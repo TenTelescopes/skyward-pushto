@@ -688,3 +688,29 @@ unrelated extra star in the object-page sentence. Still open with Bryan: whether
   - exit pupil over 7.2 mm: wider than your eye;
   - for faint glows, exit pupil under 0.6 mm: "too dim at this power".
   The full-screen view's title carries the same note.
+
+## Build 107 (Nov 24): forecast bar colours and dark-hour ticks
+- Forecast bar colours, by sky quality per hour:
+  - green "good": under 20% cloud and transparency 3 or better;
+  - pale green "OK": 20–50% cloud, or hazy;
+  - light grey "poor": 50–80% cloud;
+  - dark grey "cloud": 80% or more.
+  Colours are theme tokens `--q0`…`--q3` in theme.js, shades of red at Night so night vision is kept. There's a
+  small key under the bar.
+- ✓ over each hour of the bar when the Sun is 18° or more below the horizon (full dark). Earlier hours of the bar are
+  nautical twilight and get no tick.
+- The forecast strip is now a row of little sky pictures, one per hour (`SKYPIC`): sparkling stars for good, two
+  stars for OK, a cloud with a star peeking past it for poor, a solid cloud for clouded out. They're drawn in the
+  `--q0…3` colours. A dark tile means fully dark (Sun 18° down); a lighter tile means twilight. A small Moon sits
+  above any hour with a Moon more than 40% lit, without being counted against the hour.
+- `verdictFace(outlook)` on the forecast chip: star-eyed grin (clear, no bright Moon, not hazy), smile (clear), flat
+  (partly), or behind a cloud (clouded out). A bright Moon caps it at a smile.
+- Start-up steps audit: every star lands in the right place (checked for Observe, Explore and Plan with every step on).
+  - Phone check-up → the check-up screen.
+  - Sky darkness → "Your sky".
+  - Steady air → the twinkle check.
+  - Blocked sky → tracing.
+  - Star alignment → Align.
+  - Bug fixed: once steady air had been checked or picked that day (for example with Plan's "Steady air" picker), the
+    step was silently dropped, so the flow jumped from the previous step straight to blocked-sky tracing. It now
+    always runs when its star is on, showing "Earlier tonight: … check again, or keep it".
