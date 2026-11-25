@@ -715,7 +715,7 @@ unrelated extra star in the object-page sentence. Still open with Bryan: whether
     step was silently dropped, so the flow jumped from the previous step straight to blocked-sky tracing. It now
     always runs when its star is on, showing "Earlier tonight: … check again, or keep it".
 
-## Build 113 (Nov 25): the compass from Core Motion, like sky apps; "Align on this" asks which way you face
+## Build 113–114 (Nov 25): the compass from Core Motion, like sky apps; "Align on this" asks which way you face
 - Field report (Build 112): pointed at Saturn with the phone looking down the tube, "Align on this" offered Rigel.
   Cause: on iOS a web page only gets webkitCompassHeading, and the app took it as the heading of the phone's top edge;
   held up, iOS reports the heading of the back of the phone instead, so the compass guess was on the wrong side of the
@@ -739,6 +739,27 @@ unrelated extra star in the object-page sentence. Still open with Bryan: whether
   samples only, up to 8 s); the difference is how far the gyro frame turned, and `model.theta` is turned back by it
   (`resumeWithCompass`, logged in align.syncs as 'compass-resume'). Without a compass reading it falls back to the old
   "centre a bright star and Sync" message. Not yet tried on a phone.
+- Hour faces (`hourLevel`): cloud ≥80 % clouded out, ≥50 % so-so; otherwise great, minus one step for each of: some
+  cloud (≥20 %), bright Moon up (>40 % lit), twilight (Sun above −15°), haze (transparency ≤2), unsteady air (seeing
+  ≤2); two or more → so-so. Light pollution is NOT counted (Build 114, so town observers can still get the top face);
+  instead each tile is coloured by the sky's light that hour (`hourSkyLight`, `tileBG`): top = Moon + twilight
+  (black → dark blue → light blue → white-blue), bottom = light pollution (black → brown → pale yellow), a vertical
+  gradient between them; each 0–1 from 22 to 16 mag/arcsec² added to a 22 natural sky. Red-only at Night. The bright
+  Moon icon is a crescent with a glow and rays. The tooltip gives the total mag/arcsec². The tooltip lists the reasons. The
+  headline face is the median hour in the clear window. Field report: a clear night with a 97 % Moon, Bortle 8 and poor
+  seeing showed star-eyed faces all night while Clear Sky Chart and Astrospheric looked far less rosy.
+- Tap any hour in the strip (`openHourDetail`; rows kept in `glanceRows` by strip id, one capturing click handler):
+  verdict and what holds it back, cloud (and high cloud), steadiness and clear air with what they mean, darkness
+  stage, Moon (% lit, height, direction), sky overhead in mag/arcsec² and naked-eye limit split into town lights and
+  Moon + twilight, dew and wind (Apple Weather), planets above 10°, "Good for", the sources, and Earlier / Later.
+- Cold and dew from Environment Canada (web app too): `hourlyForecast` also fetches temperature and dew point at 2 m
+  and wind at 10 m (HRDPS.CONTINENTAL_TT / _TD / _WSPD, falling back to RDPS_10km_AirTemp_2m / RDPS_10km_DewPoint_2m /
+  RDPS_10km_WindSpeed_10m; names and units checked live against GeoMet on Nov 25; wind m/s → km/h; cache key now fc2).
+  `comfort(r)` merges with Apple Weather; `feelsLike` is Environment Canada's wind-chill formula; `coldWord` uses its
+  frostbite bands. `outlook` adds `extra.cold` {feels, temp, at, dressFor = feels − 10} and a warning when it feels 5 °C
+  or colder; dew now works without Apple Weather. Shown as glance chips ("Feels −9° · dress for −19°", "Dew from 9:00
+  p.m."), rows in the hour card (temperature, feels-like, "Dress for about N°C: you hardly move at a telescope", dew
+  advice, wind) and "Feels like / Dew gap / Wind" rows in Hour by hour. Tests added.
 - WeatherKit entitlement is opt-in (`native/ios/WEATHERKIT_ON`), because signing failed without the App ID capability.
 
 ## Build 112 (Nov 24, from a night under the sky): chart zoom, labels, one-tap eyepieces, "What am I on?", align arrow

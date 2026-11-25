@@ -15,7 +15,7 @@ import { LEVELS, planTargets, routePlan, nextDarkNight, interest, pickScore, var
 import { seenKeys, lastEntry, logStats, MILESTONES, newlyAchieved, logCSV } from './log.js';
 import { sound, initSound, cue, tickInterval } from './sound.js';
 import { blurbFor, doubleNature, NATURE_LABEL, NATURE_NOTE, STAR_CLASS } from '../data/blurbs.js';
-import { rate, describe, DOTS, LEVEL_NAMES, DEFAULT_NELM, tooWide, moonlessNelm, setSeeing, splitLimit, moonlight, twilight } from './vis.js';
+import { rate, describe, DOTS, LEVEL_NAMES, DEFAULT_NELM, tooWide, moonlessNelm, setSeeing, splitLimit, moonlight, twilight, skyFromNelm, cdFromSB, sbFromCd, nelmFromSky } from './vis.js';
 import { DAYLIGHT, STYLES, PENALTY, pickTargets, routeOrder, pathLength, tokenFor, buildTokenIndex, encodeChallenge, decodeChallenge, challengeId, encodeResult, decodeResult, points, rank, fmtTime, dwell } from './game.js';
 import { submitScore, fetchBoard, flushQueue } from './wixscores.js';
 import qrcode from '../vendor/qrcode.mjs';
@@ -26,7 +26,7 @@ import { project as projectStar } from './solve.js';
 import { loadTowns, townsLoaded, nearestName, DARK_SITES } from './towns.js';
 import { loadSkyGlow, skyGlowAt, nelmToSqm, bortleOfNelm, skyGlowGrid, cellSqm, bortleOf, sqmToNelm } from './skyglow.js';
 import { FIELD as STAR_FIELD } from '../data/catalog.js';
-import { hourlyForecast, hoursBetween, outlook, seeingWord, transpAdj, appleHourly, mergeApple, ATTRIB, LICENCE_URL, SCALE } from './forecast.js';
+import { hourlyForecast, hoursBetween, outlook, seeingWord, transpAdj, appleHourly, mergeApple, comfort, coldWord, ATTRIB, LICENCE_URL, SCALE } from './forecast.js';
 
 // ---------------------------------------------------------------- persistence
 const KEY = 'skyward-pushto-v1';
@@ -3518,11 +3518,54 @@ const FACEPIC = [0, 1, 2, 3].map((l) => {
   const cloud = l === 3 ? `<path d="${'M7 19h10a4 4 0 0 0 .5-8 6 6 0 0 0-11.4 1.5A3.3 3.3 0 0 0 7 19z'}" transform="translate(5 6) scale(.75)" fill="currentColor" stroke="${ink}" stroke-width="1.4"/>` : '';
   return `<svg viewBox="0 0 24 24" class="skp"><circle cx="12" cy="12" r="10.5" fill="currentColor"/>${eyes}${mouth}${cloud}</svg>`;
 });
-const MOONPIC = '<svg viewBox="0 0 24 24" class="skm"><path fill="currentColor" d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/></svg>';
+// A bright Moon: a crescent with a soft glow and a few short rays off its lit side, so it reads as shining and not
+// as a Sun (Build 114).
+const MOONPIC = '<svg viewBox="0 0 24 24" class="skm"><circle cx="11.5" cy="12.5" r="9.2" fill="currentColor" opacity=".16"/><g stroke="currentColor" stroke-width="1.5" stroke-linecap="round" opacity=".8"><path d="M10.8 20.8L10.6 23.3"/><path d="M6.2 18.9L4.6 20.8"/><path d="M3.5 14.6L1.1 15.3"/><path d="M3.7 9.7L1.4 8.8"/><path d="M6.7 5.7L5.3 3.7"/></g><path fill="currentColor" transform="translate(2.3 2.5) scale(.8)" d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/></svg>';
 /** Tonight in one face: star-eyed (clear, dark, no bright Moon), smiling, so-so, or behind a cloud. */
-function verdictFace(o) {
-  const great = o.kind === 'clear' && !o.brightMoon && (o.transp == null || o.transp >= 3);
-  const lvl = o.kind === 'cloudy' ? 3 : great ? 0 : o.kind === 'clear' ? 1 : 2;
+/**
+ * How good one hour is for looking (Build 113). Clear sky is only the start: a great hour also has no bright Moon up,
+ * is past twilight, and has clear and steady air. Light pollution is left out on purpose (Build 114), or nobody in a
+ * town would ever see the top face; it shows instead as the brightness of the tile behind the face (`hourSkyLight`). Each thing missing takes it down a step, so a clear
+ * hour with one drawback is "good" and with two or more "so-so". Before, the hours only counted cloud and haze, so a
+ * clear night under a full Moon in a Bortle 8 sky with unsteady air still got the star-eyed face.
+ */
+function hourLevel(r) {
+  if (r.cloud == null) return { lvl: 2, why: ['no cloud forecast'] };
+  if (r.cloud >= 80) return { lvl: 3, why: ['cloud'] };
+  if (r.cloud >= 50) return { lvl: 2, why: ['mostly cloudy'] };
+  const why = [];
+  if (r.cloud >= 20) why.push('some cloud');
+  const m = sky.moonInfo(r.t); if (m.alt > 0 && m.frac > 0.4) why.push('bright Moon up');
+  if (sky.sunAlt(r.t) > -15) why.push('twilight');
+  if (r.transp && r.transp <= 2) why.push('hazy');
+  if (r.seeing && r.seeing <= 2) why.push('unsteady air');
+  return { lvl: Math.min(2, why.length), why };
+}
+/**
+ * The sky's two kinds of light that hour, each 0 (pristine, about 22 mag/arcsec²) to 1 (16 or brighter): natural light
+ * from the Moon and twilight (Krisciunas & Schaefer moonlight overhead), and light pollution (the map or your check).
+ * The tile shows the first in its top half (black → dark blue → light blue → white-blue) and the second in its bottom
+ * half (black → brown → pale yellow), blended top to bottom (Build 114).
+ */
+function hourSkyLight(t) {
+  const m = sky.moonInfo(t), dark = cdFromSB(22);
+  const nat = moonlight({ moonAlt: m.alt, moonFrac: m.frac, sepDeg: 90 - m.alt, targetAlt: 90 }) + twilight(sky.sunAlt(t));
+  const lp = Math.max(0, cdFromSB(skyFromNelm(skyNelm())) - dark);
+  const lvl = (B) => Math.max(0, Math.min(1, (22 - sbFromCd(dark + B)) / 6));
+  return { moon: lvl(nat), lp: lvl(lp), sb: sbFromCd(dark + nat + lp) };
+}
+const ramp = (stops, x) => { for (let i = 1; i < stops.length; i++) if (x <= stops[i][0]) { const [a, ca] = stops[i - 1], [b, cb] = stops[i], f = (x - a) / (b - a); return ca.map((v, k) => Math.round(v + (cb[k] - v) * f)); } return stops[stops.length - 1][1]; };
+const MOON_RAMP = [[0, [6, 8, 16]], [0.35, [20, 44, 110]], [0.7, [88, 140, 214]], [1, [214, 230, 255]]];
+const LP_RAMP = [[0, [6, 8, 16]], [0.5, [104, 70, 30]], [1, [244, 226, 156]]];
+function tileBG(sl) {
+  const night = theme.shade > 0.5, c = (rgb) => (night ? `rgb(${Math.round(0.3 * rgb[0] + 0.59 * rgb[1] + 0.11 * rgb[2])},0,0)` : `rgb(${rgb.join(',')})`);   // red-only at Night
+  return `linear-gradient(to bottom, ${c(ramp(MOON_RAMP, sl.moon))}, ${c(ramp(LP_RAMP, sl.lp))})`;
+}
+function verdictFace(o, rows) {
+  const win = rows && o.kind !== 'cloudy' ? rows.filter((r) => o.from && r.t >= o.from && r.t < o.to && r.cloud != null) : [];
+  const med = win.length ? win.map((r) => hourLevel(r).lvl).sort((a, b) => a - b)[Math.floor((win.length - 1) / 2)] : null;
+  const lvl = o.kind === 'cloudy' ? 3 : med != null ? Math.max(med, o.kind === 'partly' ? 1 : 0)
+    : o.kind === 'clear' && !o.brightMoon && (o.transp == null || o.transp >= 3) ? 0 : o.kind === 'clear' ? 1 : 2;
   const eyes = lvl === 0 ? `<path fill="currentColor" d="${spark(8.6, 9.6, 2.6)}${spark(15.4, 9.6, 2.6)}"/>` : '<circle cx="8.8" cy="9.8" r="1.3" fill="currentColor"/><circle cx="15.2" cy="9.8" r="1.3" fill="currentColor"/>';
   const mouth = ['<path d="M7 13.5h10a5 5 0 0 1-10 0z" fill="currentColor"/>', '<path d="M8 14.5a4.5 4.5 0 0 0 8 0" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>',
     '<path d="M8.5 15.5h7" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>', ''][lvl];
@@ -3530,29 +3573,85 @@ function verdictFace(o) {
   const cloud = lvl === 3 ? `<path d="${CLOUD}" transform="translate(3 4) scale(.85)" fill="currentColor" stroke="var(--bg)" stroke-width="1.2"/>` : '';
   return { svg: `<svg viewBox="0 0 24 24" class="face q${lvl}" aria-hidden="true">${face}${cloud}</svg>`, word: ['A great night', 'A good night', 'So-so', 'Clouded out'][lvl] };
 }
+const glanceRows = new Map(); let glanceSeq = 0;
+const SEE5 = ['cloudy', 'very bad', 'poor', 'average', 'good', 'excellent'];
+/**
+ * One hour of the forecast, in full (Build 114): everything that hour that matters at the eyepiece, and what it suits.
+ * Opened by tapping an hour in the strip.
+ */
+function openHourDetail(rec, ix) {
+  const r = rec.rows[ix]; if (!r) return;
+  const t = r.t, hl = hourLevel(r), sl = hourSkyLight(t), f = FACEPIC[hl.lvl], W = ['Great', 'Good', 'So-so', 'Clouded out'][hl.lvl];
+  const m = sky.moonInfo(t), sun = sky.sunAlt(t), nelm = nelmFromSky(sl.sb);
+  const lpSb = skyFromNelm(skyNelm()), mp = skyQ() ? null : mapSky(), bort = skyQ() ? bortleOfNelm(checkNelm()) : mp && mp.bortle;
+  const lpText = `${bort ? `Bortle ${bort}, ` : ''}${lpSb.toFixed(1)} mag/arcsec² with no Moon (${skyQ() ? 'your darkness check' : 'light-pollution map'})${lpSb < 19 ? ': faint galaxies and nebulae hard from here; a darker site makes the biggest difference' : lpSb < 20.5 ? ': brighter galaxies and nebulae show, faint ones struggle' : ': a dark sky'}`;
+  const natAdd = sl.sb < lpSb - 0.05 ? (lpSb - sl.sb).toFixed(1) : null;
+  const tw = sun <= -18 ? 'Fully dark' : sun <= -12 ? `Astronomical twilight (Sun ${(-sun).toFixed(0)}° down): faint galaxies still washed out` : sun <= -6 ? `Nautical twilight (Sun ${(-sun).toFixed(0)}° down): bright stars and planets only` : sun <= 0 ? 'Civil twilight: the Moon and planets' : 'Daytime';
+  const moonTxt = m.alt > 0 ? `${Math.round(m.frac * 100)}% lit, ${m.alt.toFixed(0)}° up ${compassName(m.az)}${m.frac > 0.4 ? ': lights the whole sky' : ''}` : `Below the horizon (${Math.round(m.frac * 100)}% lit)`;
+  const see = r.seeing ? `${SEE5[r.seeing]} (${r.seeing} of 5)${r.seeing <= 2 ? ': planets and close doubles blur at high power' : r.seeing >= 4 ? ': good for high power on planets and close doubles' : ''}` : '–';
+  const tr = r.transp ? `${SEE5[r.transp] === 'average' ? 'medium' : SEE5[r.transp]} (${r.transp} of 5)${r.transp <= 2 ? ': hazy, faint things fade first' : r.transp >= 4 ? ': crisp, good for faint galaxies' : ''}` : '–';
+  const planets = sky.objects.filter((o) => o.planet && o.id !== 'Moon').map((o) => ({ o, p: sky.altAz(o, t) })).filter((x) => x.p.alt > 10).sort((a, b) => b.p.alt - a.p.alt);
+  const suits = [];
+  if (hl.lvl < 3) {
+    if (m.alt > 0) suits.push('the Moon itself');
+    const brightP = planets.filter((x) => (x.o.mag ?? 9) <= 3); if (brightP.length) suits.push(brightP.map((x) => x.o.label).join(', '));
+    if (r.seeing >= 4) suits.push('close doubles at high power');
+    suits.push(sl.sb < 19.5 ? 'bright clusters and colourful doubles' : 'clusters and doubles');
+    if (sl.sb >= 20 && sun <= -18 && (!r.transp || r.transp >= 3)) suits.push('galaxies and nebulae');
+  }
+  const ap = r.ap, cf = comfort(r), row = (a, b) => `<span>${a}</span><span>${b}</span>`;
+  dlgCard().innerHTML = `<h3 style="margin-top:0;display:flex;align-items:center;gap:8px"><span class="hdface q${hl.lvl}">${f}</span>${t.toLocaleDateString([], { weekday: 'short' })} ${t.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}: ${W}</h3>
+    ${hl.why.length ? `<p class="small" style="margin:0 0 6px">Held back by: ${esc(hl.why.join(', '))}.</p>` : '<p class="small" style="margin:0 0 6px">Nothing holding it back.</p>'}
+    <div class="kv hdkv">
+      ${row('Cloud', r.cloud == null ? 'no forecast' : `${Math.round(r.cloud)}%${r.cloudSrc === 'apple' ? ' (Apple Weather)' : ''}`)}
+      ${ap && ap.high != null ? row('High cloud', `${Math.round(ap.high)}%${ap.high >= 40 ? ': thin haze, dims faint things' : ''}`) : ''}
+      ${row('Steadiness', see)}
+      ${row('Clear air', tr)}
+      ${row('Darkness', tw)}
+      ${row('Moon', moonTxt)}
+      ${row('Light pollution', lpText)}
+      ${row('Sky overhead', `${sl.sb.toFixed(1)} mag/arcsec², stars to about mag ${nelm.toFixed(1)} by eye${natAdd ? ` (town lights ${lpSb.toFixed(1)}, the Moon and twilight brighten it by ${natAdd})` : ' (town lights only)'}`)}
+      ${cf.temp != null ? row('Temperature', `${Math.round(cf.temp)}°C${cf.feels != null && Math.round(cf.feels) < Math.round(cf.temp) ? `, feels like ${Math.round(cf.feels)}°C in the wind` : ''}${coldWord(cf.feels) ? ': ' + coldWord(cf.feels) : ''}. <b>Dress for about ${Math.round((cf.feels ?? cf.temp) - 10)}°C</b>: you hardly move at a telescope`) : ''}
+      ${cf.gap != null ? row('Dew', `${cf.gap.toFixed(0)}° above the dew point${cf.gap <= 2.5 ? `: ${cf.temp <= 0.5 ? 'frost' : 'dew'} likely on the finder, eyepieces and small mirror; keep caps on` : cf.gap <= 5 ? ': dew possible later as the scope cools' : ': dry'}`) : ''}
+      ${cf.wind != null ? row('Wind', `${Math.round(cf.wind)} km/h${cf.gust ? `, gusts ${Math.round(cf.gust)}` : ''}${Math.max(cf.gust || 0, cf.wind) >= 25 ? ': shaky at high power' : ''}`) : ''}
+      ${row('Planets up', planets.length ? planets.map((x) => `${esc(x.o.label)} ${x.p.alt.toFixed(0)}° ${compassName(x.p.az)}`).join(', ') : 'none above 10°')}
+    </div>
+    ${suits.length ? `<p class="small"><b>Good for:</b> ${esc(suits.join('; '))}.</p>` : ''}
+    <p class="muted small">${rec.eccc ? `Cloud, steadiness (seeing), clear air (transparency), temperature, dew point and wind: Environment Canada${rec.apple ? '; gusts and high cloud: Apple Weather' : ''}. Feels-like: Environment Canada's wind-chill formula.` : 'Cloud, dew and wind: Apple Weather (no steadiness or clear-air forecast outside Environment Canada\'s area).'} Moon, twilight and town lights: worked out by the app for this spot.</p>
+    <div class="btnrow hdbtns"><button id="hd-prev" ${ix ? '' : 'disabled'}>‹ Earlier</button><button id="hd-next" ${ix < rec.rows.length - 1 ? '' : 'disabled'}>Later ›</button><button id="hd-x">Close</button></div>`;
+  $('#hd-prev').onclick = () => openHourDetail(rec, ix - 1); $('#hd-next').onclick = () => openHourDetail(rec, ix + 1); $('#hd-x').onclick = closeDlg;
+  dlg().classList.remove('hidden');
+}
+document.addEventListener('click', (e) => {
+  const c = e.target.closest && e.target.closest('.cbar > i[data-hi]'); if (!c) return;
+  const rec = glanceRows.get(c.dataset.g); if (rec) { e.preventDefault(); e.stopPropagation(); openHourDetail(rec, +c.dataset.hi); }
+}, true);
+document.addEventListener('keydown', (e) => { if (e.key !== 'Enter' && e.key !== ' ') return; const c = e.target.closest && e.target.closest('.cbar > i[data-hi]'); if (c) { e.preventDefault(); c.click(); } });
 /** Tonight at a glance: a few chips instead of paragraphs (forecast · dark · Moon · sky · steady air). */
 function glanceHTML(rec, n, t = new Date()) {
   const chips = [], o = rec && rec.ol;
   if (rec && rec.loading) chips.push('<span>Forecast…</span>');
-  else if (o) { const f = verdictFace(o); chips.push(`<span class="${o.kind === 'cloudy' ? '' : 'go'}" title="${f.word}">${f.svg}${o.kind === 'cloudy' ? 'Cloudy' : o.kind === 'clear' ? 'Clear' : `Clear ${hm(o.from)}–${hm(o.to)}`}</span>`); }
+  else if (o) { const f = verdictFace(o, rec.rows); chips.push(`<span class="${o.kind === 'cloudy' ? '' : 'go'}" title="${f.word}">${f.svg}${o.kind === 'cloudy' ? 'Cloudy' : o.kind === 'clear' ? 'Clear' : `Clear ${hm(o.from)}–${hm(o.to)}`}</span>`); }
   const dark = n.astro || n.naut, now = new Date();
   chips.push(`<span>${dark && now >= dark && now < (n.astroAm || n.rise || now) && nightKey(t.getTime()) === nightKey(now.getTime()) ? 'Dark now' : 'Dark ' + hm(dark)}</span>`);
   const m = sky.moonInfo(dark || t); chips.push(`<span>${ICON.moon}${Math.round(m.frac * 100)}%</span>`);
   const bort = skyQ() ? bortleOfNelm(checkNelm()) : (mapSky() || {}).bortle; if (bort) chips.push(`<span>Bortle ${bort}</span>`);
   chips.push(`<span>Steady: ${SEEING_WORD[seeingFor(t)]}</span>`);
+  if (o && o.extra && o.extra.cold && o.extra.cold.feels <= 5) chips.push(`<span class="${o.extra.cold.feels <= -10 ? 'warn' : ''}" title="Coldest ${Math.round(o.extra.cold.temp)}°C, feels like ${Math.round(o.extra.cold.feels)}°C. Standing still at a telescope, dress for about 10° colder.">Feels ${Math.round(o.extra.cold.feels)}° · dress for ${o.extra.cold.dressFor}°</span>`);
+  if (o && o.extra && o.extra.dew) chips.push(`<span title="The air reaches its dew point: the finder, eyepieces and small mirror fog first.">${o.extra.dew.frost ? 'Frost' : 'Dew'} from ${hm(o.extra.dew.from)}</span>`);
   if (rec && rec.rows && rec.rows.length > 2) {                 // the night hour by hour
     const hh = (d) => d.toLocaleTimeString([], { hour: 'numeric' }).replace(/\s?([AP])M/i, (x, a) => a.toLowerCase());
-    // Each hour: good (clear, not hazy), OK (some cloud or haze), poor (mostly cloudy), clouded out. A bright Moon is
-    // shown above the hour rather than counted against it: it spoils galaxies, not planets, doubles or the Moon.
-    const q = (r) => (r.cloud == null ? 2 : r.cloud >= 80 ? 3 : r.cloud >= 50 ? 2 : r.cloud >= 20 || (r.transp && r.transp <= 2) ? 1 : 0);
-    const QN = ['good', 'OK', 'poor', 'clouded out'];
+    const q = (r) => hourLevel(r).lvl, QN = ['great', 'good', 'so-so', 'clouded out'];
+    const gid = 'g' + (++glanceSeq); glanceRows.set(gid, rec); if (glanceRows.size > 8) glanceRows.delete(glanceRows.keys().next().value);
     const cells = rec.rows.map((r, ix) => {
       const dk = sky.sunAlt(r.t) <= -18, mi = sky.moonInfo(r.t), moon = mi.alt > 0 && mi.frac > 0.4;
       const h = r.t.getHours(), ap = h < 12 ? 'a' : 'p', edge = ix === 0 || ix === rec.rows.length - 1;
       const lab = h === 0 ? '12a' : h === 12 ? '12p' : `${h % 12}${edge ? ap : ''}`;          // am/pm on the ends and at midnight
-      return `<i class="q${q(r)}${dk ? ' dk' : ''}" title="${hh(r.t)}: ${QN[q(r)]}${dk ? ', fully dark' : ', twilight'}${moon ? ', bright Moon up' : ''}">${moon ? MOONPIC : '<em class="skg"></em>'}${FACEPIC[q(r)]}<b>${lab}</b></i>`;
+      const hl = hourLevel(r);
+      const sl = hourSkyLight(r.t);
+      return `<i role="button" tabindex="0" data-g="${gid}" data-hi="${ix}" class="q${hl.lvl}${dk ? ' dk' : ''}" style="background:${tileBG(sl)}" title="${hh(r.t)}: ${QN[hl.lvl]}${hl.why.length ? ' (' + hl.why.join(', ') + ')' : ''} · sky about ${sl.sb.toFixed(1)} mag/arcsec² (top: Moon and twilight; bottom: light pollution)">${moon ? MOONPIC : '<em class="skg"></em>'}${FACEPIC[q(r)]}<b>${lab}</b></i>`;
     }).join('');
-    chips.push(`<div class="cbar" role="img" aria-label="Sky by hour: ${rec.rows.map((r) => QN[q(r)]).join(', ')}">${cells}<div class="cbl"><span class="qkey">${FACEPIC[0]} great · ${FACEPIC[1]} good · ${FACEPIC[2]} so-so · ${FACEPIC[3]} cloud · dark tile = fully dark · ${MOONPIC} bright Moon</span></div></div>`);
+    chips.push(`<div class="cbar" aria-label="Sky by hour (tap an hour for details): ${rec.rows.map((r) => QN[q(r)]).join(', ')}">${cells}<div class="cbl"><span class="qkey">Tap an hour for details · ${FACEPIC[0]} great · ${FACEPIC[1]} good · ${FACEPIC[2]} so-so · ${FACEPIC[3]} cloud · ${MOONPIC} bright Moon · tile top: <i class="swm"></i> moonlight · bottom: <i class="swl"></i> light pollution</span></div></div>`);
   }
   return `<div class="glance">${chips.join('')}${o && o.best && o.best.length ? `<div class="muted small" style="flex-basis:100%">Best for ${esc(o.best[0])}.</div>` : ''}</div>`;
 }
@@ -3562,12 +3661,12 @@ function outlookHTML(rec, { planStart = null, hint = true } = {}) {
   if (rec.loading) return `<div class="fc muted small">Checking tonight's forecast…</div>`;
   if (rec.failed || !rec.ol) return `<div class="fc muted small">No forecast right now (offline, or outside the forecast area).</div>`;
   const o = rec.ol, ic = o.kind === 'clear' ? ICON.star : o.kind === 'partly' ? ICON.half : ICON.cloud;
-  const hasHigh = !!(rec.apple && rec.rows.some((r) => r.ap && r.ap.high != null));
+  const hasHigh = !!(rec.apple && rec.rows.some((r) => r.ap && r.ap.high != null)), hasComfort = rec.rows.some((r) => comfort(r).temp != null);
   const cells = rec.rows.map((r) => {
     const m = sky.moonInfo(r.t), cl = r.cloud == null ? null : Math.round(r.cloud);
     return `<div class="fch"><span>${r.t.toLocaleTimeString([], { hour: 'numeric' }).replace(/\s?([AP])M/i, (x, a) => a.toLowerCase())}</span>
       <span class="fcc" style="--c:${cl == null ? 0.3 : (cl / 100).toFixed(2)}" title="cloud">${cl == null ? '–' : cl + '%'}</span>
-      <span>${r.seeing ? r.seeing : '–'}</span><span>${r.transp ? r.transp : '–'}</span><span>${m.alt > 0 ? (m.frac > 0.4 ? '☾' : '·') : ''}</span>${rec.apple ? `<span class="${r.ap && r.ap.temp - r.ap.dew <= 2.5 ? 'fcbad' : ''}">${r.ap ? Math.max(0, r.ap.temp - r.ap.dew).toFixed(0) + '°' : '–'}</span><span class="${r.ap && Math.max(r.ap.gust || 0, r.ap.wind) >= 25 ? 'fcbad' : ''}">${r.ap ? Math.round(Math.max(r.ap.gust || 0, r.ap.wind)) : '–'}</span>${hasHigh ? `<span>${r.ap && r.ap.high != null ? Math.round(r.ap.high) + '%' : '–'}</span>` : ''}` : ''}</div>`;
+      <span>${r.seeing ? r.seeing : '–'}</span><span>${r.transp ? r.transp : '–'}</span><span>${m.alt > 0 ? (m.frac > 0.4 ? '☾' : '·') : ''}</span>${hasComfort ? (() => { const c = comfort(r), w = c.wind != null ? Math.max(c.gust || 0, c.wind) : null; return `<span class="${c.feels != null && c.feels <= -10 ? 'fcbad' : ''}">${c.feels != null ? Math.round(c.feels) + '°' : '–'}</span><span class="${c.gap != null && c.gap <= 2.5 ? 'fcbad' : ''}">${c.gap != null ? c.gap.toFixed(0) + '°' : '–'}</span><span class="${w != null && w >= 25 ? 'fcbad' : ''}">${w != null ? Math.round(w) : '–'}</span>`; })() : ''}${hasHigh ? `<span>${r.ap && r.ap.high != null ? Math.round(r.ap.high) + '%' : '–'}</span>` : ''}</div>`;
   }).join('');
   const hintText = o.hints[Math.floor(Date.now() / 864e5) % o.hints.length];
   return `<div class="fc">
@@ -3575,8 +3674,8 @@ function outlookHTML(rec, { planStart = null, hint = true } = {}) {
     ${o.best.length ? `<div class="small">Best for: ${esc(o.best.join('; '))}.</div>` : ''}
     ${o.extra && o.extra.warn && o.extra.warn.length ? `<ul class="fcwarn small">${o.extra.warn.map((w) => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}
     <details class="more"><summary>Hour by hour</summary>
-      <div class="fcgrid"><div class="fch lab"><span></span><span>Cloud</span><span>Steady</span><span>Clear air</span><span>Moon</span>${rec.apple ? `<span>Dew gap</span><span>Gusts</span>${hasHigh ? '<span>High cloud</span>' : ''}` : ''}</div>${cells}</div>
-      <p class="muted small">${rec.eccc ? 'Steady (seeing) and clear air (transparency) are out of 5. Environment Canada calibrated the steadiness forecast with 28–35 cm telescopes and says it can be a little pessimistic for smaller ones. Your own twinkle check beats it on the night.' : 'Outside Environment Canada\'s area there is no steadiness or clear-air forecast: do the twinkle check on the night.'}${rec.apple ? ' Dew gap: how far the air is above its dew point; at 2° or less, expect dew (frost below freezing). Gusts in km/h.' : ''}</p>
+      <div class="fcgrid"><div class="fch lab"><span></span><span>Cloud</span><span>Steady</span><span>Clear air</span><span>Moon</span>${hasComfort ? '<span>Feels like</span><span>Dew gap</span><span>Wind</span>' : ''}${hasHigh ? '<span>High cloud</span>' : ''}</div>${cells}</div>
+      <p class="muted small">${rec.eccc ? 'Steady (seeing) and clear air (transparency) are out of 5. Environment Canada calibrated the steadiness forecast with 28–35 cm telescopes and says it can be a little pessimistic for smaller ones. Your own twinkle check beats it on the night.' : 'Outside Environment Canada\'s area there is no steadiness or clear-air forecast: do the twinkle check on the night.'}${hasComfort ? ' Feels like: °C with wind chill; dress for about 10° colder, since you hardly move at a telescope. Dew gap: how far the air is above its dew point; at 2° or less expect dew (frost below freezing). Wind: km/h (gusts where known).' : ''}</p>
     </details>
     ${hint ? `<p class="muted small iconline" style="margin:4px 0 0">${ICON.bulb}${esc(hintText)}</p>` : ''}
     <p class="muted small fcattr">${rec.eccc ? `${esc(ATTRIB)} · <a href="${LICENCE_URL}" target="_blank" rel="noopener">licence</a>` : ''}${rec.apple ? `${rec.eccc ? '<br>' : ''}<span class="wkmark">${rec.apple.markDark ? `<img src="${esc(rec.apple.markDark)}" alt="Apple Weather" height="12"${theme.shade > 0.5 ? ' style="filter:sepia(1) saturate(8) hue-rotate(-40deg) brightness(.6)"' : ''}>` : ' Weather'}</span> dew, wind${rec.eccc ? ', high cloud' : ' and cloud'} · <a href="${esc(rec.apple.legal || 'https://developer.apple.com/weatherkit/data-source-attribution/')}" target="_blank" rel="noopener">other data sources</a>` : ''}</p>

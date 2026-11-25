@@ -40,16 +40,22 @@ async function pool(jobs, n = 6) {
  */
 export async function hourlyForecast(lat, lon, hours, { fetchFn = fetch, storage = (typeof localStorage !== 'undefined' ? localStorage : null) } = {}) {
   if (!hours.length || lat == null || lon == null) return null;
-  const key = `fc:${lat.toFixed(2)},${lon.toFixed(2)}:${hourISO(hours[0])}:${hours.length}`;
+  const key = `fc2:${lat.toFixed(2)},${lon.toFixed(2)}:${hourISO(hours[0])}:${hours.length}`;   // fc2: rows now carry temperature, dew point and wind
   try { const c = storage && JSON.parse(storage.getItem(key) || 'null'); if (c && Date.now() - c.at < 90 * 60000) return c.rows.map((r) => ({ ...r, t: new Date(r.t) })); } catch (e) { /* ignore */ }
   const jobs = [];
   for (const t of hours) {
     jobs.push(async () => { const v = await point('HRDPS.CONTINENTAL_NT', lat, lon, t, fetchFn); return v != null ? v : point('RDPS_10km_TotalCloudCover', lat, lon, t, fetchFn); });
     jobs.push(() => point('RDPS_10km_SeeingIndex', lat, lon, t, fetchFn));
     jobs.push(() => point('RDPS_10km_SkyTransparencyIndex', lat, lon, t, fetchFn));
+    // Build 114: the comfort side. Temperature and dew point at 2 m (°C) and wind at 10 m (m/s), HRDPS first, then RDPS.
+    // Layer names checked against GeoMet on Nov 25, 2026.
+    const two = (a, b) => async () => { const x = await point(a, lat, lon, t, fetchFn); return x != null ? x : point(b, lat, lon, t, fetchFn); };
+    jobs.push(two('HRDPS.CONTINENTAL_TT', 'RDPS_10km_AirTemp_2m'));
+    jobs.push(two('HRDPS.CONTINENTAL_TD', 'RDPS_10km_DewPoint_2m'));
+    jobs.push(two('HRDPS.CONTINENTAL_WSPD', 'RDPS_10km_WindSpeed_10m'));
   }
-  const v = await pool(jobs);
-  const rows = hours.map((t, k) => ({ t, cloud: v[3 * k], seeing: v[3 * k + 1], transp: v[3 * k + 2] }));
+  const v = await pool(jobs), N = 6;
+  const rows = hours.map((t, k) => ({ t, cloud: v[N * k], seeing: v[N * k + 1], transp: v[N * k + 2], temp: v[N * k + 3], dew: v[N * k + 4], wind: v[N * k + 5] != null ? v[N * k + 5] * 3.6 : null }));
   if (rows.every((r) => r.cloud == null && r.seeing == null && r.transp == null)) return null;
   try { if (storage) storage.setItem(key, JSON.stringify({ at: Date.now(), rows })); } catch (e) { /* full or blocked */ }
   return rows;
@@ -92,6 +98,25 @@ export function mergeApple(rows, apple, hours) {
   const out = base.map((r) => { const h = byHour.get(Math.round(r.t / 3600000)); if (!h) return r;
     return { ...r, cloud: r.cloud != null ? r.cloud : h.cloud, cloudSrc: r.cloud != null ? 'eccc' : 'apple', ap: h }; });
   return out.some((r) => r.cloud != null || r.ap) ? out : rows;
+}
+
+/** Temperature, dew point, wind (km/h) and gust for a row: Environment Canada's, or Apple Weather's where it has none. */
+export const comfort = (r) => {
+  const ap = r.ap || {};
+  const temp = r.temp != null ? r.temp : ap.temp ?? null, dew = r.dew != null ? r.dew : ap.dew ?? null;
+  const wind = r.wind != null ? r.wind : ap.wind ?? null, gust = ap.gust ?? null;
+  return { temp, dew, wind, gust, gap: temp != null && dew != null ? Math.max(0, temp - dew) : null, feels: feelsLike(temp, wind) };
+};
+/** Environment Canada's wind chill (°C), for 10 °C or colder with wind of 5 km/h or more; otherwise the air temperature. */
+export function feelsLike(T, V) {
+  if (T == null) return null;
+  if (V == null || T > 10 || V < 5) return T;
+  const v = V ** 0.16; return 13.12 + 0.6215 * T - 11.37 * v + 0.3965 * T * v;
+}
+/** How cold it feels, in words, using Environment Canada's wind-chill bands. */
+export function coldWord(f) {
+  if (f == null || f > 5) return null;
+  return f <= -40 ? 'dangerously cold: exposed skin freezes in minutes' : f <= -28 ? 'severely cold: exposed skin can freeze in 10 to 30 minutes' : f <= -10 ? 'very cold' : f <= 0 ? 'cold' : 'chilly';
 }
 
 const median = (a) => { const s = a.filter((x) => x != null).sort((x, y) => x - y); return s.length ? s[Math.floor((s.length - 1) / 2)] : null; };
@@ -142,14 +167,23 @@ export function outlook(rows, { moonUp, nelm, fromCheck = false, restOfNight = f
   const hints = [];
   // Apple Weather extras (iPhone app): dew, wind, thin high cloud.
   const ap = win.map((r) => r.ap).filter(Boolean), extra = { warn: [] };
+  // Dew and cold: Environment Canada's temperature and dew point (or Apple Weather's in the iPhone app).
+  const cf = win.map((r) => ({ r, c: comfort(r) }));
+  const dewHour = cf.find((x) => x.c.gap != null && x.c.gap <= 2.5);
+  if (dewHour) {
+    const frost = dewHour.c.temp <= 0.5;
+    extra.dew = { from: dewHour.r.t, frost };
+    extra.warn.push(`${frost ? 'Frost' : 'Dew'} likely from about ${hhmm(dewHour.r.t)}: keep the finder and eyepieces capped until you use them.`);
+    hints.push(`${frost ? 'Frost' : 'Dew'} forecast: the air is within ${dewHour.c.gap.toFixed(0)}° of its dew point by ${hhmm(dewHour.r.t)}. On a clear night a telescope cools below the air, so the finder, the eyepieces and the small mirror fog first. Keep caps on until you use them, and a dew shield (a tube of foam or card past the end) or a little warmth from a hair dryer on low clears it.`);
+  }
+  const coldest = cf.filter((x) => x.c.feels != null).sort((a, b) => a.c.feels - b.c.feels)[0];
+  if (coldest) {
+    const f = coldest.c.feels, T = coldest.c.temp;
+    extra.cold = { feels: f, temp: T, at: coldest.r.t, dressFor: Math.round(f - 10) };
+    const w = coldWord(f);
+    if (f <= 5) extra.warn.push(`${w ? w[0].toUpperCase() + w.slice(1) : 'Cold'}: down to ${Math.round(T)}°C${Math.round(f) < Math.round(T) ? `, feeling like ${Math.round(f)}°C in the wind` : ''} by ${hhmm(coldest.r.t)}. Dress for about ${Math.round(f - 10)}°C: you stand still at a telescope.`);
+  }
   if (ap.length) {
-    const dewHour = win.find((r) => r.ap && r.ap.temp - r.ap.dew <= 2.5);
-    if (dewHour) {
-      const frost = dewHour.ap.temp <= 0.5;
-      extra.dew = { from: dewHour.t, frost };
-      extra.warn.push(`${frost ? 'Frost' : 'Dew'} likely from about ${hhmm(dewHour.t)}: keep the finder and eyepieces capped until you use them.`);
-      hints.push(`${frost ? 'Frost' : 'Dew'} forecast: the air is within ${Math.max(0, dewHour.ap.temp - dewHour.ap.dew).toFixed(0)}° of its dew point by ${hhmm(dewHour.t)}. On a clear night a telescope cools below the air, so the finder, the eyepieces and the small mirror fog first. Keep caps on until you use them, and a dew shield (a tube of foam or card past the end) or a little warmth from a hair dryer on low clears it.`);
-    }
     const gust = Math.max(...ap.map((h) => Math.max(h.gust || 0, h.wind || 0)));
     if (gust >= 25) {
       extra.wind = Math.round(gust);

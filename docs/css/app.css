@@ -620,3 +620,26 @@ details.more.tdetail > summary { padding: 6px 0 10px; }
 .wtdirs button.on { color: var(--hi); border-color: var(--hi); }
 .wtdir { font-weight: 600; color: var(--hi); margin-left: 6px; }
 .mntcheck { border-color: var(--hi); }
+/* Build 114: the tile behind each hour's face is as bright as the sky then (town lights + Moon + twilight). */
+.cbar > i, .cbar > i.dk { background: var(--press); background: color-mix(in srgb, var(--dim) var(--sk, 30%), var(--chart)); }
+.cbar > i b { color: var(--fg); }
+.cbar .skm { width: 15px; height: 15px; color: var(--fg); }
+.cbar .qkey .skm { width: 13px; height: 13px; vertical-align: -2px; }
+.cbar > i em.skg { height: 15px; }
+/* Build 114: tiles coloured by moonlight (top, blues) and light pollution (bottom, browns to yellow); keep the marks readable on light tiles */
+.cbar > i b { text-shadow: 0 0 3px #000, 0 0 2px #000; }
+.cbar > i .skm, .cbar > i .skp { filter: drop-shadow(0 0 1.5px rgba(0,0,0,.8)); }
+.cbar .qkey .swm, .cbar .qkey .swl { display: inline-block; width: 22px; height: 9px; border-radius: 3px; vertical-align: 0; }
+.cbar .qkey .swm { background: linear-gradient(to right, rgb(6,8,16), rgb(20,44,110), rgb(88,140,214), rgb(214,230,255)); }
+.cbar .qkey .swl { background: linear-gradient(to right, rgb(6,8,16), rgb(104,70,30), rgb(244,226,156)); }
+/* Build 114: tap an hour for details */
+.cbar > i[data-hi] { cursor: pointer; }
+.cbar > i[data-hi]:active { outline: 2px solid var(--hi); outline-offset: -2px; }
+.hdface { display: inline-flex; width: 28px; height: 28px; }
+.hdface .skp { width: 28px; height: 28px; }
+.hdface.q0 { color: var(--q0); } .hdface.q1 { color: var(--q1); } .hdface.q2 { color: var(--q2); } .hdface.q3 { color: var(--q3); }
+.hdkv { grid-template-columns: 8.2em 1fr; }
+.hdkv > span:nth-child(even) { text-align: left; }
+.hdkv > span:nth-child(odd) { color: var(--dim); }
+.hdbtns { position: sticky; bottom: -14px; background: var(--bg); box-shadow: 0 -8px 12px var(--bg); margin: 0 -14px -14px; padding: 8px 14px 14px; }
+.glance > span.warn { border-color: var(--hi); color: var(--hi); }

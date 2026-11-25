@@ -24,10 +24,11 @@ await ok('city sky with haze: no galaxies', () => {
 await ok('fetching: HRDPS first, RDPS cloud when HRDPS has no value, nulls survive', async () => {
   const seen = [];
   const fake = async (url) => { seen.push(url); const L = /layers=([^&]+)/.exec(url)[1];
-    const v = { 'HRDPS.CONTINENTAL_NT': null, RDPS_10km_TotalCloudCover: 20, RDPS_10km_SeeingIndex: 3, RDPS_10km_SkyTransparencyIndex: 4 }[L];
+    const v = { 'HRDPS.CONTINENTAL_NT': null, RDPS_10km_TotalCloudCover: 20, RDPS_10km_SeeingIndex: 3, RDPS_10km_SkyTransparencyIndex: 4, 'HRDPS.CONTINENTAL_TT': null, RDPS_10km_AirTemp_2m: -12, 'HRDPS.CONTINENTAL_TD': -13, 'HRDPS.CONTINENTAL_WSPD': 5 }[L];
     return { ok: true, json: async () => ({ features: v == null ? [] : [{ properties: { value: v } }] }) }; };
   const r = await hourlyForecast(43.5, -80.2, hoursBetween(H(23), H(25)), { fetchFn: fake, storage: null });
   assert.equal(r.length, 3); assert.equal(r[0].cloud, 20); assert.equal(r[0].seeing, 3); assert.equal(r[0].transp, 4);
+  assert.equal(r[0].temp, -12); assert.equal(r[0].dew, -13); assert.equal(r[0].wind, 18);   // RDPS temperature when HRDPS has none; wind m/s → km/h
   assert.ok(seen.some((u) => u.includes('HRDPS.CONTINENTAL_NT')) && seen.some((u) => u.includes('RDPS_10km_TotalCloudCover')));
   const none = await hourlyForecast(43.5, -80.2, hoursBetween(H(23), H(24)), { fetchFn: async () => { throw new Error('offline'); }, storage: null });
   assert.equal(none, null);
@@ -42,11 +43,23 @@ await ok('Apple Weather: merged by hour, fills missing cloud, warns of dew, gust
   assert.equal(m[0].cloud, 10); assert.equal(m[0].cloudSrc, 'apple'); assert.equal(m[1].cloud, 5); assert.equal(m[1].cloudSrc, 'eccc');
   const o = outlook(m, { moonUp: noMoon, nelm: 6 });
   assert.equal(o.kind, 'clear'); assert.equal(o.extra.wind, 32); assert.ok(o.extra.dew && o.extra.dew.from.getTime() === H(24).getTime());
-  assert.equal(o.extra.highCloud, 50); assert.equal(o.extra.warn.length, 3);
+  assert.equal(o.extra.highCloud, 50); assert.equal(o.extra.warn.length, 4);   // dew, cold (3.7 °C, feels lower), gusts, high cloud
 });
 await ok('Apple Weather alone (outside Canada): rows from Apple, no seeing', () => {
   const hrs = [H(23), H(24), H(25)];
   const m = mergeApple(null, { hours: hrs.map((t) => ({ t, temp: 10, dew: 2, cloud: 20, wind: 5 })) }, hrs);
   const o = outlook(m, { moonUp: noMoon, nelm: 6 });
   assert.equal(o.kind, 'clear'); assert.equal(o.seeing, null); assert.equal(o.extra.warn.length, 0);
+});
+
+import { feelsLike, coldWord, comfort } from '../docs/js/forecast.js';
+await ok('cold: Environment Canada wind chill, warnings and dressing advice', () => {
+  assert.equal(Math.round(feelsLike(-20, 30)), -33); assert.equal(feelsLike(-5, 3), -5); assert.equal(feelsLike(15, 30), 15);
+  assert.match(coldWord(-30), /freeze/); assert.equal(coldWord(8), null);
+  const R = [23, 24, 25].map((h, i) => ({ t: H(h), cloud: 5, seeing: 3, transp: 3, temp: -15 - i, dew: -25, wind: 20 }));
+  const o = outlook(R, { moonUp: noMoon, nelm: 6 });
+  assert.equal(o.extra.cold.temp, -17); assert.ok(o.extra.cold.feels < -25); assert.equal(o.extra.cold.dressFor, Math.round(o.extra.cold.feels - 10));
+  assert.ok(o.extra.warn.some((w) => /Dress for about -3\d°C/.test(w)), o.extra.warn.join(' / '));
+  assert.ok(!o.extra.dew);                                           // 8–10° above the dew point: dry
+  assert.equal(comfort({ ap: { temp: 2, dew: 1, wind: 4 } }).gap, 1);   // Apple Weather fills in
 });
