@@ -586,3 +586,32 @@ details.more.tdetail > summary { padding: 6px 0 10px; }
 .hintbtn { display: inline-grid; place-items: center; width: 28px; height: 28px; min-height: 0; padding: 0; border-radius: 50%; border: 1px solid var(--line); background: none; color: var(--dim); font: italic 600 13px/1 Georgia, serif; vertical-align: middle; }
 .simrow.open .hintbtn { color: var(--hi); border-color: var(--hi); }
 #tab-sim h3 { margin: 12px 0 2px; }
+.rtcard { min-height: 128px; margin: 4px 0 8px; }
+/* Apple Weather extras in the forecast (iPhone app) */
+.fcwarn { margin: 4px 0 0; padding-left: 18px; color: var(--hi); }
+.fcwarn li { margin: 2px 0; }
+.fcbad { color: var(--hi); font-weight: 600; }
+.wkmark img { height: 12px; vertical-align: -1px; }
+.lq2 { margin: 18px 0 2px; }
+.lq2 + .pnote { margin-left: 0; }
+/* Build 112: one-tap eyepieces under the chart, and "What am I on?" */
+.epq { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin: 6px 0 2px; }
+.epq::-webkit-scrollbar { display: none; }
+.epq button { flex: none; min-height: 44px; font-size: 16px; font-weight: 600; }
+.epq button span { font-weight: 400; opacity: .75; font-size: 14px; }
+#z-auto.on { color: var(--hi); border-color: var(--hi); }
+.whatcard { display: flex; gap: 10px; align-items: center; justify-content: space-between; }
+.whatcard button { flex: none; }
+.whatlist { display: flex; flex-direction: column; gap: 8px; margin: 6px 0; }
+.whatlist button { text-align: left; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 10px 14px; font-size: 18px; }
+.whatlist button .small { font-size: 13px; }
+/* Alignment: a big arrow that stays at the top of the page while it scrolls (Build 112) */
+.alguide { position: sticky; top: 0; z-index: 6; display: flex; align-items: center; gap: 14px; margin: 6px -14px 8px; padding: 10px 14px; background: var(--bg); border-bottom: 1px solid var(--line); }
+.alarrow { flex: none; width: 84px; height: 84px; transition: transform .25s ease-out; }
+.alarrow .ar { fill: var(--hi); }
+.alarrow .ok { display: none; fill: none; stroke: var(--hi); stroke-width: 6; }
+.alarrow.close .ar, .alarrow.none .ar { display: none; }
+.alarrow.close .ok { display: inline; }
+.alarrow.close { transform: none !important; }
+.algbig { font-size: 24px; font-weight: 700; line-height: 1.2; color: var(--fg); }
+#a-sub { color: var(--dim); margin-top: 2px; }

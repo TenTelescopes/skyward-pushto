@@ -62,6 +62,38 @@ export function hoursBetween(from, to) {
   return out;
 }
 
+/**
+ * Apple Weather hours from the iPhone app's SkyWeather plug-in, or null (web app, no WeatherKit, offline, refused).
+ * Rows: { t, temp °C, dew °C, hum %, cloud %, low/mid/high % (iOS 18+), wind and gust km/h, vis km, pop % }.
+ * Cached like the Environment Canada forecast (90 minutes per place and night), so a night costs a call or two.
+ */
+export async function appleHourly(plugin, lat, lon, from, to, { storage = (typeof localStorage !== 'undefined' ? localStorage : null) } = {}) {
+  if (!plugin || !plugin.hourly || lat == null || lon == null) return null;
+  const key = `wk:${lat.toFixed(2)},${lon.toFixed(2)}:${hourISO(from)}:${hourISO(to)}`;
+  try { const c = storage && JSON.parse(storage.getItem(key) || 'null'); if (c && Date.now() - c.at < 90 * 60000) return { ...c.v, hours: c.v.hours.map((h) => ({ ...h, t: new Date(h.t) })) }; } catch (e) { /* ignore */ }
+  try {
+    const r = await plugin.hourly({ lat, lon, from: +from, to: +to });
+    if (!r || !Array.isArray(r.hours) || !r.hours.length) return null;
+    const v = { hours: r.hours.map((h) => ({ ...h, t: new Date(h.t) })), attribution: r.attribution || null };
+    try { if (storage) storage.setItem(key, JSON.stringify({ at: Date.now(), v })); } catch (e) { /* full or blocked */ }
+    return v;
+  } catch (e) { return null; }
+}
+
+/**
+ * Put Apple's hours beside Environment Canada's: same hour → extra fields on the row (`ap`), and Apple's total cloud
+ * fills in where Environment Canada has none (outside its area). Without Environment Canada rows, Apple's hours become
+ * the rows (no seeing or transparency then).
+ */
+export function mergeApple(rows, apple, hours) {
+  if (!apple || !apple.hours) return rows;
+  const byHour = new Map(apple.hours.map((h) => [Math.round(h.t / 3600000), h]));
+  const base = rows || hours.map((t) => ({ t, cloud: null, seeing: null, transp: null }));
+  const out = base.map((r) => { const h = byHour.get(Math.round(r.t / 3600000)); if (!h) return r;
+    return { ...r, cloud: r.cloud != null ? r.cloud : h.cloud, cloudSrc: r.cloud != null ? 'eccc' : 'apple', ap: h }; });
+  return out.some((r) => r.cloud != null || r.ap) ? out : rows;
+}
+
 const median = (a) => { const s = a.filter((x) => x != null).sort((x, y) => x - y); return s.length ? s[Math.floor((s.length - 1) / 2)] : null; };
 
 /** Steady-air word from the forecast's seeing index (1–2 poor, 3 average, 4–5 good). */
@@ -108,10 +140,34 @@ export function outlook(rows, { moonUp, nelm, fromCheck = false, restOfNight = f
   if (tr != null && tr > 0) bits.push(`${SCALE[tr] === 'average' ? 'medium' : SCALE[tr]} transparency`);
   if (brightMoon) bits.push('a bright Moon up');
   const hints = [];
+  // Apple Weather extras (iPhone app): dew, wind, thin high cloud.
+  const ap = win.map((r) => r.ap).filter(Boolean), extra = { warn: [] };
+  if (ap.length) {
+    const dewHour = win.find((r) => r.ap && r.ap.temp - r.ap.dew <= 2.5);
+    if (dewHour) {
+      const frost = dewHour.ap.temp <= 0.5;
+      extra.dew = { from: dewHour.t, frost };
+      extra.warn.push(`${frost ? 'Frost' : 'Dew'} likely from about ${hhmm(dewHour.t)}: keep the finder and eyepieces capped until you use them.`);
+      hints.push(`${frost ? 'Frost' : 'Dew'} forecast: the air is within ${Math.max(0, dewHour.ap.temp - dewHour.ap.dew).toFixed(0)}° of its dew point by ${hhmm(dewHour.t)}. On a clear night a telescope cools below the air, so the finder, the eyepieces and the small mirror fog first. Keep caps on until you use them, and a dew shield (a tube of foam or card past the end) or a little warmth from a hair dryer on low clears it.`);
+    }
+    const gust = Math.max(...ap.map((h) => Math.max(h.gust || 0, h.wind || 0)));
+    if (gust >= 25) {
+      extra.wind = Math.round(gust);
+      extra.warn.push(`Gusts to ${Math.round(gust)} km/h: the view will shake at high power.`);
+      hints.push(`Gusty (up to ${Math.round(gust)} km/h): a light telescope shakes at high power. Use low power, set up in the lee of the house or the car, and lower the scope a little so the tube catches less wind.`);
+    }
+    const highs = ap.map((h) => h.high).filter((x) => x != null);
+    const hi = median(highs);
+    if (hi != null && hi >= 40) {
+      extra.highCloud = Math.round(hi);
+      extra.warn.push('Possible thin high cloud: faint galaxies may fade.');
+      hints.push('Thin high cloud in Apple\'s forecast: it can look clear to the eye but dims faint galaxies and nebulae and puts haloes round bright stars. Good for the Moon, planets, doubles and bright clusters.');
+    }
+  }
   if (tr != null && tr <= 2) hints.push('Hazy air dims faint things before it bothers bright ones: a night for clusters, doubles and planets.');
   if (seeingWord(see) === 'poor') hints.push('Unsteady air blurs planets at high power. Stay at medium power, or wait: the air often settles later in the night.');
   if (seeingWord(see) === 'good' && tr != null && tr <= 3) hints.push('Steady air often comes with a little haze — the same calm, moist air. Good news for planets and doubles.');
   hints.push('Transparency is how clear the air is, which matters for faint galaxies and nebulae. Seeing is how steady it is, which matters for detail on planets and close doubles. The two rarely peak together: crisp nights after a cold front are often unsteady, and calm, slightly hazy nights are often the steadiest.');
-  return { kind, from: best.from, to: new Date(best.to.getTime() + 3600000), seeing: see, transp: tr, brightMoon, effNelm,
+  return { kind, from: best.from, to: new Date(best.to.getTime() + 3600000), seeing: see, transp: tr, brightMoon, effNelm, extra,
     text: `${window}${bits.length ? ', with ' + bits.join(', ') : ''}.`, best: out, hints };
 }

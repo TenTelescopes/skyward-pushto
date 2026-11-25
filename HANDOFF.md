@@ -715,7 +715,48 @@ unrelated extra star in the object-page sentence. Still open with Bryan: whether
     step was silently dropped, so the flow jumped from the previous step straight to blocked-sky tracing. It now
     always runs when its star is on, showing "Earlier tonight: … check again, or keep it".
 
-## Build 109 (Nov 24): alignment-star sheet, tuck-away eyepiece controls, physical sky background, pinned simulator view
+## Build 112 (Nov 24, from a night under the sky): chart zoom, labels, one-tap eyepieces, "What am I on?", align arrow
+- Chart (Observe, with or without a target): by hand it zooms to 0.08° radius (ZMIN; about 10′ across), past the
+  phone's accuracy if you like (the chart then says so). Automatic zoom now follows the scope (`motionZoom`, speed from
+  `motion.vz`, the distance moved over the last half second): still for 0.7 s → closes in (×e^−0.5 per second) down to
+  2.2× the eyepiece's field radius (or keeps the target on the chart); moving faster than 0.5°/s → widens to about
+  three seconds of travel, so a nudge widens it a little and a slew a lot. Before alignment the auto zoom stops at the
+  compass uncertainty (5° radius or more). Sky view now starts in auto (it was fixed at 30°). Motion is tracked before
+  alignment too (from the phone's own frame).
+- Text: chart text scales with the canvas (`FS = W/800`): names 30–34 px on the 800-px canvas (about 14–15 px on a
+  phone; were 20 ≈ 9 px), target 38 bold, header line "N° across".
+- Labels thin out with the zoom: named stars to mag 1.0 (≥30° radius), 1.8 (≥15°), 2.8 (≥7°), 4.5 (≥3°), all closer;
+  planets always; Messier under 15°; others under 5°; asterism names under 12°; brightest claim space first and a
+  label that would overlap another is skipped. The target is always labelled.
+- Eyepieces: a row of one-tap eyepiece chips sits right above the chart (`EP_ROW`, `pickEyepiece`); the cycling button
+  is gone; "Fit" became "Auto zoom" (lit when on). The eyepiece's name is written over its field circle.
+- "What am I on?" (`pointedCandidates`, `openWhatsThis`): from Sky view ("Align on this" / "Sync on this") and the
+  Align page. Height from gravity (±4°), direction from the alignment (±8°), else the compass (±45°), else none; bright
+  candidates only (stars to mag 3, planets, the Moon), ranked by fit and brightness. Tap the right one: it becomes an
+  alignment star (`addAlignStar`, moved out of renderAlign; same tilt and pair checks) or a Sync.
+- Align page: a big arrow and "Raise 30° · swing 70° right" in a box that stays at the top while the page scrolls
+  (`.alguide`, sticky); a ring when it should be in the finder. Before alignment left/right is the compass guess (or
+  "face NE" without a compass).
+
+## Build 111 (Nov 24): Apple Weather in the iPhone app; "Start-up refinements" is a heading
+- `native/ios/SkyWeatherPlugin.swift` (Capacitor plug-in `SkyWeather.hourly({lat, lon, from, to})`): WeatherKit hourly
+  temperature, dew point, humidity, total cloud, low/mid/high cloud (iOS 18+), wind and gust, visibility, rain chance,
+  plus Apple's attribution (mark URLs, legal page). Registered in `MyViewController`; `patch-native.mjs` copies it in,
+  adds it to the Xcode project, and writes `App.entitlements` (com.apple.developer.weatherkit) with
+  CODE_SIGN_ENTITLEMENTS. Setup steps for the App ID: IOS.md step 4. NOT yet built or run on a phone.
+- forecast.js: `appleHourly` (cached 90 min per place and night), `mergeApple` (Apple fields on each Environment
+  Canada hour as `ap`; Apple's total cloud fills gaps, or becomes the rows outside Environment Canada's area), and
+  `outlook` now returns `extra` {dew, wind, highCloud, warn[]}: dew/frost when air − dew point ≤ 2.5 °C in the clear
+  window, gusts ≥ 25 km/h, median high cloud ≥ 40 %. Tests added.
+- main.js: `ensureForecast` asks both (Apple only when `Capacitor.isPluginAvailable('SkyWeather')`), so outside
+  Canada the iPhone app still gets a forecast; the panel shows the warnings, "Dew gap", "Gusts" and "High cloud" rows,
+  and the Apple Weather mark with the "other data sources" link. Web app unchanged (no key can live in a public page).
+- Light-pollution map (Your sky): zoom is continuous from about 3 km to 670 km tall (`lpH`, `LP_MIN`/`LP_MAX`), with
+  pinch, mouse wheel and Closer/Wider (×2.5), drag to move (`lpC`) and "Back to me"; a line gives the map's height and,
+  closer than the 5 km map squares, says the colours are smoothed and the streets are for finding your spot.
+- Launch screen: "Start-up refinements" is now an h3 like "What are we up to?", with the tap-a-star note under it.
+
+## Build 109–110 (Nov 24): alignment-star sheet, tuck-away eyepiece controls, physical sky background, pinned simulator view
 - Alignment stars (sheet for a star that is only there to line up): an "Alignment star" badge by the name and a card in
   place of the eyepiece previews (`alignCardHTML`): a drawn field with one star and a centring ring, "Nothing to study
   here, and that is the point", and why it is useful (bright, easy to find, a point centres exactly, then Sync). The
@@ -731,6 +772,17 @@ unrelated extra star in the object-page sentence. Still open with Bryan: whether
   Moon changed it by only a few grey levels. The zoom header shows "background NN.N mag/arcsec²". Checked: dark site
   (NELM 6.5), full Moon well away from M29: 22.6 → 19.6 at 33× (clearly grey); Toronto (NELM 4): 18.9 → 18.5 (a small
   step, which is real: the Moon adds little to a city sky).
+- Previews are drawn for when you will look, not for this minute (`previewTime`): a planned target at its best time
+  in the session, anything else in daylight or twilight at tonight's full dark (if it is up then); the caption says
+  "As it will look at 6:30 p.m.", and the full-screen view shows "at 6:30 p.m.". Route preview stops use the stop's own
+  time for the sky too (`eyeEnv(tg, s.t)`): before, a daytime visit drew M57 and Capella into a daylight sky, so the
+  circles came up empty.
+- Deep-sky glow strength now follows the object's contrast with the sky, C = object ÷ sky surface brightness (mean
+  surface brightness from magnitude over the catalogued ellipse), which magnification does not change; galaxy cores
+  get their own (about 2.8 mag/arcsec² brighter than the mean). Before, it was dimmed again by the exit pupil, which,
+  with the new physical background, left M57 a faint smudge at 188×.
+- Route preview: the stop card (name, height, push) is now above the map, so it is never pushed under the Play bar;
+  the "rim = horizon" key moved under the map.
 - Simulator: the view and a one-line summary (aperture, f-ratio, power, exit pupil, field) are pinned at the top
   (`.simdock`, sticky) while the sliders scroll under it; each slider's explanation is behind an ⓘ; the full numbers
   moved to "The numbers" below the sliders; Basic/Advanced sits above the view.

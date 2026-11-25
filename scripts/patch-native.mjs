@@ -1,6 +1,7 @@
 // Idempotent patches applied after `npx cap add` / `npx cap sync`:
 //  - iOS: motion + location + camera usage strings, portrait only, keep screen awake,
-//         and the Skyward camera plug-in (native/ios/*.swift copied in, added to the Xcode project, registered)
+//         the Skyward camera and Apple Weather plug-ins (native/ios/*.swift copied in, added to the Xcode project,
+//         registered) and the WeatherKit entitlement
 //  - Android: location permissions, portrait only, keep screen awake
 import fs from 'node:fs';
 const log = (m) => console.log('[patch-native] ' + m);
@@ -24,7 +25,7 @@ edit('ios/App/App/AppDelegate.swift', (s) => s.includes('isIdleTimerDisabled') ?
 
 // ---- iOS: the Skyward camera plug-in (native exposure control and RAW frames)
 if (fs.existsSync('ios/App/App')) {
-  const SWIFT = ['SkyCamPlugin.swift', 'MyViewController.swift'];
+  const SWIFT = ['SkyCamPlugin.swift', 'MyViewController.swift', 'SkyWeatherPlugin.swift'];
   for (const f of SWIFT) {
     const from = `native/ios/${f}`, to = `ios/App/App/${f}`;
     if (!fs.existsSync(from)) { log(`missing ${from}`); continue; }
@@ -44,6 +45,30 @@ if (fs.existsSync('ios/App/App')) {
     }
     return s;
   });
+  // Apple Weather plug-in (Build 111): add it to the Xcode project the same way, if it isn't there yet.
+  edit('ios/App/App.xcodeproj/project.pbxproj', (s) => {
+    if (s.includes('SkyWeatherPlugin.swift')) return s;
+    const [name, ref, build] = ['SkyWeatherPlugin.swift', 'A15C0DE0000000000000F003', 'A15C0DE0000000000000B003'];
+    s = s.replace('/* End PBXBuildFile section */', `\t\t${build} /* ${name} in Sources */ = {isa = PBXBuildFile; fileRef = ${ref} /* ${name} */; };\n/* End PBXBuildFile section */`);
+    s = s.replace('/* End PBXFileReference section */', `\t\t${ref} /* ${name} */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ${name}; sourceTree = "<group>"; };\n/* End PBXFileReference section */`);
+    s = s.replace(/(\/\* App \*\/ = \{\s*isa = PBXGroup;\s*children = \()/, `$1\n\t\t\t\t${ref} /* ${name} */,`);
+    s = s.replace(/(\/\* Sources \*\/ = \{\s*isa = PBXSourcesBuildPhase;\s*buildActionMask = \d+;\s*files = \()/, `$1\n\t\t\t\t${build} /* ${name} in Sources */,`);
+    return s;
+  });
+  // WeatherKit capability: the entitlement file, and the build setting that points at it (both configurations).
+  // Opt-in: only once WeatherKit is switched on for the App ID (create the empty file native/ios/WEATHERKIT_ON), because
+  // signing fails without it ("provisioning profile doesn't include the WeatherKit capability"). Without it the app
+  // builds and the forecast simply uses Environment Canada.
+  if (!fs.existsSync('native/ios/WEATHERKIT_ON')) {
+    edit('ios/App/App.xcodeproj/project.pbxproj', (s) => s.replace(/\n\t*CODE_SIGN_ENTITLEMENTS = App\/App\.entitlements;/g, ''));
+  } else {
+  const ENT = 'ios/App/App/App.entitlements';
+  const entXml = '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<dict>\n\t<key>com.apple.developer.weatherkit</key>\n\t<true/>\n</dict>\n</plist>\n';
+  if (!fs.existsSync(ENT)) { fs.writeFileSync(ENT, entXml); log(`created ${ENT}`); }
+  else edit(ENT, (s) => s.includes('com.apple.developer.weatherkit') ? s : s.replace(/<dict>/, '<dict>\n\t<key>com.apple.developer.weatherkit</key>\n\t<true/>'));
+  edit('ios/App/App.xcodeproj/project.pbxproj', (s) => s.includes('CODE_SIGN_ENTITLEMENTS') ? s
+    : s.replace(/(PRODUCT_BUNDLE_IDENTIFIER = com\.tentelescopes\.skyward;)/g, 'CODE_SIGN_ENTITLEMENTS = App/App.entitlements;\n\t\t\t\t$1'));
+  }
   // Capacitor 8 builds its window in SceneDelegate; use our view controller there so the plug-in gets registered.
   edit('ios/App/App/SceneDelegate.swift', (s) => s.replace('window?.rootViewController = CAPBridgeViewController()', 'window?.rootViewController = MyViewController()    // registers the Skyward camera plug-in'));
   // Older templates use the storyboard instead.

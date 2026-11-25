@@ -55,6 +55,23 @@ In the app, **More › Camera star finder › Start the camera**. If the native 
 a web browser the phone chooses the exposure" is gone, and after a fix the technical report's "Single-frame time"
 line mentions RAW.
 
+## 4. Apple Weather (WeatherKit), once
+
+The iPhone app adds Apple Weather to the night's forecast: dew, gusts, high cloud, and cloud anywhere in the world
+(Environment Canada stays the main forecast: it is the only one with steadiness and clear-air). `npm run ios:sync`
+copies in `SkyWeatherPlugin.swift`, adds it to the project, and writes `ios/App/App/App.entitlements` with the
+WeatherKit entitlement. Then, once:
+
+1. developer.apple.com → Certificates, Identifiers & Profiles → Identifiers → `com.tentelescopes.skyward`:
+   tick **WeatherKit** under both **Capabilities** and **App Services**, and Save.
+2. In Xcode, App target → **Signing & Capabilities**: check WeatherKit is listed (add it with **+ Capability** if not).
+3. Build and run. Apple says a newly enabled WeatherKit can take about half an hour to start answering; until then
+   (and in the web app) the forecast simply uses Environment Canada alone.
+
+Apple's terms: wherever its weather appears, show the Apple Weather mark and the link to its other data sources. The
+forecast panel does this. 500,000 calls a month come with the developer membership; the app asks once per place and
+night and keeps the answer for 90 minutes.
+
 ## Day-to-day
 
 - Change the app as before (files under `docs/`), then in Terminal `npm run ios:sync`, then Run in Xcode.

@@ -32,3 +32,21 @@ await ok('fetching: HRDPS first, RDPS cloud when HRDPS has no value, nulls survi
   const none = await hourlyForecast(43.5, -80.2, hoursBetween(H(23), H(24)), { fetchFn: async () => { throw new Error('offline'); }, storage: null });
   assert.equal(none, null);
 });
+
+// Build 111: Apple Weather extras (iPhone app)
+import { mergeApple } from '../docs/js/forecast.js';
+await ok('Apple Weather: merged by hour, fills missing cloud, warns of dew, gusts and high cloud', () => {
+  const base = rows([[23, null, 3, 3], [24, 5, 3, 3], [25, 0, 3, 3]]);
+  const ap = { hours: [23, 24, 25].map((h, i) => ({ t: H(h), temp: 4 - i * 2, dew: 1, cloud: 10, wind: 10, gust: i === 2 ? 32 : 15, high: 50 })) };
+  const m = mergeApple(base, ap, base.map((r) => r.t));
+  assert.equal(m[0].cloud, 10); assert.equal(m[0].cloudSrc, 'apple'); assert.equal(m[1].cloud, 5); assert.equal(m[1].cloudSrc, 'eccc');
+  const o = outlook(m, { moonUp: noMoon, nelm: 6 });
+  assert.equal(o.kind, 'clear'); assert.equal(o.extra.wind, 32); assert.ok(o.extra.dew && o.extra.dew.from.getTime() === H(24).getTime());
+  assert.equal(o.extra.highCloud, 50); assert.equal(o.extra.warn.length, 3);
+});
+await ok('Apple Weather alone (outside Canada): rows from Apple, no seeing', () => {
+  const hrs = [H(23), H(24), H(25)];
+  const m = mergeApple(null, { hours: hrs.map((t) => ({ t, temp: 10, dew: 2, cloud: 20, wind: 5 })) }, hrs);
+  const o = outlook(m, { moonUp: noMoon, nelm: 6 });
+  assert.equal(o.kind, 'clear'); assert.equal(o.seeing, null); assert.equal(o.extra.warn.length, 0);
+});

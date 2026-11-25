@@ -70,7 +70,20 @@ export function drawEyepiece(cv, sky, o, tgt, ep, scope, opts = {}) {
   c.fillStyle = `rgb(${(dayRGB[0] + (nightR - dayRGB[0]) * sh) | 0},${(dayRGB[1] * (1 - sh)) | 0},${(dayRGB[2] * (1 - sh)) | 0})`; c.fillRect(0, 0, W, H);
 
   // deep-sky shape (drawn first, stars on top) — dimmed by surface brightness and washed out by a bright sky
-  c.globalAlpha = shown * (1 - 0.75 * skyLum) * 10 ** (-0.4 * ext);
+  // How strongly the glow shows: from the object's contrast against the sky, C = object ÷ sky surface brightness, which
+  // magnification does not change (it dims both alike), so a ring nebula stays clear at high power under a bright sky and
+  // a faint galaxy fades away. Very small exit pupils (under about 2 mm) dim it a little more, as the eye finds there.
+  // (Mean surface brightness from total magnitude spread over the catalogued ellipse; cores are brighter, edges fainter.)
+  const sbObj = o.mag != null && o.maj ? o.mag + 2.5 * Math.log10(Math.max(1, Math.PI / 4 * o.maj * (o.min || o.maj) * 3600)) + ext : null;
+  const alphaFor = (sb) => {
+    if (raw) return 1;
+    if (sb == null) return shown * (1 - 0.75 * skyLum) * 10 ** (-0.4 * ext);       // fallback without a size or magnitude
+    const C = 10 ** (0.4 * (skyFromNelm(nelmEff) - sb)), v = 1.2 * Math.log10(1 + C);   // v ≈ 0.3 at C = 0.8, 1 at C ≈ 5
+    // the eye picks out a clear contrast easily; below about 10 % it fades fast
+    return Math.max(0.03, Math.min(1, C >= 0.1 ? 0.2 + v : v * 4)) * (F.aperture ? 0.6 + 0.4 * Math.min(1, exit / 2) : 1);
+  };
+  const dsoA = alphaFor(sbObj);
+  c.globalAlpha = dsoA;
   const ax = skyAxes(sky, o, date);
   const ell = (maj, min, pa, draw) => {               // maj/min in arcmin; PA from north through east
     const a = (maj / 60 / 2) * s, b = ((min || maj) / 60 / 2) * s;
@@ -110,8 +123,8 @@ export function drawEyepiece(cv, sky, o, tgt, ep, scope, opts = {}) {
   };
   const t = o.planet ? 'PL' : o.key.startsWith('ds:') ? 'DS' : o.t;
   let note = '', enlarged = 0, widened = false;
-  if (t === 'GX') ell(o.maj || 3, o.min, o.pa, (a, b) => { glow(a, b, 0.55); c.scale(1, a / b); glow(a * 0.12, b * 0.12, 0.9); });
-  else if (t === 'GC') ell(o.maj || 5, o.maj || 5, 0, (a) => { glow(a, a, 0.85); c.globalAlpha = 1; /* member stars are points: they don't dim, so a globular resolves better at high power */ let sd = 12345; const rnd = () => ((sd = (sd * 16807) % 2147483647) / 2147483647); for (let i = 0; i < 90; i++) { const r = a * Math.sqrt(rnd()) * 0.9, th = rnd() * 7; star(Math.cos(th) * r, Math.sin(th) * r, 10.5, plain); } c.globalAlpha = shown; });
+  if (t === 'GX') ell(o.maj || 3, o.min, o.pa, (a, b) => { glow(a, b, 0.55); c.scale(1, a / b); c.globalAlpha = Math.max(dsoA, alphaFor(sbObj != null ? sbObj - 2.85 : null)); glow(a * 0.12, b * 0.12, 0.9); c.globalAlpha = dsoA; });   // the core: about a fifth of the light in the middle 12 %, so roughly 2.8 mag/arcsec² brighter than the average
+  else if (t === 'GC') ell(o.maj || 5, o.maj || 5, 0, (a) => { glow(a, a, 0.85); c.globalAlpha = 1; /* member stars are points: they don't dim, so a globular resolves better at high power */ let sd = 12345; const rnd = () => ((sd = (sd * 16807) % 2147483647) / 2147483647); for (let i = 0; i < 90; i++) { const r = a * Math.sqrt(rnd()) * 0.9, th = rnd() * 7; star(Math.cos(th) * r, Math.sin(th) * r, 10.5, plain); } c.globalAlpha = dsoA; });
   else if (t === 'PN') ell(o.maj || 1, o.min, o.pa, (a, b) => { c.fillStyle = col(200, 60, 40, 0.75); c.beginPath(); c.ellipse(0, 0, a, b, 0, 0, 7); c.fill(); if (/^M57$|Ring/.test(o.label + o.name)) { c.fillStyle = col(10, 0, 0); c.beginPath(); c.ellipse(0, 0, a * 0.45, b * 0.45, 0, 0, 7); c.fill(); } });
   else if (t === 'NB' || t === 'CN') { ell(o.maj || 10, o.min, o.pa, (a, b) => glow(a, b, 0.35, 0.05)); if (t === 'CN') sprinkle((o.maj || 10) * 0.7, (o.mag ?? 7) + 1); }
   else if (t === 'DN') { ell(o.maj || 10, o.min, o.pa, (a, b) => { c.fillStyle = 'rgba(0,0,0,0.6)'; c.beginPath(); c.ellipse(0, 0, a, b, 0, 0, 7); c.fill(); }); note = 'A dark cloud: look for a patch with fewer stars, not a glow'; }

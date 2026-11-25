@@ -26,7 +26,7 @@ import { project as projectStar } from './solve.js';
 import { loadTowns, townsLoaded, nearestName, DARK_SITES } from './towns.js';
 import { loadSkyGlow, skyGlowAt, nelmToSqm, bortleOfNelm, skyGlowGrid, cellSqm, bortleOf, sqmToNelm } from './skyglow.js';
 import { FIELD as STAR_FIELD } from '../data/catalog.js';
-import { hourlyForecast, hoursBetween, outlook, seeingWord, transpAdj, ATTRIB, LICENCE_URL, SCALE } from './forecast.js';
+import { hourlyForecast, hoursBetween, outlook, seeingWord, transpAdj, appleHourly, mergeApple, ATTRIB, LICENCE_URL, SCALE } from './forecast.js';
 
 // ---------------------------------------------------------------- persistence
 const KEY = 'skyward-pushto-v1';
@@ -577,12 +577,12 @@ function renderPlanHere() {
       ${(() => { const rec = ensureForecast(here(), start, () => { if (!$('#tab-plan').classList.contains('hidden')) renderPlan(); }); return glanceHTML(rec, n, start) + clearSpellBtn(rec, start); })()}
       ${P.site
         ? `<div class="sess hzrow"><div class="small">${ICON.pin}Planning for <b>${esc(P.site.name)}</b><div class="muted">${P.site.name === coordText(P.site.lat, P.site.lon) ? '' : coordText(P.site.lat, P.site.lon) + ' · '}not where you are now</div></div><div class="btncol"><button id="pl-where" class="mini">Change place</button><button id="pl-here" class="mini">Use where I am</button></div></div>` : ''}
+      ${P.site ? '' : `<div class="sess hzrow"><div class="small">${ICON.pin}${whereText()}<div class="muted">Planning a trip somewhere darker? Pick the spot on the map.</div></div><div class="btncol"><button id="pl-where" class="mini">Plan for another place</button><button id="pl-loc" class="mini">Update location</button></div></div>`}
       <details class="more tdetail" id="pl-tonight" ${state.ui && state.ui.plTonight ? 'open' : ''}><summary>Tonight in detail</summary>
       <div class="muted small">${esc(skyName)} · Moon ${moonTxt}</div>
       <div class="muted small">Sunset ${hm(n.set)} · fully dark ${hm(n.astro)} – ${hm(n.astroAm)}</div>
       <div id="pl-fc">${outlookHTML(fcFor(here(), start), { hint: false })}</div>
       <div class="sess hzrow"><div class="muted small">Steady air: <b>${SEEING_WORD[seeingFor(start)]}</b> ${{ check: `(${seeingTonight() && seeingTonight().how === 'pick' ? 'you picked it' : 'your check'} tonight)`, forecast: "(Environment Canada's forecast — your own check beats it)", assumed: '(not tested, so the app assumes average)' }[seeingSource(start)]}</div>${nightKey(start.getTime()) === nightKey(Date.now()) ? `<button id="pl-seetest" class="mini">${seeingTonight() ? 'Check again' : 'Test it (10 s)'}</button>` : ''}</div>
-      ${P.site ? '' : `<div class="sess hzrow"><div class="muted small">${ICON.pin}${whereText()}</div><div class="btncol"><button id="pl-loc" class="mini">Update location</button><button id="pl-where" class="mini">Plan for another place</button></div></div>`}
       ${P.site ? '' : `<div class="sess hzrow"><div class="muted small">${placeLabel() ? hzLine() : `Blocked sky: ${hzLine()}`}</div><button id="pl-hz" class="mini">${horizonNow() ? 'Change' : 'Trace it'}</button></div>`}
       </details>
       <div id="pl-form" class="${planEdit ? '' : 'hidden'}" style="margin-top:8px">
@@ -990,22 +990,25 @@ const SUN_KEEP = 20;   // degrees: warn when a target is this close to the Sun
 function sunSep(o) { const S = sky.sunAltAz(); return sepDeg(o.alt, o.az, S.alt, S.az); }
 const targetObj = () => sky.objects.find((o) => o.key === state.target);
 const HZ_TOGGLE = () => (horizonNow() ? `<button id="z-hz" class="${state.hzShow === false ? '' : 'on'}" title="Show or hide the hatching over sky you marked as blocked">${state.hzShow === false ? 'Blocked sky: hidden' : 'Blocked sky: shown'}</button>` : '');
-const ZOOM_ROW = () => `<div class="btnrow zoom"><button id="z-out" aria-label="Zoom out">−</button><button id="z-in" aria-label="Zoom in">+</button><button id="z-ep" title="Tap to cycle eyepieces">${esc(eyepiece().name)}</button><button id="z-auto">Fit</button>${HZ_TOGGLE()}</div>`;
+const EP_ROW = () => `<div class="chips epq" id="ep-quick" aria-label="Eyepiece">${profile().eyepieces.map((e, i) => `<button data-epq="${i}" class="${i === state.ep ? 'on' : ''}">${esc(e.name)}<span> ${(profile().fl / e.fl).toFixed(0)}×</span></button>`).join('')}</div>`;
+const ZOOM_ROW = () => `<div class="btnrow zoom"><button id="z-out" aria-label="Zoom out">−</button><button id="z-in" aria-label="Zoom in">+</button><button id="z-auto" class="${zoom == null ? 'on' : ''}">${zoom == null ? 'Auto zoom: on' : 'Auto zoom'}</button>${HZ_TOGGLE()}</div>`;
 function renderPush() {
   const el = $('#tab-push'); const o = targetObj();
   pstatKey = null; rateT = 0;
   if (!o) {
     el.innerHTML = `<div class="target-h"><span class="name">Sky view</span><span class="muted">no target</span></div>
       <div class="pstat" id="pstat"></div>
+      ${EP_ROW()}
       <canvas id="reticle" class="chart big" width="800" height="800"></canvas>
       <div id="whereami" class="whereami"></div>
       ${ZOOM_ROW()}
       <div class="btnrow"><button id="p-hz" class="mini">${placeLabel() ? hzLine() : `Blocked sky: ${hzLine()}`}</button></div>
       <p class="muted small">The chart follows the scope.${state.mounting === 'top-sky' ? ' In your hand, point the top edge of the phone at the sky, like a TV remote.' : ''} When it says you're near something, tap the name to read about it.</p>
-      <div class="actionbar"><button id="sv-find" class="primary">Pick a target</button>${align.fit || state.mode === 'compass' ? '' : '<button id="sv-align">Align</button>'}</div>`;
-    chartCentre = 'scope'; if (zoom == null) zoom = 30;
+      <div class="actionbar"><button id="sv-find" class="primary">Pick a target</button><button id="sv-what">${state.mode === 'compass' || align.obs.length >= alignNeeded() ? 'Sync on this' : 'Align on this'}</button>${align.fit || state.mode === 'compass' ? '' : '<button id="sv-align">Align</button>'}</div>`;
+    chartCentre = 'scope';
     bindChartControls();
     $('#sv-find').onclick = () => showTab('find');
+    $('#sv-what').onclick = () => openWhatsThis('push');
     $('#p-hz').onclick = () => openHorizon('push');
     if ($('#sv-align')) $('#sv-align').onclick = () => showTab('align');
     return;
@@ -1025,6 +1028,7 @@ function renderPush() {
     </div>
     <div class="pstat" id="pstat"></div>
     <div id="waypt"></div>
+    ${EP_ROW()}
     <canvas id="reticle" class="chart" width="800" height="800"></canvas>
     <div id="whereami" class="whereami"></div>
     ${ZOOM_ROW()}
@@ -1174,6 +1178,7 @@ function updatePush() {
   }
   { const gd = $('#tab-push .guide'); if (gd) gd.classList.remove('hidden'); }
   if (!cur.ready) {                                 // no alignment yet: altitude is real, azimuth is a best guess
+    trackMotion(cur);
     const gp = roughPointing(), ALIGN = '<button class="mini primary" id="ps-align">Align</button>';
     setDelta(altEl, tgt.alt - cur.alt, 'alt', false);
     if (gp.src === 'assumed') {                      // no compass and no direction given: don't invent a turn arrow
@@ -1217,13 +1222,14 @@ function lastSyncAge() { const s = align.syncs[align.syncs.length - 1]; if (!s) 
 
 // Zoom state for the chart: null = automatic, otherwise radius in degrees. Centre on the scope or on the target.
 let zoom = null, chartCentre = 'scope';
-const ZMIN = 0.25, ZMAX = 60;
+const ZMIN = 0.08, ZMAX = 60;                       // radius in degrees: about 10′ across to the whole sky
 let minView = ZMIN, dispView = 0, minViewGuess = false;
 // Slew detection from the pointing itself: smoothed angular speed, "moving" above 1.5°/s, "settled" after 0.8 s below 0.4°/s.
 const motion = { prev: null, t: 0, v: 0, moving: false, stillSince: 0 };
 function trackMotion(cur) {
   const now = performance.now();
-  if (!cur || !cur.ready) { motion.prev = null; motion.moving = false; return; }
+  if (cur && !cur.ready && cur.raw) cur = { alt: cur.raw.alt, az: cur.raw.az, ready: true };     // before alignment the phone's own frame still shows motion
+  if (!cur || !cur.ready) { motion.prev = null; motion.moving = false; motion.hist = null; motion.vz = 0; return; }
   if (motion.prev) {
     const dt = Math.max(0.016, (now - motion.t) / 1000), v = sepDeg(motion.prev.alt, motion.prev.az, cur.alt, cur.az) / dt;
     motion.v = motion.v * 0.7 + v * 0.3;
@@ -1231,6 +1237,10 @@ function trackMotion(cur) {
     else if (motion.v < 0.4) { if (!motion.stillSince) motion.stillSince = now; if (now - motion.stillSince > 800) motion.moving = false; }
   }
   motion.prev = { alt: cur.alt, az: cur.az }; motion.t = now;
+  // Steadier speed for the auto zoom: distance moved over the last half second (frame-to-frame jitter averages out).
+  const H = motion.hist || (motion.hist = []); H.push({ t: now, alt: cur.alt, az: cur.az });
+  while (H.length > 2 && now - H[1].t > 500) H.shift();
+  const h0 = H[0]; motion.vz = now - h0.t > 150 ? sepDeg(h0.alt, h0.az, cur.alt, cur.az) / ((now - h0.t) / 1000) : 0;
 }
 // "You're in Cygnus · Northern Cross · near Albireo" — refreshed 4× a second, flashes when the constellation changes.
 let whereT = 0, whereCon = null;
@@ -1252,7 +1262,25 @@ function updateWhere(cur) {
   const html = parts.join(' · '); if (box.innerHTML !== html) box.innerHTML = html;
   if (con !== whereCon) { if (whereCon) { box.classList.remove('flash'); void box.offsetWidth; box.classList.add('flash'); } whereCon = con; }
 }
-function setZoom(z) { zoom = z == null ? null : Math.min(ZMAX, Math.max(minView, z)); }
+// By hand you can zoom as far as you like (the chart says when it's past what the phone can know); the automatic zoom
+// stops at the phone's accuracy.
+function setZoom(z) { zoom = z == null ? null : Math.min(ZMAX, Math.max(ZMIN, z)); autoZ = null; syncZoomUI(); }
+function syncZoomUI() { const b = $('#z-auto'); if (b) { b.classList.toggle('on', zoom == null); b.textContent = zoom == null ? 'Auto zoom: on' : 'Auto zoom'; } }
+/**
+ * Automatic zoom that follows the hand on the telescope (Build 112): while the scope is still it keeps closing in, slowly,
+ * down to about twice the eyepiece's field; as soon as it moves more than the phone's own jitter it widens in proportion
+ * to the speed (about three seconds of travel), so a nudge widens it a little and a long push a lot.
+ */
+let autoZ = null, autoT = 0, stillAt = 0;
+function motionZoom(floor, ceil) {
+  const now = performance.now(), dt = autoT ? Math.min(0.25, (now - autoT) / 1000) : 0; autoT = now;
+  if (autoZ == null) autoZ = Math.min(ceil, Math.max(floor, 20));
+  const v = motion.vz || 0, JITTER = 0.5;                       // °/s over half a second: below this it's the phone's noise or a tremble
+  if (v > JITTER) { stillAt = 0; const want = Math.min(ceil, floor + (v - JITTER) * 3); if (want > autoZ) autoZ = autoZ + (want - autoZ) * Math.min(1, dt * 6); }
+  else { if (!stillAt) stillAt = now; if (now - stillAt > 700) autoZ = autoZ * Math.exp(-dt * 0.5); }   // after a moment's stillness, closes in by about a third a second   // closes in by about a third every second
+  autoZ = Math.min(ceil, Math.max(floor, autoZ));
+  return autoZ;
+}
 
 /**
  * Estimated pointing uncertainty (arcmin, ~1σ) at a target, built only from measured numbers:
@@ -1279,6 +1307,13 @@ function autoRadius(cur, tgt) {
   if (!cur || chartCentre === 'target') return Math.max(half * 4, 5);
   return Math.min(45, Math.max(half * 3, sepDeg(cur.alt, cur.az, tgt.alt, tgt.az) * 1.3));
 }
+/** One tap on an eyepiece under the chart: use it, and let the chart close in on its field. */
+function pickEyepiece(i) {
+  state.ep = i; save(); eyeT = 0; setZoom(null); autoZ = null;
+  document.querySelectorAll('#ep-quick [data-epq]').forEach((c) => c.classList.toggle('on', +c.dataset.epq === i));
+  document.querySelectorAll('#ep-chips [data-ep]').forEach((c) => c.classList.toggle('on', +c.dataset.ep === i));
+  const ep = eyepiece(); toast(`${ep.name} · ${(profile().fl / ep.fl).toFixed(0)}× · ${(tfov(ep) * 60).toFixed(0)}′ field`, 2000);
+}
 /** Eyepiece button: each tap moves to the next eyepiece in the cycle (Setup > Eyepieces, "Cycle" ticks) and zooms the chart to its field. */
 function cycleEyepiece() {
   const eps = profile().eyepieces;
@@ -1299,7 +1334,8 @@ function bindChartControls() {
   const on = (id, f) => { const b = $('#' + id); if (b) b.onclick = f; };
   on('z-in', () => setZoom((zoom ?? cv._lastView) / 1.6));
   on('z-out', () => setZoom((zoom ?? cv._lastView) * 1.6));
-  on('z-auto', () => { setZoom(null); toast('Zoom fits the distance to the target'); });
+  on('z-auto', () => { setZoom(null); toast('Auto zoom: closes in while the scope is still, widens as you move it', 3500); });
+  document.querySelectorAll('#ep-quick [data-epq]').forEach((b) => b.onclick = () => pickEyepiece(+b.dataset.epq));
   on('z-hz', () => { state.hzShow = state.hzShow === false; save(); const b = $('#z-hz'); b.classList.toggle('on', state.hzShow); b.textContent = state.hzShow ? 'Blocked sky: shown' : 'Blocked sky: hidden'; toast(state.hzShow ? 'Hatching on: sky hidden from this spot is marked. Targets behind it stay off your suggestions.' : 'Hatching off. Targets behind your blocked sky still stay off your suggestions.', 4500); });
   on('z-lock', () => { state.zoomLock = !state.zoomLock; save(); const b = $('#z-lock'); b.classList.toggle('on', state.zoomLock); b.textContent = state.zoomLock ? 'Zoom locked' : 'Lock zoom'; toast(state.zoomLock ? 'Zoom locked — it won\'t zoom out while you move' : 'Zoom unlocked — zooms out while you move'); });
   on('z-ep', cycleEyepiece);
@@ -1363,9 +1399,17 @@ function drawReticle(cur, tgt, o, opt = {}) {
   const U = guess ? (src === 'compass' ? guessUncertainty() : null) : cur ? pointingUncertainty(tgt) : null;   // arcmin
   minViewGuess = !!guess;
   minView = guess ? Math.max(5, U ? 3 * U / 60 : 0) : U ? Math.max(ZMIN, Math.min(ZMAX, 3 * U / 60)) : ZMIN;   // a guess never zooms in past 5°     // never zoom tighter than ~3× what the phone can know
-  let view = opt.view ?? zoom ?? (!cur && !opt.canvas ? 25 : autoRadius(cur, tgt)); let limited = !opt.view && view < minView; if (limited) view = minView;
-  if (!opt.view) {                                                   // zoom out while slewing (unless locked), ease back when settled
-    if (motion.moving && !state.zoomLock) { view = Math.max(view, Math.min(50, Math.max(20, motion.v * 8))); limited = false; }
+  let view, limited = false;
+  if (opt.view) view = opt.view;
+  else if (zoom != null) view = zoom;                                  // by hand: anything from ZMIN up
+  else if (!cur) view = 25;
+  else {                                                              // automatic: follows the motion of the scope
+    const floor = Math.max(guess ? minView : 0, half * 2.2, tgt && chartCentre !== 'target' && !opt.noTarget ? Math.min(45, sepDeg(cur.alt, cur.az, tgt.alt, tgt.az) * 1.25) : 0);
+    view = state.zoomLock && tgt ? Math.max(floor, autoRadius(cur, tgt)) : motionZoom(floor, 50);
+    limited = false;
+  }
+  const pastPhone = !opt.view && cur && view < minView * 0.9;     // closer than the phone can know: say so; the dashed circle shows the uncertainty
+  if (!opt.view) {
     dispView = dispView ? Math.exp(Math.log(dispView) + (Math.log(view) - Math.log(dispView)) * 0.18) : view;
     if (Math.abs(Math.log(dispView / view)) < 0.01) dispView = view;
     view = dispView;
@@ -1394,6 +1438,8 @@ function drawReticle(cur, tgt, o, opt = {}) {
     if (top.length > 1) hzFill(c, top, bot, col);
   }
 
+  // Text scales with the canvas: about 15 px on a phone screen for names (Build 112; it was about 9 px).
+  const FS = W / 800, f = (px, w = '') => `${w} ${Math.round(px * FS)}px system-ui`.trim();
   // star field + constellation figures
   const magLim = view <= 2 ? 8 : Math.max(4, 8 - 3.06 * Math.log10(view / 2)); // ~8 at eyepiece/finder scale, ~4.4 at 30°
   const field = sky.fieldNear(centre.alt, centre.az, view * 1.5, magLim);
@@ -1407,8 +1453,8 @@ function drawReticle(cur, tgt, o, opt = {}) {
       if (a.r < view) { (cen[con] ||= [0, 0, 0]); cen[con][0] += a.x; cen[con][1] += a.y; cen[con][2]++; }
     }
     c.stroke();
-    if (view > 8) { c.fillStyle = col(120, 20, 0); c.font = 'italic 22px system-ui'; c.textAlign = 'center';
-      for (const [con, [x, y, n]] of Object.entries(cen)) if (n >= 2) c.fillText(con, x / n, y / n + 30); }
+    if (view > 8) { c.fillStyle = col(120, 20, 0); c.font = f(30, 'italic'); c.textAlign = 'center';
+      for (const [con, [x, y, n]] of Object.entries(cen)) if (n >= 2) c.fillText(con, x / n, y / n + 40); }
   }
   for (const [, q] of P) {
     if (q.mag > magLim) continue;
@@ -1417,12 +1463,21 @@ function drawReticle(cur, tgt, o, opt = {}) {
   }
 
   drawZones(c, proj, view, col, s);
-  // catalog objects, asterisms, named stars
-  c.font = '20px system-ui'; c.textAlign = 'left';
+  // catalog objects, asterisms, named stars. Labels thin out as the chart widens: only the brightest when zoomed out,
+  // more as you close in; a label that would sit on another is skipped. The target is always labelled (drawn last).
+  const boxes = [], free = (x, y, w, h) => { for (const b of boxes) if (x < b[0] + b[2] && x + w > b[0] && y < b[1] + b[3] && y + h > b[1]) return false; boxes.push([x, y, w, h]); return true; };
+  const starLim = view >= 30 ? 1.0 : view >= 15 ? 1.8 : view >= 7 ? 2.8 : view >= 3 ? 4.5 : 9;        // label named stars to this magnitude
+  const label = (txt, x, y, px, weight, fill) => { c.font = f(px, weight); const w = c.measureText(txt).width, h = px * FS; if (!free(x - 2, y - h, w + 4, h + 6)) return; c.fillStyle = fill; c.fillText(txt, x, y); };
+  c.textAlign = 'left';
+  const todo = [];
   for (const n of sky.objects) {
     if (n === o || n.alt == null || n.alt < -2 || Math.abs(n.alt - centre.alt) > view * 1.2) continue;
     const q = proj(n); if (!q || q.r > view) continue;
-    const star = n.key.startsWith('st:'), aster = n.t === 'AS';
+    todo.push([n, q]);
+  }
+  todo.sort((a, b) => (b[0].planet ? 1 : 0) - (a[0].planet ? 1 : 0) || (a[0].mag ?? 9) - (b[0].mag ?? 9));   // brightest claim their label space first
+  for (const [n, q] of todo) {
+    const star = n.key.startsWith('st:'), aster = n.t === 'AS', mess = n.cats && n.cats.some((x) => /^M\d/.test(x));
     if (star && n.mag != null && n.mag <= magLim) {                    // named stars in their own colour (toward Day; red at Night)
       const sc = starTint(STAR_CLASS[n.id], 1, k);
       if (sc) { c.fillStyle = sc; c.beginPath(); c.arc(q.x, q.y, Math.max(1.6, (magLim + 1.2 - n.mag) * 2.1) + 0.6, 0, 7); c.fill(); }
@@ -1431,13 +1486,13 @@ function drawReticle(cur, tgt, o, opt = {}) {
       const rr = n.maj ? Math.max(8, n.maj / 120 * s) : 10;
       if (rr > Rpx * 1.5 || rr < 6 || view > 20) continue;
       c.strokeStyle = col(150, 40, 0); c.lineWidth = 2; c.setLineDash([6, 6]); c.beginPath(); c.arc(q.x, q.y, rr, 0, 7); c.stroke(); c.setLineDash([]);
-      c.fillStyle = col(170, 50, 10); c.fillText(n.label, q.x + Math.min(rr, 40) + 4, q.y - 4); continue;
+      if (view < 12) label(n.label, q.x + Math.min(rr, 40) + 6, q.y - 6, 26, '', col(170, 50, 10)); continue;
     }
-    if (!star && !n.planet && view > 25 && !(n.cats && n.cats.some((x) => /^M\d/.test(x)))) continue;
+    if (!star && !n.planet && view > 25 && !mess) continue;
     if (!star && !n.planet) { c.strokeStyle = col(160, 20, 0); c.lineWidth = 2; const rr = n.maj ? Math.max(5, n.maj / 120 * s) : 5; c.beginPath(); c.arc(q.x, q.y, rr, 0, 7); c.stroke(); }
-    if (n.planet) { c.fillStyle = col(255, 90, 40); c.beginPath(); c.arc(q.x, q.y, 7, 0, 7); c.fill(); }
-    const show = (star && (view < 30 || (n.mag ?? 9) < 1.5)) || n.planet || view < 12 || (view < 30 && n.cats && n.cats.some((x) => /^M\d/.test(x)));
-    if (show) { c.fillStyle = col(star || n.planet ? 210 : 150, 30, 10); c.fillText(n.label, q.x + 9, q.y - 7); }
+    if (n.planet) { c.fillStyle = col(255, 90, 40); c.beginPath(); c.arc(q.x, q.y, 9, 0, 7); c.fill(); }
+    const show = n.planet || (star && (n.mag ?? 9) <= starLim) || (mess && view < 15) || (!star && view < 5);
+    if (show) label(n.label, q.x + 12, q.y - 9, n.planet || (star && (n.mag ?? 9) < 1.5) ? 34 : 30, n.planet ? '600' : '', col(star || n.planet ? 220 : 160, 30, 10));
   }
   let sunNote = null;                                // its warning is drawn last, on top of the scope marker
   // The Sun: big and impossible to miss whenever it is above the horizon, with the one rule that matters.
@@ -1463,9 +1518,11 @@ function drawReticle(cur, tgt, o, opt = {}) {
 
   // frame, scale, eyepiece field (centred on the scope), scope marker when centred on target
   c.strokeStyle = col(70); c.lineWidth = 2; c.beginPath(); c.arc(cx, cy, Rpx, 0, 7); c.stroke();
-  c.fillStyle = col(130); c.font = '24px system-ui'; c.textAlign = 'left';
-  c.fillText(`${view >= 2 ? view.toFixed(view < 10 ? 1 : 0) + '°' : (view * 60).toFixed(0) + '′'} radius · stars to mag ${magLim.toFixed(1)}${zoom == null ? ' · auto' : ''}`, 12, 30);
-  if (limited && !guess) { c.fillStyle = col(200, 40, 15); c.fillText(`Zoom limited by phone accuracy (±${fmt.am(U)})`, 12, H - 16); }
+  c.fillStyle = col(140); c.font = f(28); c.textAlign = 'left';
+  c.fillText(`${view >= 2 ? (2 * view).toFixed(view < 5 ? 1 : 0) + '°' : (2 * view * 60).toFixed(0) + '′'} across${zoom == null && !opt.view ? ' · auto' : ''}`, 12, 32);
+  c.fillStyle = col(200, 40, 15); c.font = f(26);
+  if (limited && !guess && U) c.fillText(`Auto zoom stops at the phone's accuracy (±${fmt.am(U)})`, 12, H - 16);
+  else if (pastPhone) c.fillText(guess ? 'Closer than the rough position allows: align first' : U ? `Closer than the phone's accuracy (±${fmt.am(U)})` : '', 12, H - 16);
   // Unmistakable label whenever the chart is not showing a known pointing: a best guess, or no pointing at all.
   const banner = opt.noBanner ? null : guess ? ['NOT ALIGNED YET — ROUGH POSITION',
     src === 'hand' ? 'Direction set by hand · align to make it accurate' : src === 'assumed' ? 'No compass reading, assuming south · align to fix it'
@@ -1483,7 +1540,8 @@ function drawReticle(cur, tgt, o, opt = {}) {
   if (scope && U) { c.strokeStyle = col(200, 40, 15); c.lineWidth = 2; c.setLineDash([8, 8]); c.beginPath(); c.arc(scope.x, scope.y, U / 60 * s, 0, 7); c.stroke(); c.setLineDash([]); }
   if (scope) {
     c.strokeStyle = col(230, 50, 25); c.lineWidth = 3; if (guess) c.setLineDash([10, 8]); c.beginPath(); c.arc(scope.x, scope.y, Math.max(5, half * s), 0, 7); c.stroke(); c.setLineDash([]);
-    if (guess) { c.fillStyle = col(230, 50, 25); c.font = 'bold 22px system-ui'; c.textAlign = 'center'; c.fillText(opt.noBanner ? 'Not aligned yet (compass)' : 'Not aligned yet', scope.x, scope.y + Math.max(28, half * s + 26)); c.textAlign = 'left'; }
+    if (guess) { c.fillStyle = col(230, 50, 25); c.font = f(28, 'bold'); c.textAlign = 'center'; c.fillText(opt.noBanner ? 'Not aligned yet (compass)' : 'Not aligned yet', scope.x, scope.y + Math.max(28, half * s + 26)); c.textAlign = 'left'; }
+    if (half * s > 40) { c.fillStyle = col(230, 50, 25); c.font = f(24); c.textAlign = 'center'; c.fillText(eyepiece().name, scope.x, scope.y - half * s - 10); c.textAlign = 'left'; }
     const L = Math.max(14, half * s * 0.35); c.beginPath(); c.moveTo(scope.x - L, scope.y); c.lineTo(scope.x + L, scope.y); c.moveTo(scope.x, scope.y - L); c.lineTo(scope.x, scope.y + L); c.stroke();
   }
 
@@ -1497,9 +1555,9 @@ function drawReticle(cur, tgt, o, opt = {}) {
   const sz = o.maj ? Math.max(10, (o.maj / 60) * s / 2) : 12;
   if (inside) { c.beginPath(); c.arc(x, y, sz, 0, 7); c.stroke(); }
   else { const a = Math.atan2(cy - y, x - cx); c.save(); c.translate(x, y); c.rotate(-a); c.beginPath(); c.moveTo(0, 0); c.lineTo(-30, -16); c.lineTo(-30, 16); c.closePath(); c.fill(); c.restore(); }
-  c.font = 'bold 26px system-ui';
+  c.font = f(38, 'bold');
   if (inside) { c.textAlign = 'left'; c.fillText(o.label, Math.min(x + sz + 12, W - c.measureText(o.label).width - 8), y + 8); }
-  else { c.textAlign = 'center'; const hw = c.measureText(o.label).width / 2 + 8; c.fillText(o.label, Math.min(W - hw, Math.max(hw, x)), y > cy ? y - 30 : y + 44); }
+  else { c.textAlign = 'center'; const hw = c.measureText(o.label).width / 2 + 8; c.fillText(o.label, Math.min(W - hw, Math.max(hw, x)), y > cy ? y - 34 : y + 54); }
 }
 
 // ---------------------------------------------------------------- ALIGN + SYNC
@@ -1577,6 +1635,81 @@ function starHelp(s) {
   if (!s.planet) { brighter = 0; for (const [, v] of sky.fieldNear(s.alt, s.az, 20, s.mag ?? 2)) if (v.mag < (s.mag ?? 2) - 0.05) brighter++; }
   return recogniseWords(s, sky.stars, brighter);
 }
+/**
+ * Add a star (or planet) to the alignment. Checks the tilt and, for a second star, the angle between them; a mismatch
+ * shows "Is that X?" on the Align page. opt.stay: stay on the current page when the alignment completes.
+ */
+function addAlignStar(o, force, opt = {}) {
+  const c = profile().cal;
+  const rerender = () => (tab === 'align' ? renderAlign() : showTab('align'));
+  const ob = makeObs(o); if (!ob) return toast('No sensor data yet');
+  if (!force) {
+    const raw = altAzFromVec(mulMV(ob.R, model.axis()));
+    const ca = checkAltitude(raw.alt, ob.alt, c ? 2.5 : 3.5);
+    if (!ca.ok) { assist.pending = { ob, o, msg: `The scope is at ${raw.alt.toFixed(0)}° altitude, but ${o.label} is at ${ob.alt.toFixed(0)}° right now — ${Math.abs(ca.diff).toFixed(0)}° ${ca.diff < 0 ? 'lower' : 'higher'} than expected. It may be a different star.` }; return rerender(); }
+    if (align.obs.length) {
+      const p0 = align.obs[0], r0 = altAzFromVec(mulMV(p0.R, model.axis()));
+      const cp = checkPair(r0, raw, { alt: p0.alt, az: p0.az }, { alt: ob.alt, az: ob.az });
+      if (!cp.ok) { assist.pending = { ob, o, msg: `The scope moved ${cp.measured.toFixed(0)}° from ${p0.label}, but ${o.label} is ${cp.expected.toFixed(0)}° from it. One of the two may be the wrong star.` }; return rerender(); }
+    }
+  }
+  assist.pending = null; align.obs.push(ob); align.confirm.push({ ...ob, kind: 'align' }); refit();
+  if (align.obs.length === 1 && $('#a-finck') && $('#a-finck').checked) { profile().finder = { star: o.label, t: Date.now() }; save(); }
+  if (align.obs.length === alignNeeded()) {
+    cue.onTarget(); toast(`Aligned on ${align.obs.map((x) => x.label).join(' and ')}`, 3000);
+    if (opt.stay) { if (tab === 'push') renderPush(); return; }
+    if (!flowStepDone('align')) showTab(state.target ? 'push' : 'find');
+    return;
+  }
+  toast(`Added ${o.label}. ${alignNeeded() - align.obs.length === 1 ? 'One more: point at another bright one far from it.' : ''}`, 4000);
+  if (opt.stay) { if (tab === 'push') renderPush(); return; }
+  renderAlign();
+}
+
+/**
+ * Bright things the scope could be on right now, best match first (Build 112). Height comes from gravity and is good
+ * to a degree or so even before alignment; direction comes from the alignment, else the compass (rough), else nothing,
+ * when brightness decides between objects at the right height.
+ */
+function pointedCandidates(n = 4) {
+  const cur = pointing(); if (!cur) return { list: [], alt: null, how: 'none' };
+  const aligned = !!cur.ready, g = aligned ? null : guessPointing();
+  const az = aligned ? cur.az : g ? g.az : null, how = aligned ? 'aligned' : g ? 'compass' : 'height';
+  const azTol = aligned ? 8 : 45, altTol = aligned ? 6 : 4;
+  const list = [];
+  for (const o of sky.objects) {
+    if (o.alt == null || o.alt < 2) continue;
+    if (!(o.planet || (o.key.startsWith('st:') && (o.mag ?? 9) <= 3))) continue;
+    const dAlt = Math.abs(o.alt - cur.alt); if (dAlt > altTol) continue;
+    let dAz = null;
+    if (az != null) { dAz = Math.abs(wrap180(o.az - az)) * Math.cos(o.alt * D2R); if (dAz > azTol) continue; }
+    const score = dAlt / 1.5 + (dAz != null ? dAz / (azTol / 4) : 0) + (o.mag ?? 2) * 0.35;
+    list.push({ o, dAlt, dAz, sep: az != null ? sepDeg(cur.alt, az, o.alt, o.az) : null, score });
+  }
+  return { list: list.sort((x, y) => x.score - y.score).slice(0, n), alt: cur.alt, how };
+}
+/** "What am I pointing at?": the app's best guesses, and one tap to align or sync on the right one. */
+function openWhatsThis(from = tab) {
+  const draw = () => {
+    const r = pointedCandidates(), needAlign = state.mode !== 'compass' && align.obs.length < alignNeeded();
+    const verb = needAlign ? (align.obs.length ? 'use it as the second alignment star' : 'align on it') : 'sync on it';
+    dlgCard().innerHTML = `<h3 style="margin-top:0">What is the scope pointing at?</h3>
+      ${r.alt == null ? '<p>No motion-sensor reading yet. Put the phone on the telescope and try again.</p>' : `
+      <p class="small" style="margin:0 0 8px">Centre the bright thing in the eyepiece first. The scope is tilted <b>${r.alt.toFixed(0)}°</b> up${r.how === 'compass' ? ', and the compass says roughly ' + compassName(guessPointing().az) : ''}.
+      ${r.how === 'height' ? 'Without a compass the app goes by height and brightness, so check the name.' : r.how === 'compass' ? 'The compass is rough, so check the name.' : ''}</p>
+      ${r.list.length ? `<div class="whatlist">${r.list.map((c, i) => `<button class="${i === 0 ? 'primary' : ''}" data-wk="${esc(c.o.key)}"><b>${esc(c.o.label)}</b>${c.o.name && c.o.name !== c.o.label ? ' · ' + esc(c.o.name) : ''}<span class="small muted">${c.o.planet ? (c.o.id === 'Moon' ? 'the Moon' : 'planet') : 'star'}, magnitude ${(+c.o.mag).toFixed(1)} · ${c.o.alt.toFixed(0)}° up ${compassName(c.o.az)}${i === 0 ? ' · best match' : ''}</span></button>`).join('')}</div>
+        <p class="muted small">Tap the right one to ${verb}.</p>`
+      : `<p>Nothing bright (stars to magnitude 3, planets, the Moon) is at that height${r.how !== 'height' ? ' in that direction' : ''}. Is the phone sitting firmly on the tube?</p>`}`}
+      <div class="btnrow"><button id="wt-again">Look again</button><button id="wt-close">Close</button></div>`;
+    dlgCard().querySelectorAll('[data-wk]').forEach((b) => b.onclick = () => {
+      const o = sky.objects.find((x) => x.key === b.dataset.wk); closeDlg(); if (!o) return;
+      if (needAlign) addAlignStar(o, false, { stay: from === 'push' });
+      else { doSync(o); if (tab === 'push') renderPush(); else if (tab === 'align') renderAlign(); }
+    });
+    $('#wt-again').onclick = draw; $('#wt-close').onclick = closeDlg;
+  };
+  refreshSky(true); draw(); dlg().classList.remove('hidden');
+}
 function renderAlign() {
   refreshSky(true);
   const el = $('#tab-align'); const c = profile().cal; const f = align.fit;
@@ -1590,7 +1723,7 @@ function renderAlign() {
     assistHTML = `<div class="muted small">Step ${done + 1} of ${need}${need === 2 && done === 0 ? ' · two stars teach the app how the phone sits on the tube' : ''}</div>
       <div class="target-h" style="margin:2px 0"><span class="name">${esc(s.label)}</span><span class="muted">${s.planet ? 'a planet' : 'a bright star'}</span></div>
       <p style="margin:2px 0">${esc(cap1(starHelp(s)))}. Look ${esc(whereWords(s.alt, s.az))}.</p>
-      <p class="infield" id="a-live"></p>
+      <div class="alguide" id="a-guide" aria-live="polite"><svg viewBox="0 0 100 100" class="alarrow" id="a-arrow" aria-hidden="true"><path class="ar" d="M50 6 L84 46 L62 46 L62 94 L38 94 L38 46 L16 46 Z"/><g class="ok"><circle cx="50" cy="50" r="34"/><circle cx="50" cy="50" r="8"/></g></svg><div><div class="algbig" id="a-live">Waiting for sensors…</div><div class="small" id="a-sub">${esc(s.label)}</div></div></div>
       <canvas id="a-chart" class="chart" width="600" height="600"></canvas>
       ${done === 0 ? finderHowHTML(s.label, !profile().finder, 'a-finck') : ''}
       <p class="muted small">Get it in the red-dot finder first, then centre it in the eyepiece and tap <b>It's centred</b>. Not sure it's the right star? Tap <b>Different star</b>.</p>`;
@@ -1604,6 +1737,7 @@ function renderAlign() {
     ${state.mounting === 'camera' && state.mode !== 'compass' ? `<div class="card"><b>Your phone looks along the tube</b><p class="muted small" style="margin:4px 0 8px">The camera can do this for you: no star to find or centre.</p><button id="a-cam" class="primary">${profile().camBore ? 'Align with the camera' : 'Line up and align with the camera'}</button></div>` : ''}
     ${state.mode === 'compass' ? `<p class="muted">Compass mode is on: azimuth comes from the magnetometer. Star alignment below uses the gyro instead and is usually more accurate — switch in Setup.</p>` : ''}
     ${assistHTML}
+    ${assist.pending ? '' : `<div class="card whatcard"><div><b>Already on something bright?</b><div class="muted small">A planet or bright star you know. Centre it and the app will guess which one it is.</div></div><button id="a-what">What am I on?</button></div>`}
     <details class="more" id="a-tools" ${state.alignTools ? 'open' : ''}><summary>Details and tools</summary>
     ${done ? `<p class="muted small">How well each star fits the alignment${f ? ` (overall ${fmt.am(f.rms * 60)}; ′ is a sixtieth of a degree)` : ''}. Tap ✕ to drop one.</p><table class="res"><tr><th>Star</th><th>Height</th><th>Off by</th><th></th></tr>${align.obs.map((o, i) => `<tr><td>${esc(o.label)}</td><td>${o.alt.toFixed(0)}°</td><td>${f ? fmt.am(f.resid[i] * 60) : ''}</td><td><button data-del="${i}">✕</button></td></tr>`).join('')}</table>` : ''}
     ${align.confirm.length ? `<div class="card"><h3 style="margin-top:0">Sky consistency</h3>
@@ -1626,28 +1760,9 @@ function renderAlign() {
   bindBack(el);
   $('#a-tools').ontoggle = (e) => { state.alignTools = e.target.open; save(); };
   if ($('#a-find')) $('#a-find').onclick = () => showTab('find');
+  if ($('#a-what')) $('#a-what').onclick = () => openWhatsThis('align');
   if ($('#a-cam')) $('#a-cam').onclick = () => { if (!camWiz && !profile().camBore) camWiz = { step: 'start', star: null }; showTab('camera'); };
-  const addStar = (o, force) => {
-    const ob = makeObs(o); if (!ob) return toast('No sensor data yet');
-    if (!force) {
-      const raw = altAzFromVec(mulMV(ob.R, model.axis()));
-      const ca = checkAltitude(raw.alt, ob.alt, c ? 2.5 : 3.5);
-      if (!ca.ok) { assist.pending = { ob, o, msg: `The scope is at ${raw.alt.toFixed(0)}° altitude, but ${o.label} is at ${ob.alt.toFixed(0)}° right now — ${Math.abs(ca.diff).toFixed(0)}° ${ca.diff < 0 ? 'lower' : 'higher'} than expected. It may be a different star.` }; return renderAlign(); }
-      if (align.obs.length) {
-        const p0 = align.obs[0], r0 = altAzFromVec(mulMV(p0.R, model.axis()));
-        const cp = checkPair(r0, raw, { alt: p0.alt, az: p0.az }, { alt: ob.alt, az: ob.az });
-        if (!cp.ok) { assist.pending = { ob, o, msg: `The scope moved ${cp.measured.toFixed(0)}° from ${p0.label}, but ${o.label} is ${cp.expected.toFixed(0)}° from it. One of the two may be the wrong star.` }; return renderAlign(); }
-      }
-    }
-    assist.pending = null; align.obs.push(ob); align.confirm.push({ ...ob, kind: 'align' }); refit();
-    if (align.obs.length === 1 && $('#a-finck') && $('#a-finck').checked) { profile().finder = { star: o.label, t: Date.now() }; save(); }
-    if (align.obs.length === alignNeeded()) {
-      cue.onTarget(); toast(`Aligned on ${align.obs.map((x) => x.label).join(' and ')}`, 3000);
-      if (!flowStepDone('align')) showTab(state.target ? 'push' : 'find');
-      return;
-    }
-    toast(`Added ${o.label}`); renderAlign();
-  };
+  const addStar = (o, force) => addAlignStar(o, force);
   if ($('#a-ok')) $('#a-ok').onclick = () => addStar(s);
   if ($('#a-skip')) $('#a-skip').onclick = () => { assist.skip.add(s.key); renderAlign(); };
   if ($('#a-retry')) $('#a-retry').onclick = () => { assist.pending = null; renderAlign(); };
@@ -1715,15 +1830,27 @@ function updateAlign() {
   const live = $('#a-live'); if (!live) return;
   const s = suggestedStar(); if (!s) return;
   const tgt = sky.altAz(s); const cur = pointing();
-  if (!cur) { live.textContent = 'Waiting for sensors…'; }
+  const arrow = $('#a-arrow'), sub = $('#a-sub');
+  // The big arrow at the top of the page (it stays put while the page scrolls): which way to move the scope.
+  // Angle 0 = up; turning right is clockwise. Before alignment only up/down is certain unless the compass gives a guess.
+  const point = (deg, close) => { if (!arrow) return; arrow.classList.toggle('close', !!close); arrow.classList.toggle('none', deg == null && !close); if (deg != null) arrow.style.transform = `rotate(${deg.toFixed(0)}deg)`; };
+  if (!cur) { live.textContent = 'Waiting for sensors…'; point(null); }
   else if (!cur.ready) {               // altitude is known before alignment
     const d = tgt.alt - cur.alt;
     const gp = guessPointing(), gd = gp ? guidance(gp, tgt) : null;
-    const azTxt = gd ? (Math.abs(gd.dAz) < 3 ? 'direction looks about right (compass guess)' : `swing ≈${Math.abs(gd.dAz).toFixed(0)}° ${gd.dAz > 0 ? 'right' : 'left'} (compass guess)`) : `swing to the ${compassName(tgt.az)}`;
-    live.textContent = Math.abs(d) < 1.5 ? `Height is right (${cur.alt.toFixed(0)}°) — ${azTxt}` : `${d > 0 ? 'Raise' : 'Lower'} about ${Math.abs(d).toFixed(0)}° · ${azTxt}`;
+    const azRight = gd && Math.abs(gd.dAz) >= 3;
+    if (Math.abs(d) < 1.5 && !azRight) { live.textContent = gd ? 'Height right, direction about right' : `Height right: now swing to the ${compassName(tgt.az)}`; point(gd ? 0 : null, !!gd); }
+    else {
+      const dx = gd ? wrap180(gd.dAz) * Math.cos(tgt.alt * D2R) : 0;
+      point(Math.atan2(dx, d) * 180 / Math.PI);
+      live.textContent = [Math.abs(d) >= 1.5 ? `${d > 0 ? 'Raise' : 'Lower'} ${Math.abs(d).toFixed(0)}°` : '', azRight ? `swing ${Math.abs(gd.dAz).toFixed(0)}° ${gd.dAz > 0 ? 'right' : 'left'}` : !gd ? `face ${compassName(tgt.az)}` : ''].filter(Boolean).join(' · ');
+    }
+    if (sub) sub.textContent = `${s.label} · ${gd ? 'left/right is a rough compass guess' : 'up/down is exact; no compass for left/right'}`;
   } else {
     const g = guidance(cur, tgt);
-    live.textContent = g.sep < 1 ? 'Should be in the finder — centre it' : `${fmtDelta(g.dAz)} ${g.dAz > 0 ? 'right' : 'left'}, ${fmtDelta(g.dAlt)} ${g.dAlt > 0 ? 'up' : 'down'}`;
+    if (g.sep < 1) { point(0, true); live.textContent = 'In the finder: centre it'; }
+    else { point(Math.atan2(g.dAz * Math.cos(tgt.alt * D2R), g.dAlt) * 180 / Math.PI); live.textContent = `${fmtDelta(g.dAz)} ${g.dAz > 0 ? 'right' : 'left'}, ${fmtDelta(g.dAlt)} ${g.dAlt > 0 ? 'up' : 'down'}`; }
+    if (sub) sub.textContent = `${s.label} · ${g.sep.toFixed(g.sep < 10 ? 1 : 0)}° away`;
   }
   drawReticle(cur, tgt, s, { canvas: $('#a-chart'), view: 25, centre: 'target', noBanner: true });
 }
@@ -2029,10 +2156,11 @@ function renderRoute() {
   if (!S.length) { el.innerHTML = `<button class="back" id="rt-back">‹ Plan</button><h2>Route preview</h2><p>Add some targets to the plan first.</p>`; $('#rt-back').onclick = () => showTab('plan'); return; }
   const bad = S.filter((s) => s.blocked && s.kind === 'target');
   el.innerHTML = `<button class="back" id="rt-back">‹ Plan</button><h2>Route preview</h2>
-    <p class="muted small" style="margin:-6px 0 4px">${esc(planTitle(P))} · whole sky: rim = horizon, middle = overhead${horizonNow() ? ', hatched = blocked' : ''}</p>
+    <p class="muted small" style="margin:-6px 0 4px">${esc(planTitle(P))}</p>
+    <div class="card rtcard" id="rt-card"></div>
     <div class="rtgrid"><canvas id="rt-map" class="chart rtmap" width="800" height="800"></canvas><div id="rt-views" class="rtviews"></div></div>
-    <p class="small" style="text-align:center;margin:4px 0">${bad.length ? `<b>${bad.length} stop${bad.length === 1 ? ' is' : 's are'} hidden at the planned time:</b> ${bad.map((s) => esc(s.o.label)).join(', ')}` : horizonNow() ? 'The route stays clear of your blocked sky.' : 'No blocked sky marked for this spot.'}</p>
-    <div class="card" id="rt-card"></div>
+    ${bad.length ? `<p class="small" style="text-align:center;margin:4px 0"><b>${bad.length} stop${bad.length === 1 ? ' is' : 's are'} behind your blocked sky at the planned time:</b> ${bad.map((s) => esc(s.o.label)).join(', ')}</p>` : ''}
+    <p class="muted small" style="text-align:center;margin:4px 0">Map: the whole sky, rim = horizon, middle = overhead${horizonNow() ? ', hatched = your blocked sky' : ''}.</p>
     <div class="actionbar"><button id="rt-prevb" class="nav" aria-label="Previous stop">‹</button><button id="rt-play" class="primary wide"></button><button id="rt-nextb" class="nav" aria-label="Next stop">›</button></div>`;
   $('#rt-back').onclick = () => showTab('plan');
   const go = (i) => { route.i = Math.max(0, Math.min(S.length - 1, i)); route.f = 0; route.t0 = performance.now(); routeCard(); };
@@ -2058,7 +2186,7 @@ function routeCard() {
   vb.querySelectorAll('canvas').forEach((cv) => {
     try {
       const e = views[+cv.dataset.j][0], tg = sky.altAz(o, s.t);
-      drawEyepiece(cv, sky, o.pairs && o.key.startsWith('st:') ? { ...o, t: 'DS' } : o, tg, e, p, { matrix: state.rot180 ? viewMatrix(p, tg) : null, bright: vis(), nelm: skyNelm(), env: eyeEnv(tg), refExit: p.aperture / (p.fl / wide.fl), thumb: true, date: s.t });
+      drawEyepiece(cv, sky, o.pairs && o.key.startsWith('st:') ? { ...o, t: 'DS' } : o, tg, e, p, { matrix: state.rot180 ? viewMatrix(p, tg) : null, bright: vis(), nelm: skyNelm(), env: eyeEnv(tg, s.t), refExit: p.aperture / (p.fl / wide.fl), thumb: true, date: s.t });
     } catch (err) { console.error(err); }
   });
   const b = $('#rt-play'); if (b) b.textContent = route.playing ? 'Pause' : route.i >= S.length - 1 ? 'Play again' : 'Play';
@@ -2809,10 +2937,10 @@ function renderSetup() {
 // ---- Light pollution where you are: the map estimate, the sky check (if any), and a small map of the area (Build 98)
 const BORTLE_COL = ['', '#141414', '#3d4466', '#2457c9', '#2f9e44', '#e3d03a', '#f08a24', '#d8321f', '#f2a6cf', '#ffffff'];
 const BORTLE_NAME = ['', 'Excellent dark sky', 'Truly dark sky', 'Rural sky', 'Rural-suburban sky', 'Suburban sky', 'Bright suburban sky', 'Edge-of-city sky', 'City sky', 'Inner-city sky'];
-const LP_SPANS = [0.5, 1.25, 3];
+const LP_MIN = 0.012, LP_MAX = 3;                    // half-height of the map in degrees of latitude: about 3 km to 670 km tall
 // Towns to label on the light-pollution map so you can find your way around it (largest first; labels that would overlap are skipped).
 const LP_TOWNS = [['Chicago', 41.88, -87.63], ['New York', 40.71, -74.01], ['Toronto', 43.65, -79.38], ['Philadelphia', 39.95, -75.17], ['Montréal', 45.50, -73.57], ['Washington', 38.91, -77.04], ['Atlanta', 33.75, -84.39], ['Boston', 42.36, -71.06], ['Detroit', 42.33, -83.05], ['Dallas', 32.78, -96.80], ['Minneapolis', 44.98, -93.27], ['St. Louis', 38.63, -90.20], ['Baltimore', 39.29, -76.61], ['Charlotte', 35.23, -80.84], ['Pittsburgh', 40.44, -79.99], ['Cincinnati', 39.10, -84.51], ['Kansas City', 39.10, -94.58], ['Cleveland', 41.50, -81.69], ['Columbus', 39.96, -83.00], ['Indianapolis', 39.77, -86.16], ['Nashville', 36.16, -86.78], ['Ottawa', 45.42, -75.70], ['Milwaukee', 43.04, -87.91], ['Louisville', 38.25, -85.76], ['Memphis', 35.15, -90.05], ['Richmond', 37.54, -77.44], ['Raleigh', 35.78, -78.64], ['Oklahoma City', 35.47, -97.52], ['Buffalo', 42.89, -78.88], ['Québec', 46.81, -71.21], ['Winnipeg', 49.90, -97.14], ['Hamilton', 43.26, -79.87], ['Omaha', 41.26, -95.93], ['Rochester', 43.16, -77.61], ['Birmingham', 33.52, -86.80], ['Jacksonville', 30.33, -81.66], ['Grand Rapids', 42.96, -85.67], ['Toledo', 41.65, -83.54], ['Des Moines', 41.59, -93.62], ['Kitchener', 43.45, -80.49], ['London', 42.98, -81.25], ['Albany', 42.65, -73.76], ['Syracuse', 43.05, -76.15], ['Windsor', 42.31, -83.04], ['Madison', 43.07, -89.40], ['Lansing', 42.73, -84.56], ['Oshawa', 43.90, -78.86], ['Flint', 43.01, -83.69], ['Barrie', 44.39, -79.69], ['Guelph', 43.55, -80.25], ['Kingston', 44.23, -76.49], ['Erie', 42.13, -80.09], ['Green Bay', 44.51, -88.01], ['Sudbury', 46.49, -80.99], ['Duluth', 46.79, -92.10], ['Burlington', 44.48, -73.21], ['Thunder Bay', 48.38, -89.25], ['Peterborough', 44.30, -78.32], ['Niagara Falls', 43.09, -79.08], ['Sarnia', 42.97, -82.40], ['Sault Ste. Marie', 46.52, -84.33], ['North Bay', 46.31, -79.46], ['Traverse City', 44.76, -85.62], ['Orillia', 44.61, -79.42], ['Owen Sound', 44.57, -80.94], ['Huntsville', 45.33, -79.22]];                     // half-height of the map in degrees of latitude: ~55, 140, 330 km across
-let lpSpan = 1;
+let lpH = 1.25, lpC = null;                         // zoom (half-height, degrees) and centre (null = your spot)
 /** Setup → Location: one line, pointing to the full picture in the sky darkness check. */
 function renderLightHere() {
   const el = $('#s-lp'); if (!el) return;
@@ -2832,23 +2960,46 @@ function lightHereHTML(g, here) {
   if (!here) return `<p class="muted small">This spot is outside the built-in light-pollution map (it covers about 30°–50° N, 70°–100° W). The 30-second check below measures your sky anywhere.</p>${checkLine}${oldLine}`;
   return `<p class="small">Light-pollution map: <b>about Bortle ${here.bortle}</b> — ${BORTLE_NAME[here.bortle].toLowerCase()}. Sky brightness about ${here.sqm.toFixed(1)} mag/arcsec², stars to about magnitude ${here.nelm.toFixed(1)} overhead on a clear moonless night.</p>
     ${checkLine}${oldLine}
-    <canvas class="lpmap" aria-label="Map of estimated sky brightness around you"></canvas>
+    <canvas class="lpmap" aria-label="Map of estimated sky brightness around you. Pinch or use Closer and Wider to zoom, drag to move."></canvas>
     <div class="lpleg">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map((b) => `<span><i style="background:${BORTLE_COL[b]}"></i>${b}</span>`).join('')}</div>
-    <div class="btnrow"><button class="lpless">Closer</button><button class="lpmore">Wider</button><button class="lpstreets">Hide streets</button></div>
+    <div class="btnrow"><button class="lpless">Closer</button><button class="lpmore">Wider</button><button class="lpme hidden">Back to me</button><button class="lpstreets">Hide streets</button></div>
+    <p class="muted small lpzoom" style="margin:0"></p>
     <p class="muted small">Bortle class, 1 darkest. The bright patches are towns: their light glows in the sky for tens of kilometres around them. Estimated from NASA Black Marble satellite night lights (${g.year || 'recent'}) in 5 km squares, so it can't show the dark side of a hill or a park in town. The 30-second check measures your actual sky.</p>`;
 }
 function wireLightMap(el, g) {
   const cv = el.querySelector('.lpmap'); if (!cv) return;
-  if (!townsLoaded()) loadTowns().then((T) => { if (T && cv.isConnected) drawLightMap(cv, g, { streets: streetsOn() }); });
-  let raf = 0;
+  if (!townsLoaded()) loadTowns().then((T) => { if (T && cv.isConnected) draw(); });
+  let raf = 0, view = null;
   const draw = () => {
-    raf = 0; const v = drawLightMap(cv, g, { streets: streetsOn(), onTile: () => { if (!raf && cv.isConnected) raf = requestAnimationFrame(draw); } });
-    el.querySelector('.lpless').disabled = lpSpan === 0; el.querySelector('.lpmore').disabled = lpSpan === LP_SPANS.length - 1;
+    raf = 0; if (!cv.isConnected) return;
+    view = drawLightMap(cv, g, { center: lpC || state.site, hLat: lpH, streets: streetsOn(), onTile: () => { if (!raf && cv.isConnected) raf = requestAnimationFrame(draw); } });
+    el.querySelector('.lpless').disabled = lpH <= LP_MIN * 1.01; el.querySelector('.lpmore').disabled = lpH >= LP_MAX * 0.99;
+    el.querySelector('.lpme').classList.toggle('hidden', !lpC);
+    const km = Math.round(lpH * 2 * 111), z = el.querySelector('.lpzoom');
+    if (z) z.textContent = `Map about ${km < 10 ? (lpH * 2 * 111).toFixed(1) : km} km top to bottom.${lpH < 0.1 ? ' Closer than the map\'s 5 km squares: the colours are smoothed between them, so use the streets to find your spot rather than to read the sky.' : ''}`;
     const sb = el.querySelector('.lpstreets'); if (sb) { sb.classList.toggle('hidden', navigator.onLine === false); sb.textContent = state.streets === false ? 'Show streets' : 'Hide streets'; }
   };
+  const redraw = () => { if (!raf) raf = requestAnimationFrame(draw); };
+  const zoomBy = (f) => { lpH = Math.min(LP_MAX, Math.max(LP_MIN, lpH * f)); redraw(); };
   const sb = el.querySelector('.lpstreets'); if (sb) sb.onclick = () => { state.streets = state.streets === false; save(); draw(); };
-  el.querySelector('.lpless').onclick = () => { lpSpan = Math.max(0, lpSpan - 1); draw(); };
-  el.querySelector('.lpmore').onclick = () => { lpSpan = Math.min(LP_SPANS.length - 1, lpSpan + 1); draw(); };
+  el.querySelector('.lpless').onclick = () => zoomBy(1 / 2.5);
+  el.querySelector('.lpmore').onclick = () => zoomBy(2.5);
+  el.querySelector('.lpme').onclick = () => { lpC = null; redraw(); };
+  // Drag to move, pinch (or the mouse wheel) to zoom.
+  const pts = new Map(); let g0 = null;
+  cv.style.touchAction = 'none';
+  const pair = () => { const [a, b] = [...pts.values()]; return { d: Math.hypot(a.x - b.x, a.y - b.y) }; };
+  cv.addEventListener('pointerdown', (e) => { cv.setPointerCapture(e.pointerId); pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    g0 = pts.size === 2 ? { pinch: pair().d, h: lpH } : { x: e.clientX, y: e.clientY, v: view }; });
+  cv.addEventListener('pointermove', (e) => {
+    if (!pts.has(e.pointerId) || !g0) return; pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pts.size >= 2 && g0.pinch) { const d = pair().d; if (d > 10) { lpH = Math.min(LP_MAX, Math.max(LP_MIN, g0.h * g0.pinch / d)); redraw(); } return; }
+    if (pts.size === 1 && g0.v) { const dx = e.clientX - g0.x, dy = e.clientY - g0.y; if (Math.hypot(dx, dy) < 4) return;
+      const c = g0.v.ll(g0.v.W / 2 - dx, g0.v.H / 2 - dy); lpC = { lat: Math.max(-80, Math.min(80, c.lat)), lon: c.lon }; redraw(); }
+  });
+  const up = (e) => { pts.delete(e.pointerId); g0 = pts.size === 1 ? (() => { const [p] = [...pts.values()]; return { x: p.x, y: p.y, v: view }; })() : null; };
+  cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
+  cv.addEventListener('wheel', (e) => { zoomBy(Math.exp(e.deltaY * 0.002)); e.preventDefault(); }, { passive: false });
   draw();
 }
 /** OpenStreetMap tiles, fetched only for what's on screen and kept for reuse (their usage policy: no bulk or offline
@@ -2889,7 +3040,7 @@ function drawLightMap(cv, g, opt = {}) {
   cv.width = W * dpr; cv.height = H * dpr; cv.style.height = H + 'px';
   const ctx = cv.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.lineJoin = 'round';
   // Web Mercator (as street maps use), scaled so the map is about 2·hLat degrees of latitude tall.
-  const c0 = opt.center || state.site, D = Math.PI / 180, hLat = opt.hLat || LP_SPANS[lpSpan];
+  const c0 = opt.center || state.site, D = Math.PI / 180, hLat = opt.hLat || lpH;
   const Sw = 180 * H * Math.cos(c0.lat * D) / hLat;                                // the whole world's width in pixels
   const mx = (lo) => (lo + 180) / 360 * Sw, my = (la) => (1 - Math.log(Math.tan(Math.PI / 4 + la * D / 2)) / Math.PI) / 2 * Sw;
   const ox = mx(c0.lon) - W / 2, oy = my(c0.lat) - H / 2;
@@ -3224,16 +3375,29 @@ const fcKey = (site, t) => site ? `${site.lat.toFixed(2)},${site.lon.toFixed(2)}
 /** The forecast for a place and the night containing `t`: { rows, ol } once loaded, { loading } while fetching, or null. */
 function fcFor(site, t) { return fcStore.get(fcKey(site, t)) || null; }
 /** Start fetching (once) and call `done` when it arrives. Only for nights the models cover (about 3 days ahead). */
+/** Apple Weather plug-in (iPhone app with the WeatherKit capability), or null. */
+function appleWeather() {
+  const C = window.Capacitor;
+  try { return C && C.isNativePlatform && C.isNativePlatform() && C.isPluginAvailable && C.isPluginAvailable('SkyWeather') ? C.Plugins.SkyWeather : null; } catch (e) { return null; }
+}
 function ensureForecast(site, t, done) {
-  if (!site || site.lat == null || site.lat < 20 || site.lat > 75 || site.lon > -40 || site.lon < -160) return null;     // GeoMet's models cover North America
+  if (!site || site.lat == null) return null;
+  const inCanadaModels = site.lat >= 20 && site.lat <= 75 && site.lon <= -40 && site.lon >= -160;   // GeoMet's models cover North America
+  const wk = appleWeather();
+  if (!inCanadaModels && !wk) return null;
   const k = fcKey(site, t); if (fcStore.has(k)) return fcStore.get(k);
   const n = sky.nightAt(t), from = n.naut || n.set, to = n.nautAm || n.rise;
   if (!from || !to || from.getTime() - Date.now() > 3.3 * 864e5 || to < Date.now()) return null;
   const rec = { loading: true }; fcStore.set(k, rec);
-  const rest = from < new Date();
-  hourlyForecast(site.lat, site.lon, hoursBetween(rest ? new Date() : from, to)).then((rows) => {
-    rec.loading = false; if (!rows) { rec.failed = true; return; }
-    rec.rows = rows;
+  const rest = from < new Date(), hours = hoursBetween(rest ? new Date() : from, to);
+  Promise.all([
+    inCanadaModels ? hourlyForecast(site.lat, site.lon, hours) : Promise.resolve(null),
+    wk && hours.length ? appleHourly(wk, site.lat, site.lon, hours[0], new Date(+hours[hours.length - 1] + 3600000)) : Promise.resolve(null),
+  ]).then(([eccc, apple]) => {
+    rec.loading = false;
+    const rows = mergeApple(eccc, apple, hours);
+    if (!rows) { rec.failed = true; return; }
+    rec.rows = rows; rec.eccc = !!eccc; rec.apple = apple ? apple.attribution || {} : null;
     rec.ol = outlook(rows, { moonUp: (h) => { const m = sky.moonInfo(h); return { up: m.alt > 0, frac: m.frac }; }, nelm: skyNelm(), fromCheck: !!skyQ(), restOfNight: rest });
     setSeeing(seeingNow()); planRows = null; rateCache.clear();
     if (done) done();
@@ -3305,25 +3469,27 @@ function glanceHTML(rec, n, t = new Date()) {
 /** The outlook card: verdict, what it suits, hour-by-hour strip, a hint and the credit Environment Canada asks for. */
 function outlookHTML(rec, { planStart = null, hint = true } = {}) {
   if (!rec) return '';
-  if (rec.loading) return `<div class="fc muted small">Checking Environment Canada's forecast for tonight…</div>`;
+  if (rec.loading) return `<div class="fc muted small">Checking tonight's forecast…</div>`;
   if (rec.failed || !rec.ol) return `<div class="fc muted small">No forecast right now (offline, or outside the forecast area).</div>`;
   const o = rec.ol, ic = o.kind === 'clear' ? ICON.star : o.kind === 'partly' ? ICON.half : ICON.cloud;
+  const hasHigh = !!(rec.apple && rec.rows.some((r) => r.ap && r.ap.high != null));
   const cells = rec.rows.map((r) => {
     const m = sky.moonInfo(r.t), cl = r.cloud == null ? null : Math.round(r.cloud);
     return `<div class="fch"><span>${r.t.toLocaleTimeString([], { hour: 'numeric' }).replace(/\s?([AP])M/i, (x, a) => a.toLowerCase())}</span>
       <span class="fcc" style="--c:${cl == null ? 0.3 : (cl / 100).toFixed(2)}" title="cloud">${cl == null ? '–' : cl + '%'}</span>
-      <span>${r.seeing ? r.seeing : '–'}</span><span>${r.transp ? r.transp : '–'}</span><span>${m.alt > 0 ? (m.frac > 0.4 ? '☾' : '·') : ''}</span></div>`;
+      <span>${r.seeing ? r.seeing : '–'}</span><span>${r.transp ? r.transp : '–'}</span><span>${m.alt > 0 ? (m.frac > 0.4 ? '☾' : '·') : ''}</span>${rec.apple ? `<span class="${r.ap && r.ap.temp - r.ap.dew <= 2.5 ? 'fcbad' : ''}">${r.ap ? Math.max(0, r.ap.temp - r.ap.dew).toFixed(0) + '°' : '–'}</span><span class="${r.ap && Math.max(r.ap.gust || 0, r.ap.wind) >= 25 ? 'fcbad' : ''}">${r.ap ? Math.round(Math.max(r.ap.gust || 0, r.ap.wind)) : '–'}</span>${hasHigh ? `<span>${r.ap && r.ap.high != null ? Math.round(r.ap.high) + '%' : '–'}</span>` : ''}` : ''}</div>`;
   }).join('');
   const hintText = o.hints[Math.floor(Date.now() / 864e5) % o.hints.length];
   return `<div class="fc">
     <div><b>${ic} ${esc(o.text)}</b></div>
     ${o.best.length ? `<div class="small">Best for: ${esc(o.best.join('; '))}.</div>` : ''}
+    ${o.extra && o.extra.warn && o.extra.warn.length ? `<ul class="fcwarn small">${o.extra.warn.map((w) => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}
     <details class="more"><summary>Hour by hour</summary>
-      <div class="fcgrid"><div class="fch lab"><span></span><span>Cloud</span><span>Steady</span><span>Clear air</span><span>Moon</span></div>${cells}</div>
-      <p class="muted small">Steady (seeing) and clear air (transparency) are out of 5. Environment Canada calibrated the steadiness forecast with 28–35 cm telescopes and says it can be a little pessimistic for smaller ones. Your own twinkle check beats it on the night.</p>
+      <div class="fcgrid"><div class="fch lab"><span></span><span>Cloud</span><span>Steady</span><span>Clear air</span><span>Moon</span>${rec.apple ? `<span>Dew gap</span><span>Gusts</span>${hasHigh ? '<span>High cloud</span>' : ''}` : ''}</div>${cells}</div>
+      <p class="muted small">${rec.eccc ? 'Steady (seeing) and clear air (transparency) are out of 5. Environment Canada calibrated the steadiness forecast with 28–35 cm telescopes and says it can be a little pessimistic for smaller ones. Your own twinkle check beats it on the night.' : 'Outside Environment Canada\'s area there is no steadiness or clear-air forecast: do the twinkle check on the night.'}${rec.apple ? ' Dew gap: how far the air is above its dew point; at 2° or less, expect dew (frost below freezing). Gusts in km/h.' : ''}</p>
     </details>
     ${hint ? `<p class="muted small iconline" style="margin:4px 0 0">${ICON.bulb}${esc(hintText)}</p>` : ''}
-    <p class="muted small fcattr">${esc(ATTRIB)} · <a href="${LICENCE_URL}" target="_blank" rel="noopener">licence</a></p>
+    <p class="muted small fcattr">${rec.eccc ? `${esc(ATTRIB)} · <a href="${LICENCE_URL}" target="_blank" rel="noopener">licence</a>` : ''}${rec.apple ? `${rec.eccc ? '<br>' : ''}<span class="wkmark">${rec.apple.markDark ? `<img src="${esc(rec.apple.markDark)}" alt="Apple Weather" height="12"${theme.shade > 0.5 ? ' style="filter:sepia(1) saturate(8) hue-rotate(-40deg) brightness(.6)"' : ''}>` : ' Weather'}</span> dew, wind${rec.eccc ? ', high cloud' : ' and cloud'} · <a href="${esc(rec.apple.legal || 'https://developer.apple.com/weatherkit/data-source-attribution/')}" target="_blank" rel="noopener">other data sources</a>` : ''}</p>
   </div>`;
 }
 function recordSeeing(v, how) {
@@ -3466,7 +3632,7 @@ function eyeEnv(tg, t = new Date()) {
 /** One eyepiece view filling the screen (tap a small preview). The eyepieces sit side by side on a track that scrolls
  *  and snaps natively, so the next one follows your finger and settles with the phone's own momentum. Same order as the
  *  previews (longest first). Redrawn every few seconds as the sky turns. Tap outside the picture, or ✕, to close. */
-function openEpZoom(o, epi) {
+function openEpZoom(o, epi, at0 = null) {
   const p = profile(); if (!p.eyepieces[epi]) return;
   const order = epsFor(o).map((x) => x.i);
   let at = Math.max(0, order.indexOf(epi));
@@ -3505,7 +3671,7 @@ function openEpZoom(o, epi) {
     $('#epz-t').textContent = `in the ${e.name} · ${(p.fl / e.fl).toFixed(0)}×${epFlag(o, e, p) ? ' · not recommended: ' + epFlag(o, e, p) : ''}`;
     $('#epz-dots').innerHTML = order.map((_, k) => `<i class="${k === at ? 'on' : ''}"></i>`).join('');
     $('#epz-prev').disabled = at === 0; $('#epz-next').disabled = at === order.length - 1;
-    $('#epz-note').textContent = r ? [r.note, `field ${r.tfov >= 1 ? r.tfov.toFixed(1) + '°' : (r.tfov * 60).toFixed(0) + '′'}`, r.sbEye < 90 ? `background ${r.sbEye.toFixed(1)} mag/arcsec²` : ''].filter(Boolean).join(' · ') : '';
+    $('#epz-note').textContent = r ? [r.note, `field ${r.tfov >= 1 ? r.tfov.toFixed(1) + '°' : (r.tfov * 60).toFixed(0) + '′'}`, at0 ? `at ${hm(at0)}` : '', r.sbEye < 90 ? `background ${r.sbEye.toFixed(1)} mag/arcsec²` : ''].filter(Boolean).join(' · ') : '';
     const advOn = !!(state.ui && state.ui.adv);
     box.classList.toggle('show-adv', advOn); box.querySelectorAll('[data-adv]').forEach((b) => b.classList.toggle('on', (b.dataset.adv === '1') === advOn));
     const f = advOn ? epFactors() : Object.fromEntries(EP_FACTORS.map(([k]) => [k, true])), raw = !Object.values(f).some(Boolean);
@@ -3519,9 +3685,9 @@ function openEpZoom(o, epi) {
   };
   const draw = () => {
     if (!box.isConnected) return clearInterval(timer);
-    const now = new Date(), tg = sky.altAz(o, now);
+    const now = at0 || new Date(), tg = sky.altAz(o, now);
     track.querySelectorAll('canvas').forEach((cv, k) => {
-      try { res[k] = drawEyepiece(cv, sky, o.pairs && o.key.startsWith('st:') ? { ...o, t: 'DS' } : o, tg, p.eyepieces[order[k]], p, { matrix: state.rot180 ? viewMatrix(p, tg) : null, bright: vis(), nelm: skyNelm(), env: eyeEnv(tg), date: now, factors: state.ui && state.ui.adv ? epFactors() : {} }); } catch (err) { console.error(err); }
+      try { res[k] = drawEyepiece(cv, sky, o.pairs && o.key.startsWith('st:') ? { ...o, t: 'DS' } : o, tg, p.eyepieces[order[k]], p, { matrix: state.rot180 ? viewMatrix(p, tg) : null, bright: vis(), nelm: skyNelm(), env: eyeEnv(tg, now), date: now, factors: state.ui && state.ui.adv ? epFactors() : {} }); } catch (err) { console.error(err); }
     });
     label();
   };
@@ -3568,6 +3734,17 @@ function alignCardHTML(o, inPlanAsSync) {
     <p><b>Nothing to study here, and that is the point.</b> In the eyepiece ${esc(o.label)} is one bright, sharp point at every magnification, so there are no eyepiece previews.</p>
     <p class="small">It is here because it is easy: bright enough to spot by eye in twilight or a city sky, and a single point centres exactly. ${inPlanAsSync ? 'Push to it, centre it in your lowest-power eyepiece, tap <b>Sync</b>, then carry on: the arrows to the targets after it get more accurate.' : 'Centre it in your lowest-power eyepiece and tap <b>Sync</b>: the arrows to whatever you look at next get more accurate.'}</p></div></div>`;
 }
+/**
+ * When to draw eyepiece previews for. A planned target: its best time in the session. Otherwise, in daylight or
+ * twilight, tonight once it is fully dark (if the target is up then), because the daytime sky hides everything.
+ * Otherwise now.
+ */
+function previewTime(o, row) {
+  const now = new Date();
+  if (row && row.best) return new Date(row.best);
+  try { if (sky.sunAlt(now) > -12) { const n = sky.night(), t = n && (n.astro || n.naut); if (t && +t > +now && sky.altAz(o, new Date(t)).alt > 5) return new Date(t); } } catch (e) { /* no night data */ }
+  return now;
+}
 function openObject(key, opt = {}) {
   const o = objByKey(key); if (!o) return;
   refreshSky(false);
@@ -3604,18 +3781,20 @@ function openObject(key, opt = {}) {
     ${isTarget ? `<div class="btnrow"><button id="sh-seen">${seen ? 'Log it again ✓' : 'Log as seen ✓'}</button></div>` : ''}`;
   box.classList.remove('hidden'); card.scrollTop = 0;
   { const row = $('#sh-eps'), more = $('#sh-more'); if (row && more && row.scrollWidth > row.clientWidth + 4) { more.classList.remove('hidden'); row.addEventListener('scroll', () => more.classList.add('hidden'), { once: true, passive: true }); } }
-  // one small preview per eyepiece
+  // one small preview per eyepiece, drawn for when you will actually look (see previewTime)
+  const pvT = previewTime(o, row), pvLater = +pvT - Date.now() > 5 * 60000;
+  if (pvLater) { const cap = $('#sh-epcap'); if (cap) cap.textContent = `As it will look at ${hm(pvT)}${row ? ', its best time in your session' : ', once it is fully dark'}. ` + cap.textContent; }
   card.querySelectorAll('#sh-eps canvas').forEach((cv) => {
     try {
       // Work the position out for this instant. The list's stored position can be minutes old, and the sky turns a
       // quarter of a degree a minute: enough to slide a high-power field right off the target's own stars.
-      const p = profile(), e = p.eyepieces[+cv.dataset.epi], now = new Date(), tg = sky.altAz(o, now);
+      const p = profile(), e = p.eyepieces[+cv.dataset.epi], now = pvT, tg = sky.altAz(o, now);
       const longest = p.eyepieces.reduce((a, x) => (x.fl > a.fl ? x : a), p.eyepieces[0]);
-      const res = drawEyepiece(cv, sky, o.pairs && o.key.startsWith('st:') ? { ...o, t: 'DS' } : o, tg, e, p, { matrix: state.rot180 ? viewMatrix(p, tg) : null, bright: vis(), nelm: skyNelm(), env: eyeEnv(tg), refExit: p.aperture / (p.fl / longest.fl), thumb: true, date: now });
+      const res = drawEyepiece(cv, sky, o.pairs && o.key.startsWith('st:') ? { ...o, t: 'DS' } : o, tg, e, p, { matrix: state.rot180 ? viewMatrix(p, tg) : null, bright: vis(), nelm: skyNelm(), env: eyeEnv(tg, now), refExit: p.aperture / (p.fl / longest.fl), thumb: true, date: now });
       const n = $('#sh-epn' + cv.dataset.epi); if (n && res) n.textContent = ` · ${res.tfov >= 1 ? res.tfov.toFixed(1) + '°' : (res.tfov * 60).toFixed(0) + '′'}`;
-      if (res && res.widened) { const cap = $('#sh-epcap'); if (cap) cap.textContent = 'In each of your eyepieces. Close pairs are drawn a little wider than scale, so a split the eye would see is not lost in the small picture.'; }
-      if (res && res.enlarged) { const cap = $('#sh-epcap'); if (cap) cap.textContent = `In each of your eyepieces. The planet is drawn ${res.enlarged}× larger than scale so you can see its shape. In the real eyepiece it looks smaller than this, but sharp.`; }
-      cv.onclick = () => openEpZoom(o, +cv.dataset.epi);
+      if (res && res.widened) { const cap = $('#sh-epcap'); if (cap) cap.textContent = (pvLater ? `As it will look at ${hm(pvT)}. ` : '') + 'In each of your eyepieces. Close pairs are drawn a little wider than scale, so a split the eye would see is not lost in the small picture.'; }
+      if (res && res.enlarged) { const cap = $('#sh-epcap'); if (cap) cap.textContent = (pvLater ? `As it will look at ${hm(pvT)}. ` : '') + `In each of your eyepieces. The planet is drawn ${res.enlarged}× larger than scale so you can see its shape. In the real eyepiece it looks smaller than this, but sharp.`; }
+      cv.onclick = () => openEpZoom(o, +cv.dataset.epi, pvLater ? pvT : null);
     } catch (err) { console.error(err); }
   });
   box.onclick = (e) => { if (e.target === box) closeSheet(); };
@@ -3766,7 +3945,7 @@ function renderLaunch() {
     <h3 class="lq">What are we up to?</h3>
     <div class="lgrid">${ACTIVITIES.map(([k, t, sub, ic]) => `<button class="act${k === act ? ' on' : ''}" data-act="${k}"><svg class="ic" viewBox="0 0 24 24">${ic}</svg><b>${t}</b><span class="muted">${sub}</span></button>`).join('')}</div>
     <div class="path">
-      <div class="pnote">Start-up refinements — tap a star to turn that step on or off (bright = on)</div>
+      <h3 class="lq lq2">Start-up refinements</h3><div class="pnote">Tap a star to turn that step on or off (bright = on).</div>
       ${['check', 'sky', 'seeing', 'horizon', 'align'].map((k) => (stops.includes(k)
     ? `<label class="stop"><input type="checkbox" data-step="${stepKey(k, act)}" ${stepOn(k, act) ? 'checked' : ''}><span><b>${STEP_INFO[k][0]}</b><span class="muted">${k === 'horizon' ? (stepOn(k) || horizonNow() || placeLabel() ? status[k] : 'skipped') : esc(stepOn(k, act) ? status[k] : k === 'check' ? (chk ? `done — ${V[chk.result.verdict] || chk.result.verdict}` : 'optional — once per phone, 4 min: how far to trust the arrows and the sky view') : k === 'align' && act === 'explore' ? (alignedNow() ? 'already aligned' : 'optional — 2 min, makes the chart match the real sky') : k === 'sky' && !sq && mapSky() ? `skipped — using the map estimate, about Bortle ${mapSky().bortle}` : 'skipped')}</span></span>${k === 'horizon' ? '<button id="l-hz" class="mini" type="button">Open</button>' : ''}</label>`
     : `<div class="stop na"><input type="checkbox" disabled aria-hidden="true"><span><b>${STEP_INFO[k][0]}</b><span class="muted">not needed for this</span></span></div>`)).join('')}
