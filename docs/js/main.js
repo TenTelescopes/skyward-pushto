@@ -294,7 +294,7 @@ let backTo = 'more';                               // the main tab a sub-screen 
 const BACK = '<button class="back" data-back>‹ Back</button>';
 function bindBack(el) { const b = $('[data-back]', el); if (!b) return; if (flow && flow.i >= 0 && flow.i < flow.steps.length) { b.remove(); return; } b.onclick = () => showTab(backTo); }
 const dlg = () => $('#dlg'), dlgCard = () => $('#dlg-card');
-function closeDlg() { dlg().classList.add('hidden'); dlgCard().innerHTML = ''; dlgCard().classList.remove('hdcard'); document.documentElement.classList.remove('dlg-open'); }
+function closeDlg() { const c = dlgCard(); dlg().classList.add('hidden'); c.innerHTML = ''; c.classList.remove('hdcard'); c.onpointerdown = c.onpointerup = null; dlg().onclick = null; document.documentElement.classList.remove('dlg-open'); }
 /**
  * A button that acts on the finger lifting, not on iOS's "click", which it withholds whenever it suspects the touch
  * began a scroll; in a dialog over a scrolling page that swallowed taps (Build 115). A touch that moves under 12 px
@@ -3619,7 +3619,14 @@ function openHourDetail(rec, ix) {
   // Its own layout (Build 114): a scrolling middle and a fixed row of buttons below it, outside the scrolling part,
   // because on the phone a sticky row inside a scrolling box lost taps to the scroll.
   dlgCard().classList.add('hdcard');
-  dlgCard().innerHTML = `<div class="hdbody"><h3 style="margin-top:0;display:flex;align-items:center;gap:8px"><span class="hdface q${hl.lvl}">${f}</span>${t.toLocaleDateString([], { weekday: 'short' })} ${t.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}: ${W}</h3>
+  // Buttons at the top (Build 118): ‹ and › step through the hours, ✕ closes. They sat at the bottom before and took
+  // several taps on the iPhone; up here they are away from the scrolling part and the edge of the screen. Swiping the
+  // card left or right also steps, and tapping outside it closes it.
+  const last = rec.rows.length - 1;
+  dlgCard().innerHTML = `<div class="hdtop"><button type="button" class="ibtn" id="hd-prev" aria-label="Earlier hour" ${ix ? '' : 'disabled'}>‹</button>
+      <div class="hdtitle"><span class="hdface q${hl.lvl}">${f}</span><div><b>${t.toLocaleDateString([], { weekday: 'short' })} ${t.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</b><div class="small">${W} · ${ix + 1} of ${last + 1}</div></div></div>
+      <button type="button" class="ibtn" id="hd-next" aria-label="Later hour" ${ix < last ? '' : 'disabled'}>›</button><button type="button" class="ibtn" id="hd-x" aria-label="Close">✕</button></div>
+    <div class="hdbody">
     ${hl.why.length ? `<p class="small" style="margin:0 0 6px">Held back by: ${esc(hl.why.join(', '))}.</p>` : '<p class="small" style="margin:0 0 6px">Nothing holding it back.</p>'}
     <div class="kv hdkv">
       ${row('Cloud', r.cloud == null ? 'no forecast' : `${Math.round(r.cloud)}%${r.cloudSrc === 'apple' ? ' (Apple Weather)' : ''}`)}
@@ -3637,12 +3644,19 @@ function openHourDetail(rec, ix) {
     </div>
     ${suits.length ? `<p class="small"><b>Good night for:</b> ${esc(suits.join('; '))}.</p>` : ''}
     <p class="muted small">${rec.eccc ? `Cloud, steadiness (seeing), clear air (transparency), temperature, dew point and wind: Environment Canada${rec.apple ? '; gusts and high cloud: Apple Weather' : ''}. Feels-like: Environment Canada's wind-chill formula.` : 'Cloud, dew and wind: Apple Weather (no steadiness or clear-air forecast outside Environment Canada\'s area).'} Moon, twilight and town lights: worked out by the app for this spot.</p>
-    </div><div class="btnrow hdbtns"><button type="button" id="hd-prev" ${ix ? '' : 'disabled'}>‹ Earlier</button><button type="button" id="hd-next" ${ix < rec.rows.length - 1 ? '' : 'disabled'}>Later ›</button><button type="button" id="hd-x">Close</button></div>`;
+    <p class="muted small hdswipe">Swipe sideways for the next hour.</p></div>`;
   const body = dlgCard().querySelector('.hdbody'); if (body) body.scrollTop = 0;
   fastTap($('#hd-prev'), () => openHourDetail(rec, ix - 1));
   fastTap($('#hd-next'), () => openHourDetail(rec, ix + 1));
   fastTap($('#hd-x'), closeDlg);
   document.documentElement.classList.add('dlg-open');
+  const box = dlg(), card = dlgCard();
+  box.onclick = (e) => { if (e.target === box) closeDlg(); };                 // tap outside the card
+  card.onpointerdown = (e) => { card._sw = e.pointerType === 'mouse' ? null : { x: e.clientX, y: e.clientY }; };
+  card.onpointerup = (e) => {                                                     // swipe sideways: next / previous hour
+    const p = card._sw; card._sw = null; if (!p) return; const dx = e.clientX - p.x, dy = e.clientY - p.y;
+    if (Math.abs(dx) > 50 && Math.abs(dx) > 1.5 * Math.abs(dy)) { const j = ix + (dx < 0 ? 1 : -1); if (j >= 0 && j <= last) { fastFired = performance.now(); openHourDetail(rec, j); } }
+  };
   dlg().classList.remove('hidden');
 }
 document.addEventListener('click', (e) => {

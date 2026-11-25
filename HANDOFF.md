@@ -715,6 +715,11 @@ unrelated extra star in the object-page sentence. Still open with Bryan: whether
     step was silently dropped, so the flow jumped from the previous step straight to blocked-sky tracing. It now
     always runs when its star is on, showing "Earlier tonight: … check again, or keep it".
 
+## Build 118 (Nov 25): hour details controls moved to the top
+- The bottom Earlier / Later / Close row still took several taps on the phone. The card now has a header: ‹ (earlier),
+  the hour with its face and "N of M", › (later), ✕ (close), 48 px buttons using `fastTap`. Swiping the card sideways
+  more than 50 px steps an hour; tapping outside the card closes it. Simulator: taps, swipe and close all work.
+
 ## Build 115–117 (Nov 25): hour details buttons, caps and "Seeing" wording
 - Hour details card: Earlier / Later / Close were unreliable on the iPhone (a sticky button row inside a scrolling
   card lost taps to the scroll). Now the card is a column (`.hdcard`): a scrolling middle (`.hdbody`) and a fixed
