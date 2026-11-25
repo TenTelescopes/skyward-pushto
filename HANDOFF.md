@@ -715,6 +715,32 @@ unrelated extra star in the object-page sentence. Still open with Bryan: whether
     step was silently dropped, so the flow jumped from the previous step straight to blocked-sky tracing. It now
     always runs when its star is on, showing "Earlier tonight: … check again, or keep it".
 
+## Build 113 (Nov 25): the compass from Core Motion, like sky apps; "Align on this" asks which way you face
+- Field report (Build 112): pointed at Saturn with the phone looking down the tube, "Align on this" offered Rigel.
+  Cause: on iOS a web page only gets webkitCompassHeading, and the app took it as the heading of the phone's top edge;
+  held up, iOS reports the heading of the back of the phone instead, so the compass guess was on the wrong side of the
+  sky. Two fixes:
+  1. sensors.js (web fallback): the heading is matched to the top edge or the back by tilt, then by which axis gives a
+     steady offset as the phone turns (`_axisC`, `compassAxis`).
+  2. `native/ios/SkyMotionPlugin.swift` (iPhone app): Core Motion attitude in the true-north frame (or magnetic +
+     declination from CLHeading), sent 30×/s as east/north/up unit vectors in the phone's own axes; the matrix
+     direction is told from gravity, so no convention is assumed. sensors.js `_onNative` turns that into the compass
+     offset for the most horizontal phone axis and ignores webkitCompassHeading while it is coming in. Maths tested
+     (`test/skymotion.test.mjs`, 21 orientations, plus the declination sign). NOT YET compiled or run on a phone.
+- "Align on this": a row of eight directions; starts on the compass direction, one tap overrides; without a known
+  direction no "best match" is claimed and brightness no longer decides; planets fainter than mag 3 left out.
+- Phone position check before aligning (`mountCheckHTML`, `wireMountCheck`): on the Align page until the position is
+  confirmed (kept 14 h per position, `state.mountOk`). Point the tube near straight up and tap Check: the setting's
+  axis must read 60° or more; otherwise the side of the phone that does point up (top, bottom, left, right edge or the
+  back) is named and one tap switches the setting (`setMounting`). Screen facing the sky is called out. "What am I on?"
+  links to it while it is unchecked. Tested in the simulator (right setting confirmed; camera-mounted phone set as
+  top-sky caught and switched).
+- Screen off or locked: the compass offset is noted on hide (`sleepCompass`) and measured again on return (fresh
+  samples only, up to 8 s); the difference is how far the gyro frame turned, and `model.theta` is turned back by it
+  (`resumeWithCompass`, logged in align.syncs as 'compass-resume'). Without a compass reading it falls back to the old
+  "centre a bright star and Sync" message. Not yet tried on a phone.
+- WeatherKit entitlement is opt-in (`native/ios/WEATHERKIT_ON`), because signing failed without the App ID capability.
+
 ## Build 112 (Nov 24, from a night under the sky): chart zoom, labels, one-tap eyepieces, "What am I on?", align arrow
 - Chart (Observe, with or without a target): by hand it zooms to 0.08° radius (ZMIN; about 10′ across), past the
   phone's accuracy if you like (the chart then says so). Automatic zoom now follows the scope (`motionZoom`, speed from

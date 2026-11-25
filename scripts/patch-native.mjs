@@ -25,7 +25,7 @@ edit('ios/App/App/AppDelegate.swift', (s) => s.includes('isIdleTimerDisabled') ?
 
 // ---- iOS: the Skyward camera plug-in (native exposure control and RAW frames)
 if (fs.existsSync('ios/App/App')) {
-  const SWIFT = ['SkyCamPlugin.swift', 'MyViewController.swift', 'SkyWeatherPlugin.swift'];
+  const SWIFT = ['SkyCamPlugin.swift', 'MyViewController.swift', 'SkyWeatherPlugin.swift', 'SkyMotionPlugin.swift'];
   for (const f of SWIFT) {
     const from = `native/ios/${f}`, to = `ios/App/App/${f}`;
     if (!fs.existsSync(from)) { log(`missing ${from}`); continue; }
@@ -45,10 +45,9 @@ if (fs.existsSync('ios/App/App')) {
     }
     return s;
   });
-  // Apple Weather plug-in (Build 111): add it to the Xcode project the same way, if it isn't there yet.
-  edit('ios/App/App.xcodeproj/project.pbxproj', (s) => {
-    if (s.includes('SkyWeatherPlugin.swift')) return s;
-    const [name, ref, build] = ['SkyWeatherPlugin.swift', 'A15C0DE0000000000000F003', 'A15C0DE0000000000000B003'];
+  // Apple Weather (Build 111) and Core Motion orientation (Build 113) plug-ins: add them to the Xcode project the same way.
+  for (const [name, ref, build] of [['SkyWeatherPlugin.swift', 'A15C0DE0000000000000F003', 'A15C0DE0000000000000B003'], ['SkyMotionPlugin.swift', 'A15C0DE0000000000000F004', 'A15C0DE0000000000000B004']]) edit('ios/App/App.xcodeproj/project.pbxproj', (s) => {
+    if (s.includes(name)) return s;
     s = s.replace('/* End PBXBuildFile section */', `\t\t${build} /* ${name} in Sources */ = {isa = PBXBuildFile; fileRef = ${ref} /* ${name} */; };\n/* End PBXBuildFile section */`);
     s = s.replace('/* End PBXFileReference section */', `\t\t${ref} /* ${name} */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ${name}; sourceTree = "<group>"; };\n/* End PBXFileReference section */`);
     s = s.replace(/(\/\* App \*\/ = \{\s*isa = PBXGroup;\s*children = \()/, `$1\n\t\t\t\t${ref} /* ${name} */,`);

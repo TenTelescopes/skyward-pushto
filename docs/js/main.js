@@ -1671,44 +1671,98 @@ function addAlignStar(o, force, opt = {}) {
  * to a degree or so even before alignment; direction comes from the alignment, else the compass (rough), else nothing,
  * when brightness decides between objects at the right height.
  */
-function pointedCandidates(n = 4) {
+function pointedCandidates(n = 4, facing = null) {
   const cur = pointing(); if (!cur) return { list: [], alt: null, how: 'none' };
-  const aligned = !!cur.ready, g = aligned ? null : guessPointing();
-  const az = aligned ? cur.az : g ? g.az : null, how = aligned ? 'aligned' : g ? 'compass' : 'height';
-  const azTol = aligned ? 8 : 45, altTol = aligned ? 6 : 4;
+  const aligned = !!cur.ready, g = aligned || facing != null ? null : guessPointing();
+  const az = aligned ? cur.az : facing != null ? facing : g ? g.az : null, how = aligned ? 'aligned' : facing != null ? 'facing' : g ? 'compass' : 'height';
+  const azTol = aligned ? 8 : how === 'facing' ? 35 : 45, altTol = aligned ? 6 : 4;
   const list = [];
   for (const o of sky.objects) {
     if (o.alt == null || o.alt < 2) continue;
-    if (!(o.planet || (o.key.startsWith('st:') && (o.mag ?? 9) <= 3))) continue;
+    if (!((o.planet || o.key.startsWith('st:')) && (o.mag ?? 9) <= 3)) continue;     // bright enough to be sure of by eye (not Uranus or Neptune)
     const dAlt = Math.abs(o.alt - cur.alt); if (dAlt > altTol) continue;
     let dAz = null;
     if (az != null) { dAz = Math.abs(wrap180(o.az - az)) * Math.cos(o.alt * D2R); if (dAz > azTol) continue; }
-    const score = dAlt / 1.5 + (dAz != null ? dAz / (azTol / 4) : 0) + (o.mag ?? 2) * 0.35;
+    const score = dAlt / 1.5 + (dAz != null ? dAz / (azTol / 4) + (o.mag ?? 2) * 0.35 : 0);   // no direction known: go by height only, never by brightness
     list.push({ o, dAlt, dAz, sep: az != null ? sepDeg(cur.alt, az, o.alt, o.az) : null, score });
   }
   return { list: list.sort((x, y) => x.score - y.score).slice(0, n), alt: cur.alt, how };
 }
 /** "What am I pointing at?": the app's best guesses, and one tap to align or sync on the right one. */
 function openWhatsThis(from = tab) {
+  // The phone's compass is often thrown off by the telescope itself (metal, motors, a mount), so before alignment the
+  // dialog asks which way the scope faces: one tap, and objects at the right height on the other side drop out.
+  let facing = null;
+  { const g = !pointing()?.ready ? guessPointing() : null; if (g) facing = Math.round(g.az / 45) % 8 * 45; }   // start from the compass; one tap changes it
   const draw = () => {
-    const r = pointedCandidates(), needAlign = state.mode !== 'compass' && align.obs.length < alignNeeded();
+    const r = pointedCandidates(facing != null ? 4 : 6, facing), needAlign = state.mode !== 'compass' && align.obs.length < alignNeeded();
     const verb = needAlign ? (align.obs.length ? 'use it as the second alignment star' : 'align on it') : 'sync on it';
+    const sure = r.how === 'aligned' || r.how === 'facing';
+    const g = r.how === 'compass' ? guessPointing() : null;
     dlgCard().innerHTML = `<h3 style="margin-top:0">What is the scope pointing at?</h3>
       ${r.alt == null ? '<p>No motion-sensor reading yet. Put the phone on the telescope and try again.</p>' : `
-      <p class="small" style="margin:0 0 8px">Centre the bright thing in the eyepiece first. The scope is tilted <b>${r.alt.toFixed(0)}°</b> up${r.how === 'compass' ? ', and the compass says roughly ' + compassName(guessPointing().az) : ''}.
-      ${r.how === 'height' ? 'Without a compass the app goes by height and brightness, so check the name.' : r.how === 'compass' ? 'The compass is rough, so check the name.' : ''}</p>
-      ${r.list.length ? `<div class="whatlist">${r.list.map((c, i) => `<button class="${i === 0 ? 'primary' : ''}" data-wk="${esc(c.o.key)}"><b>${esc(c.o.label)}</b>${c.o.name && c.o.name !== c.o.label ? ' · ' + esc(c.o.name) : ''}<span class="small muted">${c.o.planet ? (c.o.id === 'Moon' ? 'the Moon' : 'planet') : 'star'}, magnitude ${(+c.o.mag).toFixed(1)} · ${c.o.alt.toFixed(0)}° up ${compassName(c.o.az)}${i === 0 ? ' · best match' : ''}</span></button>`).join('')}</div>
-        <p class="muted small">Tap the right one to ${verb}.</p>`
-      : `<p>Nothing bright (stars to magnitude 3, planets, the Moon) is at that height${r.how !== 'height' ? ' in that direction' : ''}. Is the phone sitting firmly on the tube?</p>`}`}
+      <p class="small" style="margin:0 0 6px">Centre it in the eyepiece first. The scope is tilted <b>${r.alt.toFixed(0)}°</b> up${guessPointing() && r.how !== 'aligned' ? ` and the compass says it faces <b>${compassName(guessPointing().az)}</b> (${esc(sensors.compassSource || 'compass')}${sensors.compassCal ? ', ' + esc(sensors.compassCal) : ''}; metal nearby can throw a compass off, so tap another direction if it's wrong)` : ''}.</p>
+      ${r.how !== 'aligned' ? `<div class="small" style="margin:4px 0">Which way is the scope facing?</div><div class="dirs wtdirs">${DIRS.map((d, i) => `<button data-wdir="${i * 45}" class="${facing === i * 45 ? 'on' : ''}">${d}</button>`).join('')}</div>` : ''}
+      ${r.list.length ? `<div class="whatlist">${r.list.map((c, i) => `<button class="${i === 0 && sure ? 'primary' : ''}" data-wk="${esc(c.o.key)}"><b>${esc(c.o.label)} <span class="wtdir">${compassName(c.o.az)}</span></b><span class="small muted">${c.o.planet ? (c.o.id === 'Moon' ? 'the Moon' : 'planet') : 'star'}, magnitude ${(+c.o.mag).toFixed(1)} · ${c.o.alt.toFixed(0)}° up in the ${compassName(c.o.az)}${i === 0 && sure ? ' · best match' : ''}</span></button>`).join('')}</div>
+        <p class="muted small">${sure ? `Tap the right one to ${verb}.` : `These are at the right height. Tap the one in the direction the scope faces to ${verb}, or tap a direction above.`}</p>`
+      : `<p>Nothing bright (stars to magnitude 3, planets, the Moon) is at that height${r.how !== 'height' ? ' in that direction' : ''}. ${facing != null ? 'Try the next direction over.' : 'Is the phone sitting firmly on the tube?'}</p>`}`}
+      ${mountChecked() || align.obs.length ? '' : `<p class="small muted">The height reading depends on how the phone sits on the tube, and that hasn't been checked yet. <a id="wt-mc">Check it first</a></p>`}
       <div class="btnrow"><button id="wt-again">Look again</button><button id="wt-close">Close</button></div>`;
     dlgCard().querySelectorAll('[data-wk]').forEach((b) => b.onclick = () => {
       const o = sky.objects.find((x) => x.key === b.dataset.wk); closeDlg(); if (!o) return;
       if (needAlign) addAlignStar(o, false, { stay: from === 'push' });
       else { doSync(o); if (tab === 'push') renderPush(); else if (tab === 'align') renderAlign(); }
     });
+    dlgCard().querySelectorAll('[data-wdir]').forEach((b) => b.onclick = () => { facing = facing === +b.dataset.wdir ? null : +b.dataset.wdir; draw(); });
     $('#wt-again').onclick = draw; $('#wt-close').onclick = closeDlg;
+    if ($('#wt-mc')) $('#wt-mc').onclick = () => { closeDlg(); showTab('align'); };
   };
   refreshSky(true); draw(); dlg().classList.remove('hidden');
+}
+/**
+ * Before aligning (Build 113): confirm how the phone sits on the tube. Point the tube near straight up; whichever edge
+ * (or the back) of the phone then points at the sky is the one that runs along the tube. Each possible position puts a
+ * different side of the phone there, 90° apart, so even a rough "as high as it goes" (60° or more) tells them apart.
+ */
+const MOUNT_AXES = [['top-sky', [0, 1, 0]], ['top-mirror', [0, -1, 0]], ['across-right', [1, 0, 0]], ['across-left', [-1, 0, 0]], ['camera', [0, 0, -1]]];
+function mountCheckRead() {
+  if (!sensors || !sensors.fresh()) return null;
+  const R = avgR(1.0) || sensors.R, up = [R[2][0], R[2][1], R[2][2]];          // straight up, in the phone's own axes
+  const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2], asin = (x) => Math.asin(Math.max(-1, Math.min(1, x))) * R2D;
+  const cur = asin(dot(MOUNTINGS[state.mounting].d, up));
+  const best = MOUNT_AXES.map(([k, d]) => [k, asin(dot(d, up))]).sort((a, b) => b[1] - a[1])[0];
+  const screenUp = asin(up[2]);                                                  // screen facing the sky
+  return { cur, best, screenUp };
+}
+const mountChecked = () => state.mountOk && state.mountOk.mount === state.mounting && Date.now() - state.mountOk.t < 14 * 3600e3;
+function mountCheckHTML() {
+  if (mountChecked() || align.obs.length) return '';
+  return `<div class="card mntcheck" id="mc-card"><b>First: is the phone set the right way round?</b>
+    <p class="small" style="margin:4px 0">The app thinks the phone is <b>${esc(MOUNTINGS[state.mounting].label.toLowerCase())}</b>. Point the tube as high as it will go (near straight up), then tap <b>Check</b>.</p>
+    <p class="small" id="mc-live"></p>
+    <div class="btnrow"><button id="mc-go" class="primary">Check</button><button id="mc-skip">Skip</button></div><div id="mc-res"></div></div>`;
+}
+function wireMountCheck() {
+  const card = $('#mc-card'); if (!card) return;
+  const live = () => { const r = mountCheckRead(), el = $('#mc-live'); if (!el || !card.isConnected) return; el.textContent = r ? `With this setting the tube reads ${r.cur.toFixed(0)}° up.` : 'Waiting for the motion sensors…'; setTimeout(live, 400); };
+  live();
+  $('#mc-skip').onclick = () => { state.mountOk = { mount: state.mounting, t: Date.now(), skipped: true }; save(); renderAlign(); };
+  $('#mc-go').onclick = () => {
+    const r = mountCheckRead(), out = $('#mc-res'); if (!r) { out.innerHTML = '<p class="small">No motion-sensor reading yet.</p>'; return; }
+    if (r.cur >= 60) {
+      state.mountOk = { mount: state.mounting, t: Date.now(), alt: r.cur }; save(); cue.onTarget();
+      toast(`Confirmed: ${MOUNTINGS[state.mounting].label.toLowerCase()} (tube reads ${r.cur.toFixed(0)}° up)`, 3500); renderAlign(); return;
+    }
+    const [k, alt] = r.best;
+    if (alt >= 60 && k !== state.mounting && MOUNTINGS[k].d.join() !== MOUNTINGS[state.mounting].d.join()) {
+      out.innerHTML = `<p class="small"><b>The phone looks different from the setting.</b> With the tube up, it is the phone's <b>${{ 'top-sky': 'top edge', 'top-mirror': 'bottom edge', 'across-right': 'right edge', 'across-left': 'left edge', camera: 'back (the camera side)' }[k]}</b> that points at the sky, so the phone is probably <b>${esc(MOUNTINGS[k].label.toLowerCase())}</b>.</p><div class="btnrow"><button id="mc-sw" class="primary">Switch to that</button><button id="mc-no">No, keep mine</button></div>`;
+      $('#mc-sw').onclick = () => { setMounting(k); state.mountOk = { mount: k, t: Date.now(), alt }; save(); toast(`Phone position set: ${MOUNTINGS[k].label.toLowerCase()}`, 3500); renderAlign(); };
+      $('#mc-no').onclick = () => { out.innerHTML = '<p class="small muted">Kept. If the arrows go the wrong way, open Setup → phone mount.</p>'; };
+      return;
+    }
+    out.innerHTML = r.screenUp >= 60 ? '<p class="small">The <b>screen</b> is facing the sky. On the telescope the screen should face you or out to the side, with one edge or the camera running along the tube.</p>'
+      : `<p class="small">The tube doesn't look high enough: no side of the phone is pointing near straight up (best ${alt.toFixed(0)}°). Raise the tube further, keep the phone still, and tap Check again.</p>`;
+  };
 }
 function renderAlign() {
   refreshSky(true);
@@ -1734,6 +1788,7 @@ function renderAlign() {
   } else assistHTML = '<p class="muted">No bright stars above 15° right now.</p>';
   el.innerHTML = `${BACK}
     <h2>Star alignment</h2>
+    ${state.mode !== 'compass' ? mountCheckHTML() : ''}
     ${state.mounting === 'camera' && state.mode !== 'compass' ? `<div class="card"><b>Your phone looks along the tube</b><p class="muted small" style="margin:4px 0 8px">The camera can do this for you: no star to find or centre.</p><button id="a-cam" class="primary">${profile().camBore ? 'Align with the camera' : 'Line up and align with the camera'}</button></div>` : ''}
     ${state.mode === 'compass' ? `<p class="muted">Compass mode is on: azimuth comes from the magnetometer. Star alignment below uses the gyro instead and is usually more accurate — switch in Setup.</p>` : ''}
     ${assistHTML}
@@ -1761,6 +1816,7 @@ function renderAlign() {
   $('#a-tools').ontoggle = (e) => { state.alignTools = e.target.open; save(); };
   if ($('#a-find')) $('#a-find').onclick = () => showTab('find');
   if ($('#a-what')) $('#a-what').onclick = () => openWhatsThis('align');
+  wireMountCheck();
   if ($('#a-cam')) $('#a-cam').onclick = () => { if (!camWiz && !profile().camBore) camWiz = { step: 'start', star: null }; showTab('camera'); };
   const addStar = (o, force) => addAlignStar(o, force);
   if ($('#a-ok')) $('#a-ok').onclick = () => addStar(s);
@@ -3250,7 +3306,7 @@ function updateStatus() {
   const txt = { off: 'Sensors off — tap', nodata: 'No sensor data — tap', compass: 'Compass mode', unaligned: 'Not aligned — tap',
     resync: 'Re-sync on a star', aligned: cap1(syncAgo()) }[st];
   const pill = $('#st-pill'); if (pill.textContent !== txt) pill.textContent = txt; if (pill.dataset.st !== st) pill.dataset.st = st;
-  const d = $('#s-diag'); if (d && sensors) d.textContent = `${sensors.constructor === SimSensors ? 'SIMULATED · ' : ''}${sensors.rateHz.toFixed(0)} Hz · compass: ${sensors.compassSource || 'none'}${sensors.compassAccuracy != null ? ' ±' + sensors.compassAccuracy + '°' : ''}`;
+  const d = $('#s-diag'); if (d && sensors) d.textContent = `${sensors.constructor === SimSensors ? 'SIMULATED · ' : ''}${sensors.rateHz.toFixed(0)} Hz · compass: ${sensors.compassSource || 'none'}${sensors.compassAccuracy != null ? ' ±' + sensors.compassAccuracy + '°' : ''}${sensors.compassCal ? ' · ' + sensors.compassCal : ''}`;
 }
 
 // ---------------------------------------------------------------- keep the screen awake; notice when the app was put away
@@ -3277,15 +3333,49 @@ async function keepAwake() {
 }
 const awakeText = () => ({ on: 'on while the app is open', released: 'on while the app is open', unknown: 'starts when you tap an activity',
   unsupported: "not supported by this browser — set your phone's Auto-Lock to Never while observing", failed: "couldn't be turned on here — set your phone's Auto-Lock to Never while observing" })[awake];
+/**
+ * Screen off or locked (Build 113): iOS stops the motion sensors, and when they start again the gyro's left/right
+ * frame may have turned. The compass doesn't care: it measures that frame against north. So just before the screen
+ * goes off the app notes the compass offset (north in gyro terms), and when it comes back it measures it again; the
+ * difference is how far the gyro frame turned, and the alignment is turned back by it. Errors in the compass itself
+ * (metal on the scope, declination) are the same before and after and cancel; what's left is its noise, a degree or two.
+ */
+let sleepCompass = null;
+const compassNow = () => (sensors && sensors.hasCompass && sensors.compassOffsetSamples && sensors.compassOffsetSamples.length >= 10 && performance.now() - sensors.compassOffsetSamples[sensors.compassOffsetSamples.length - 1][0] < 1500 ? sensors.compassOffset() : null);
+function resumeWithCompass(away) {
+  const before = sleepCompass; sleepCompass = null;
+  const fallback = () => { if (away > 20) { align.suspect = true; toast('Welcome back. The phone may have lost track while the screen was off — centre a bright star and tap Sync before trusting the arrows.', 7000); if (tab === 'push') renderPush(); } };
+  if (!before || before.off == null) return fallback();
+  const t0 = performance.now();
+  if (sensors) sensors.compassOffsetSamples = [];                     // only readings from after the restart
+  const wait = () => {
+    if (!sensors || !sensors.fresh() || !sensors.compassOffsetSamples || sensors.compassOffsetSamples.length < 20) {
+      if (performance.now() - t0 > 8000) return fallback();
+      return setTimeout(wait, 250);
+    }
+    const after = sensors.compassOffset(), jump = wrap180(before.off - after);   // how far the gyro frame turned
+    model.theta = model.thetaAt() - jump; model.t0 = Date.now(); align.suspect = false;   // keep any drift so far, then turn back
+    align.syncs.push({ t: Date.now(), theta: model.theta, kind: 'compass-resume', jump, ep: align.epoch || 0 });
+    const src = sensors.compassSource || 'the compass';
+    if (Math.abs(jump) >= 1) toast(`Welcome back. While the screen was off the phone's direction shifted ${Math.abs(jump).toFixed(0)}°; put right with ${src}. Check the next target and Sync if it's off.`, 6000);
+    else if (away > 20) toast(`Welcome back. The phone kept its bearings (checked with ${src}).`, 3500);
+    if (tab === 'push') renderPush();
+  };
+  wait();
+}
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'hidden') { hiddenAt = Date.now(); return; }
+  if (document.visibilityState === 'hidden') {
+    hiddenAt = Date.now();
+    sleepCompass = align.fit && state.mode === 'gyro' ? { off: compassNow(), src: sensors && sensors.compassSource } : null;
+    return;
+  }
   if (sensors) keepAwake();
   const away = hiddenAt ? (Date.now() - hiddenAt) / 1000 : 0; hiddenAt = 0;
   if (away > 600 || dayKey() !== shownDay) refreshForTime();
-  if (away > 20 && align.fit && state.mode === 'gyro') {
-    align.suspect = true; align.epoch = (align.epoch || 0) + 1;      // the heading may have jumped: objects from now on get their own offset
-    toast('Welcome back. The phone may have lost track while the screen was off — centre a bright star and tap Sync before trusting the arrows.', 7000);
-  }
+  if (away > 2 && align.fit && state.mode === 'gyro') {
+    align.epoch = (align.epoch || 0) + 1;                             // objects from now on get their own offset in the sky table
+    resumeWithCompass(away);
+  } else sleepCompass = null;
 });
 
 // ---------------------------------------------------------------- OBSERVING LOG

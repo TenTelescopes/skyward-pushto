@@ -28,17 +28,59 @@ export class Sensors {
       const rr = e.rotationRate;
       if (rr && (rr.alpha != null || rr.beta != null || rr.gamma != null)) this.gyroEvents++;
     });
-    this.started = true; return true;
+    this.started = true;
+    this._startNative();
+    return true;
   }
+  /**
+   * iPhone app (Build 113): the SkyMotion plug-in gives north, east and up in the phone's own axes from Core Motion,
+   * the way sky apps do it, so the compass no longer depends on how iOS reports a single heading for a tilted phone.
+   * Used for the compass offset only; the web's DeviceOrientation still drives the motion itself.
+   */
+  _startNative() {
+    try {
+      const C = typeof window !== 'undefined' && window.Capacitor;
+      if (!C || !C.isNativePlatform || !C.isNativePlatform() || !C.isPluginAvailable || !C.isPluginAvailable('SkyMotion')) return;
+      const P = C.Plugins.SkyMotion;
+      P.addListener('motion', (d) => this._onNative(d));
+      P.start({ hz: 30 }).then((r) => { this.nativeFrame = r && r.frame; }).catch((e) => { console.log('SkyMotion: ' + (e && e.message)); });
+    } catch (e) { /* plug-in not built in: the web compass is used */ }
+  }
+  _onNative(d) {
+    if (!this.R || !d || !d.E || !d.N || !d.U) return;
+    const now = performance.now(), dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    // the phone axis closest to horizontal gives the best-defined direction
+    const ax = [[1, 0, 0], [0, 1, 0], [0, 0, 1]].reduce((b, a) => (Math.abs(dot(a, d.U)) < Math.abs(dot(b, d.U)) ? a : b));
+    const trueAz = Math.atan2(dot(ax, d.E), dot(ax, d.N)) * R2D + (d.frame === 'magnetic' && typeof d.decl === 'number' ? d.decl : 0);
+    const relAz = altAzFromVec(mulMV(this.R, ax)).az;
+    if (!this.nativeAt || this.compassSource !== this._nativeName(d)) this.compassOffsetSamples = [];     // switching from the web compass: start clean
+    this.nativeAt = now; this.compassSource = this._nativeName(d);
+    this.compassCal = { '-1': 'not calibrated', 0: 'calibration low', 1: 'calibration medium', 2: 'calibration high' }[d.acc] || null;   // Core Motion's own words, not degrees
+    this._pushCompass(wrap180(trueAz - relAz), now);
+  }
+  _nativeName(d) { return d.frame === 'true' ? 'iPhone Core Motion, true north' : typeof d.decl === 'number' ? 'iPhone Core Motion, magnetic + declination' : 'iPhone Core Motion, magnetic north (no declination yet)'; }
   _onRel(e) {
     if (e.alpha == null || e.beta == null || e.gamma == null) return;
     const now = performance.now();
     this.R = rotFromEuler(e.alpha, e.beta, e.gamma); this.t = now; this.lastEuler = [e.alpha, e.beta, e.gamma];
-    if (typeof e.webkitCompassHeading === 'number' && e.webkitCompassHeading >= 0) {
-      // iOS: heading of the top edge, clockwise from magnetic north. Relative-frame azimuth of the top edge:
-      const topAz = altAzFromVec(mulMV(this.R, [0, 1, 0]));
-      // Heading is only defined meaningfully when the top edge isn't near vertical.
-      if (Math.abs(topAz.alt) < 70) this._pushCompass(wrap180(e.webkitCompassHeading - topAz.az), now);
+    if (typeof e.webkitCompassHeading === 'number' && e.webkitCompassHeading >= 0 && !(this.nativeAt && now - this.nativeAt < 1500)) {   // the native reading wins while it is coming in
+      // iOS: a magnetic heading, clockwise from north. Flat-ish, it is the heading of the phone's top edge; held up
+      // (as on a telescope, camera looking along the tube) it follows the back of the phone, the way the Compass app
+      // does. Which one is in use is decided from the data: as the phone turns, the right axis gives a steady offset
+      // between the compass and the gyro frame and the wrong one wanders. Until there is enough movement to tell,
+      // the tilt decides (top edge more than 45° up or down → the back). (Build 112: it used the top edge only, which
+      // on a telescope put the guess on the wrong side of the sky.)
+      const h = e.webkitCompassHeading, top = altAzFromVec(mulMV(this.R, [0, 1, 0])), back = altAzFromVec(mulMV(this.R, [0, 0, -1]));
+      const C = this._axisC || (this._axisC = { top: [], back: [] });
+      const add = (k, off) => { const a = C[k]; a.push([now, off]); while (a.length && now - a[0][0] > 4000) a.shift(); };
+      if (Math.abs(top.alt) < 80) add('top', wrap180(h - top.az));
+      if (Math.abs(back.alt) < 80) add('back', wrap180(h - back.az));
+      const spread = (a) => { if (a.length < 15) return null; let s = 0, c = 0; for (const [, v] of a) { s += Math.sin(v * D2R); c += Math.cos(v * D2R); } return 1 - Math.hypot(s, c) / a.length; };
+      const st = spread(C.top), sb = spread(C.back);
+      let use = Math.abs(top.alt) > 45 ? 'back' : 'top';
+      if (st != null && sb != null && Math.max(st, sb) > 0.01) { if (st * 4 < sb) use = 'top'; else if (sb * 4 < st) use = 'back'; }
+      const off = use === 'top' ? (Math.abs(top.alt) < 80 ? wrap180(h - top.az) : null) : (Math.abs(back.alt) < 80 ? wrap180(h - back.az) : null);
+      if (off != null) { if (this.compassAxis && this.compassAxis !== use) this.compassOffsetSamples = []; this.compassAxis = use; this._pushCompass(off, now); }
       this.compassAccuracy = e.webkitCompassAccuracy ?? null; this.compassSource = 'iOS compass';
     }
     this._tickRate(now);

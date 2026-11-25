@@ -615,3 +615,8 @@ details.more.tdetail > summary { padding: 6px 0 10px; }
 .alarrow.close { transform: none !important; }
 .algbig { font-size: 24px; font-weight: 700; line-height: 1.2; color: var(--fg); }
 #a-sub { color: var(--dim); margin-top: 2px; }
+.wtdirs { display: grid; grid-template-columns: repeat(8, 1fr); gap: 4px; margin: 0 0 8px; }
+.wtdirs button { min-height: 40px; padding: 0; font-size: 14px; }
+.wtdirs button.on { color: var(--hi); border-color: var(--hi); }
+.wtdir { font-weight: 600; color: var(--hi); margin-left: 6px; }
+.mntcheck { border-color: var(--hi); }

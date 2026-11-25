@@ -19,6 +19,7 @@
 		A15C0DE0000000000000B001 /* SkyCamPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A15C0DE0000000000000F001 /* SkyCamPlugin.swift */; };
 		A15C0DE0000000000000B002 /* MyViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A15C0DE0000000000000F002 /* MyViewController.swift */; };
 		A15C0DE0000000000000B003 /* SkyWeatherPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A15C0DE0000000000000F003 /* SkyWeatherPlugin.swift */; };
+		A15C0DE0000000000000B004 /* SkyMotionPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A15C0DE0000000000000F004 /* SkyMotionPlugin.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -36,6 +37,7 @@
 		A15C0DE0000000000000F001 /* SkyCamPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkyCamPlugin.swift; sourceTree = "<group>"; };
 		A15C0DE0000000000000F002 /* MyViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MyViewController.swift; sourceTree = "<group>"; };
 		A15C0DE0000000000000F003 /* SkyWeatherPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkyWeatherPlugin.swift; sourceTree = "<group>"; };
+		A15C0DE0000000000000F004 /* SkyMotionPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkyMotionPlugin.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -70,6 +72,7 @@
 		504EC3061FED79650016851F /* App */ = {
 			isa = PBXGroup;
 			children = (
+				A15C0DE0000000000000F004 /* SkyMotionPlugin.swift */,
 				A15C0DE0000000000000F003 /* SkyWeatherPlugin.swift */,
 				A15C0DE0000000000000F002 /* MyViewController.swift */,
 				A15C0DE0000000000000F001 /* SkyCamPlugin.swift */,
@@ -167,6 +170,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A15C0DE0000000000000B004 /* SkyMotionPlugin.swift in Sources */,
 				A15C0DE0000000000000B003 /* SkyWeatherPlugin.swift in Sources */,
 				A15C0DE0000000000000B002 /* MyViewController.swift in Sources */,
 				A15C0DE0000000000000B001 /* SkyCamPlugin.swift in Sources */,
@@ -312,7 +316,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 112;
+				CURRENT_PROJECT_VERSION = 113;
 				DEVELOPMENT_TEAM = X7WGZT33SM;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
@@ -335,7 +339,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 112;
+				CURRENT_PROJECT_VERSION = 113;
 				DEVELOPMENT_TEAM = X7WGZT33SM;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
