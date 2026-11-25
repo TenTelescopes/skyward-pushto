@@ -294,7 +294,23 @@ let backTo = 'more';                               // the main tab a sub-screen 
 const BACK = '<button class="back" data-back>‹ Back</button>';
 function bindBack(el) { const b = $('[data-back]', el); if (!b) return; if (flow && flow.i >= 0 && flow.i < flow.steps.length) { b.remove(); return; } b.onclick = () => showTab(backTo); }
 const dlg = () => $('#dlg'), dlgCard = () => $('#dlg-card');
-function closeDlg() { dlg().classList.add('hidden'); dlgCard().innerHTML = ''; dlgCard().classList.remove('hdcard'); }
+function closeDlg() { dlg().classList.add('hidden'); dlgCard().innerHTML = ''; dlgCard().classList.remove('hdcard'); document.documentElement.classList.remove('dlg-open'); }
+/**
+ * A button that acts on the finger lifting, not on iOS's "click", which it withholds whenever it suspects the touch
+ * began a scroll; in a dialog over a scrolling page that swallowed taps (Build 115). A touch that moves under 12 px
+ * counts as a tap; the click that follows is ignored so the action runs once. Mouse and keyboard still use click.
+ */
+let fastFired = 0;                                   // shared: the button that gets the trailing click may be a new one
+function fastTap(el, fn) {
+  if (!el) return; let p0 = null;
+  el.addEventListener('pointerdown', (e) => { if (e.pointerType !== 'mouse') p0 = { x: e.clientX, y: e.clientY }; });
+  el.addEventListener('pointerup', (e) => {
+    if (!p0 || el.disabled) return; const moved = Math.hypot(e.clientX - p0.x, e.clientY - p0.y); p0 = null;
+    if (moved < 12) { e.preventDefault(); fastFired = performance.now(); fn(); }
+  });
+  el.addEventListener('pointercancel', () => { p0 = null; });
+  el.addEventListener('click', (e) => { e.stopPropagation(); if (performance.now() - fastFired < 700) return; if (!el.disabled) fn(); });
+}
 /** Ask for a line of text in the app's own style. Resolves to the text, or null if cancelled. */
 function askText(title, value = '', { hint = '', ok = 'OK', placeholder = '', max = 60 } = {}) {
   return new Promise((resolve) => {
@@ -1705,7 +1721,7 @@ function openWhatsThis(from = tab) {
       ${r.how !== 'aligned' ? `<div class="small" style="margin:4px 0">Which way is the scope facing?</div><div class="dirs wtdirs">${DIRS.map((d, i) => `<button data-wdir="${i * 45}" class="${facing === i * 45 ? 'on' : ''}">${d}</button>`).join('')}</div>` : ''}
       ${r.list.length ? `<div class="whatlist">${r.list.map((c, i) => `<button class="${i === 0 && sure ? 'primary' : ''}" data-wk="${esc(c.o.key)}"><b>${esc(c.o.label)} <span class="wtdir">${compassName(c.o.az)}</span></b><span class="small muted">${c.o.planet ? (c.o.id === 'Moon' ? 'the Moon' : 'planet') : 'star'}, magnitude ${(+c.o.mag).toFixed(1)} · ${c.o.alt.toFixed(0)}° up in the ${compassName(c.o.az)}${i === 0 && sure ? ' · best match' : ''}</span></button>`).join('')}</div>
         <p class="muted small">${sure ? `Tap the right one to ${verb}.` : `These are at the right height. Tap the one in the direction the scope faces to ${verb}, or tap a direction above.`}</p>`
-      : `<p>Nothing bright (stars to magnitude 3, planets, the Moon) is at that height${r.how !== 'height' ? ' in that direction' : ''}. ${facing != null ? 'Try the next direction over.' : 'Is the phone sitting firmly on the tube?'}</p>`}`}
+      : `<p>Nothing bright (stars brighter than magnitude 3, planets, the Moon) is at that height${r.how !== 'height' ? ' in that direction' : ''}. ${facing != null ? 'Try the next direction over.' : 'Is the phone sitting firmly on the tube?'}</p>`}`}
       ${mountChecked() || align.obs.length ? '' : `<p class="small muted">The height reading depends on how the phone sits on the tube, and that hasn't been checked yet. <a id="wt-mc">Check it first</a></p>`}
       <div class="btnrow"><button id="wt-again">Look again</button><button id="wt-close">Close</button></div>`;
     dlgCard().querySelectorAll('[data-wk]').forEach((b) => b.onclick = () => {
@@ -3010,11 +3026,11 @@ function renderLightHere() {
 /** The light-pollution picture for this spot (summary, the sky check if any, and the map) into element el. */
 function lightHereHTML(g, here) {
   const sq = skyQ(), old = state.skyq && !sq ? state.skyq : null;
-  const checkLine = sq ? `<p class="small">Your sky darkness check (${esc(shortDate(sq.when))}): <b>${esc(sq.label)}</b>, about Bortle ${bortleOfNelm(checkNelm(sq))}, stars to magnitude ${checkNelm(sq).toFixed(1)}. The app uses your check, not the map.</p>` : '';
+  const checkLine = sq ? `<p class="small">Your sky darkness check (${esc(shortDate(sq.when))}): <b>${esc(sq.label)}</b>, about Bortle ${bortleOfNelm(checkNelm(sq))}, stars brighter than magnitude ${checkNelm(sq).toFixed(1)}. The app uses your check, not the map.</p>` : '';
   const dbt = old ? checkDoubt(old) : null;
   const oldLine = old ? `<p class="muted small">Your last darkness check (${esc(shortDate(old.when))}) ${dbt ? `read much brighter than the map says for this spot (about Bortle ${bortleOfNelm(old.base)} against Bortle ${dbt.bortle}). Clouds, haze, the Moon, a light nearby or a test run can do that, so` : old.lat != null && distKm({ lat: old.lat, lon: old.lon }, state.site) > SKYQ_KM ? 'was taken somewhere else, so' : `was taken when ${old.moonUp ? 'the Moon' : 'twilight'} was too bright to see the light pollution under it, so`} the app goes by the map here until you check again.</p>` : '';
   if (!here) return `<p class="muted small">This spot is outside the built-in light-pollution map (it covers about 30°–50° N, 70°–100° W). The 30-second check below measures your sky anywhere.</p>${checkLine}${oldLine}`;
-  return `<p class="small">Light-pollution map: <b>about Bortle ${here.bortle}</b> — ${BORTLE_NAME[here.bortle].toLowerCase()}. Sky brightness about ${here.sqm.toFixed(1)} mag/arcsec², stars to about magnitude ${here.nelm.toFixed(1)} overhead on a clear moonless night.</p>
+  return `<p class="small">Light-pollution map: <b>about Bortle ${here.bortle}</b> — ${BORTLE_NAME[here.bortle].toLowerCase()}. Sky brightness about ${here.sqm.toFixed(1)} mag/arcsec², stars brighter than about magnitude ${here.nelm.toFixed(1)} overhead on a clear moonless night.</p>
     ${checkLine}${oldLine}
     <canvas class="lpmap" aria-label="Map of estimated sky brightness around you. Pinch or use Closer and Wider to zoom, drag to move."></canvas>
     <div class="lpleg">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map((b) => `<span><i style="background:${BORTLE_COL[b]}"></i>${b}</span>`).join('')}</div>
@@ -3613,7 +3629,7 @@ function openHourDetail(rec, ix) {
       ${row('Darkness', tw)}
       ${row('Moon', moonTxt)}
       ${row('Light pollution', lpText)}
-      ${row('Sky overhead', `${sl.sb.toFixed(1)} mag/arcsec², stars to about mag ${nelm.toFixed(1)} by eye${natAdd ? ` (town lights ${lpSb.toFixed(1)}, the Moon and twilight brighten it by ${natAdd})` : ' (town lights only)'}`)}
+      ${row('Sky overhead', `${sl.sb.toFixed(1)} mag/arcsec²: by eye you'd see stars brighter than about magnitude ${nelm.toFixed(1)}${natAdd ? ` (town lights ${lpSb.toFixed(1)}, the Moon and twilight brighten it by ${natAdd})` : ' (town lights only)'}`)}
       ${cf.temp != null ? row('Temperature', `${Math.round(cf.temp)}°C${cf.feels != null && Math.round(cf.feels) < Math.round(cf.temp) ? `, feels like ${Math.round(cf.feels)}°C in the wind` : ''}${coldWord(cf.feels) ? ': ' + coldWord(cf.feels) : ''}. <b>Dress for about ${Math.round((cf.feels ?? cf.temp) - 10)}°C</b>: you hardly move at a telescope`) : ''}
       ${cf.gap != null ? row('Dew', `${cf.gap.toFixed(0)}° above the dew point${cf.gap <= 2.5 ? `: ${cf.temp <= 0.5 ? 'frost' : 'dew'} likely on the finder, eyepieces and small mirror. Between looks: finder cap on, eyepieces capped or in a closed case or pocket, dust cover on the tube` : cf.gap <= 5 ? ': dew possible later as the scope cools' : ': dry'}`) : ''}
       ${cf.wind != null ? row('Wind', `${Math.round(cf.wind)} km/h${cf.gust ? `, gusts ${Math.round(cf.gust)}` : ''}${Math.max(cf.gust || 0, cf.wind) >= 25 ? ': shaky at high power' : ''}`) : ''}
@@ -3623,9 +3639,10 @@ function openHourDetail(rec, ix) {
     <p class="muted small">${rec.eccc ? `Cloud, steadiness (seeing), clear air (transparency), temperature, dew point and wind: Environment Canada${rec.apple ? '; gusts and high cloud: Apple Weather' : ''}. Feels-like: Environment Canada's wind-chill formula.` : 'Cloud, dew and wind: Apple Weather (no steadiness or clear-air forecast outside Environment Canada\'s area).'} Moon, twilight and town lights: worked out by the app for this spot.</p>
     </div><div class="btnrow hdbtns"><button type="button" id="hd-prev" ${ix ? '' : 'disabled'}>‹ Earlier</button><button type="button" id="hd-next" ${ix < rec.rows.length - 1 ? '' : 'disabled'}>Later ›</button><button type="button" id="hd-x">Close</button></div>`;
   const body = dlgCard().querySelector('.hdbody'); if (body) body.scrollTop = 0;
-  $('#hd-prev').onclick = (e) => { e.stopPropagation(); openHourDetail(rec, ix - 1); };
-  $('#hd-next').onclick = (e) => { e.stopPropagation(); openHourDetail(rec, ix + 1); };
-  $('#hd-x').onclick = (e) => { e.stopPropagation(); closeDlg(); };
+  fastTap($('#hd-prev'), () => openHourDetail(rec, ix - 1));
+  fastTap($('#hd-next'), () => openHourDetail(rec, ix + 1));
+  fastTap($('#hd-x'), closeDlg);
+  document.documentElement.classList.add('dlg-open');
   dlg().classList.remove('hidden');
 }
 document.addEventListener('click', (e) => {

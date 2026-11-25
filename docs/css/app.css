@@ -647,3 +647,9 @@ details.more.tdetail > summary { padding: 6px 0 10px; }
 .hdcard .hdbody { flex: 1 1 auto; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 14px 14px 6px; overscroll-behavior: contain; }
 .hdcard .hdbtns { flex: none; margin: 0; padding: 10px 14px 14px; border-top: 1px solid var(--line); background: var(--panel); }
 .hdcard .hdbtns button { min-height: 50px; flex: 1; touch-action: manipulation; }
+/* While a dialog is open the page behind doesn't scroll, so touches in the dialog aren't taken as page scrolls */
+html.dlg-open main { overflow: hidden; }
+html.dlg-open #dlg { overscroll-behavior: contain; touch-action: none; }
+html.dlg-open #dlg .hdbody { touch-action: pan-y; }
+.hdcard .hdbtns button { -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
+.hdcard .hdbtns button:active { background: var(--press); }

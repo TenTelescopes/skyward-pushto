@@ -715,6 +715,17 @@ unrelated extra star in the object-page sentence. Still open with Bryan: whether
     step was silently dropped, so the flow jumped from the previous step straight to blocked-sky tracing. It now
     always runs when its star is on, showing "Earlier tonight: … check again, or keep it".
 
+## Build 115–116 (Nov 25): hour details buttons, caps and "Seeing" wording
+- Hour details card: Earlier / Later / Close were unreliable on the iPhone (a sticky button row inside a scrolling
+  card lost taps to the scroll). Now the card is a column (`.hdcard`): a scrolling middle (`.hdbody`) and a fixed
+  button row outside it, 50 px tall, touch-action: manipulation. Still took several taps on the phone, so the buttons
+  now act on the finger lifting (`fastTap`: pointerup within 12 px; the trailing click is ignored for 700 ms, shared
+  across buttons because the card re-renders) and the page behind is locked while the card is open (`html.dlg-open`).
+- "stars to magnitude X" → "stars brighter than magnitude X" wherever the naked-eye limit is given.
+- Dew advice names the caps: finder's front cap, eyepiece caps or a closed case / inside pocket, the tube's dust cover.
+- The forecast's steadiness is called seeing: chip "Seeing: steady / fair / unsteady", "Seeing (steadiness)" row,
+  "Seeing" column; the start-up step is "Seeing: steady air check".
+
 ## Build 113–114 (Nov 25): the compass from Core Motion, like sky apps; "Align on this" asks which way you face
 - Field report (Build 112): pointed at Saturn with the phone looking down the tube, "Align on this" offered Rigel.
   Cause: on iOS a web page only gets webkitCompassHeading, and the app took it as the heading of the phone's top edge;
