@@ -2996,7 +2996,7 @@ function renderSetup() {
 
     <h2>About</h2>
     <p class="small">Skyward Push-To for Ten Telescopes' Skyward 150 Compact, Skyward 200 Visual and Skyward 400, and for other telescopes such as an 80 mm refractor.</p>
-    <p class="muted small">Sky positions: Astronomy Engine © Don Cross (MIT). Deep-sky positions, sizes and magnitudes: OpenNGC © Mattia Verga (CC BY-SA 4.0). Caldwell, Herschel 400, RASC double-star and bright-star selections compiled from the PiFinder project's catalog files. Star field: Hipparcos main catalogue (ESA 1997). Constellation figures: Stellarium modern sky culture. Named asterisms: Saguaro Astronomy Club asterism list v3.2. Light-pollution map: NASA Black Marble night lights. Town names: GeoNames (CC BY 4.0). Street maps (with internet): © OpenStreetMap contributors (ODbL), openstreetmap.org/copyright. Dark-sky sites: RASC and DarkSky International listings. Telescope specs from the TenTelescopes Skyward150 and Skyward200 repositories (CC BY-NC 4.0).</p>
+    <p class="muted small">Sky positions: Astronomy Engine © Don Cross (MIT). Deep-sky positions, sizes and magnitudes: OpenNGC © Mattia Verga (CC BY-SA 4.0). Globular clusters' horizontal-branch magnitudes: W. E. Harris, Catalog of Parameters for Milky Way Globular Clusters (2010 edition). Caldwell, Herschel 400, RASC double-star and bright-star selections compiled from the PiFinder project's catalog files. Star field: Hipparcos main catalogue (ESA 1997). Constellation figures: Stellarium modern sky culture. Named asterisms: Saguaro Astronomy Club asterism list v3.2. Light-pollution map: NASA Black Marble night lights. Town names: GeoNames (CC BY 4.0). Street maps (with internet): © OpenStreetMap contributors (ODbL), openstreetmap.org/copyright. Dark-sky sites: RASC and DarkSky International listings. Telescope specs from the TenTelescopes Skyward150 and Skyward200 repositories (CC BY-NC 4.0).</p>
     <p class="muted small mono" id="s-diag"></p>`;
   bindBack(el);
   const num = (id) => parseFloat($(id).value);
@@ -4043,6 +4043,28 @@ function previewTime(o, row) {
   try { if (sky.sunAlt(now) > -12) { const n = sky.night(), t = n && (n.astro || n.naut); if (t && +t > +now && sky.altAz(o, new Date(t)).alt > 5) return new Date(t); } } catch (e) { /* no night data */ }
   return now;
 }
+/**
+ * "There's more to see": when tonight (Moon, twilight, low in the sky) shows less of a deep-sky object than this scope
+ * can, say what it looks like on a moonless night with the object high, from here, and from a dark site when that adds
+ * more; and which evenings it's highest. Worded for a first look when it isn't logged as seen. (Build 120)
+ */
+function betterNightHTML(o, seen) {
+  if (!o.key.startsWith('dso:') || !(o.alt > 0) || o.dec == null || o.ra == null) return '';
+  const now = rateNow(o); if (!now || now.cause === 'blocked') return '';
+  const p = profile(), culm = 90 - Math.abs(here().lat - o.dec); if (culm < 15) return '';
+  const at = (nelm) => rate(o, { alt: Math.min(culm, 85), sunAlt: -30, nelm }, p);
+  const more = (a, b) => a && b && (a.level < b.level || (a.res ?? 0) > (b.res ?? 0));   // a shows more than b
+  const home = at(skyNelm()), dark = skyNelm() < 6.2 ? at(6.5) : null;
+  const homeMore = more(home, now), darkMore = more(dark, homeMore ? home : now);
+  if (!homeMore && !darkMore) return '';
+  // Highest at about 10 pm when the Sun's right ascension is the object's minus 10 h; the Sun's RA is 0 h on Mar 20
+  // and gains 2 h a month.
+  const days = ((((o.ra / 15 - 10) % 24) + 24) % 24) / 24 * 365.25, month = new Date(new Date().getFullYear(), 2, 20 + Math.round(days)).toLocaleDateString([], { month: 'long' });
+  const lines = [];
+  if (homeMore) lines.push(`On a moonless night with it high up, your ${esc(p.name)} shows: ${esc(describe(o, home).split(' · ')[0].toLowerCase())}.`);
+  if (darkMore) lines.push(`From a dark site${homeMore ? '' : `, with it high and no Moon`}: ${esc(describe(o, dark).split(' · ')[0].toLowerCase())}.`);
+  return `<div class="card small"><b>${seen ? 'There’s more to see than tonight shows' : 'First look? There’s more to it than tonight shows'}</b><p style="margin:4px 0 0">${lines.join(' ')} It’s highest in the evening around ${month}.</p></div>`;
+}
 function openObject(key, opt = {}) {
   const o = objByKey(key); if (!o) return;
   refreshSky(false);
@@ -4059,6 +4081,7 @@ function openObject(key, opt = {}) {
       <button class="ibtn" id="sh-x" aria-label="Close">✕</button></div>
     ${nav ? `<div class="shnav"><button id="sh-prev" aria-label="Previous target" ${nav.i === 0 ? 'disabled' : ''}>${ICON.prev}</button><span>${nav.i + 1} of ${nav.n} · swipe for the next</span><button id="sh-next" aria-label="Next target" ${nav.i === nav.n - 1 ? 'disabled' : ''}>${ICON.next}</button></div>` : ''}
     ${r ? `<p class="rateline"><span class="dots lv${r.level}">${DOTS[r.level]}</span> <b>${LEVEL_NAMES[r.level]}</b> ${row ? 'at its best in your session' : 'right now'} — ${esc(row ? row.desc : describe(o, r))}</p>` : (o.alt <= 0 ? '<p class="rateline muted">Below the horizon right now.</p>' : '')}
+    ${betterNightHTML(o, seen)}
     ${blurb ? `<p class="blurb">${esc(blurb)}</p>` : ''}
     ${!isTarget ? alignCardHTML(o, planList().some((x) => x.key === key && x.sync)) : ''}
     ${doubleNature(o) ? `<p class="small">${esc(NATURE_NOTE[doubleNature(o)])}</p>` : ''}

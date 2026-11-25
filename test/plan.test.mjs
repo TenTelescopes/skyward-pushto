@@ -134,3 +134,13 @@ ok('a pair is not split when one of them is a hair under the height limit', () =
   assert.equal(Math.abs(lab.indexOf('M81') - lab.indexOf('M82')), 1, lab.join(' '));
 });
 console.log('plan tests passed');
+
+// Build 119: globulars break into stars by aperture and sky (Harris 2010 horizontal-branch magnitudes)
+ok('M13: an 80 mm shows a glow, a 16-inch under a dark sky resolves it across the face', () => {
+  const S80 = { aperture: 80, fl: 600, eyepieces: eps }, S400 = { aperture: 406, fl: 1624, eyepieces: eps };
+  const m13 = find('M13'); assert.equal(m13.id, 'NGC 6205');
+  assert.ok(R('M13', { nelm: 5 }, S80).res <= 1);
+  assert.equal(R('M13', { nelm: 6.3 }, S400).res, 3);
+  assert.ok(R('M13', { nelm: 6.3 }, S150).res > R('M13', { alt: 25, moonAlt: 40, moonFrac: 0.97, moonSep: 90 }, S150).res);   // a dark night shows more than a moonlit one
+  assert.match(describe(m13, R('M13', { nelm: 6.3 }, S400)), /resolved/);
+});

@@ -1,3 +1,4 @@
+import { GC_VHB } from './globulars.js';
 // Visibility model — "how well will I see it tonight, in this scope?"
 // A general guide, not a precise prediction. Built from published models:
 //   • eye contrast threshold: Crumey (2014, MNRAS 442, 2600), scotopic model, fitted to Blackwell's data
@@ -243,8 +244,8 @@ export function rate(o, cond, scope) {
     const calc = (B) => best(each(B));
     one = calc(Bsky);
     one = { ...one, ep: viewEp(o, each(Bsky), one, scope).ep };
-    const lv = levelOf(one.margin);
-    if (lv === 0) return { level: 0, margin: one.margin, ep: one.ep, cause: null };
+    const lv = levelOf(one.margin), res = o.t === 'GC' ? gcResolve(o, Bsky, ext, scope) : null;
+    if (lv === 0) return { level: 0, margin: one.margin, ep: one.ep, cause: null, res };
     // What is holding it back most?
     const gains = {
       moon: Bmoon > 0 ? calc(Bbase + Btw).margin - one.margin : 0,
@@ -253,12 +254,25 @@ export function rate(o, cond, scope) {
       sky: nelm < 6.2 ? calc(cdFromSB(skyFromNelm(6.3)) + Bmoon + Btw).margin - one.margin : 0,
     };
     const top = Object.entries(gains).sort((a, b) => b[1] - a[1])[0];
-    return { level: lv, margin: one.margin, ep: one.ep, cause: top[1] >= 0.4 ? top[0] : 'faint' };
+    return { level: lv, margin: one.margin, ep: one.ep, cause: top[1] >= 0.4 ? top[0] : 'faint', res };
   }
   let lv = levelOf(one.margin);
   if (o.planet && lv < 1) lv = 1;                                               // Uranus and Neptune: there, but tiny and star-like — not a showpiece
   const ep = o.planet ? planetEp(o, scope) : mags(scope).sort((a, b) => a.M - b.M)[0].ep;   // a single star looks best, and is easiest to find, at low power
   return { level: lv, margin: one.margin, ep, epSteady: planetSteady(o, scope), cause: lv ? cause(o, cond, scope, lv) : null };
+}
+/**
+ * Can this telescope break a globular cluster into stars tonight? From the cluster's horizontal branch (V_HB, Harris
+ * 2010): its brightest red giants are about 3 magnitudes brighter than that, and stars become numerous at it. A star
+ * counts as seen when the faintest-star limit in the best eyepiece beats it by half a magnitude (the cluster's own glow
+ * brightens the background). A rule of thumb, not a published method. (Build 120)
+ * Returns 3 resolved across the face, 2 edges break into stars, 1 grainy with a few stars at the edges, 0 a glow;
+ * null without V_HB.
+ */
+function gcResolve(o, Bsky, ext, scope) {
+  const vhb = GC_VHB[o.id]; if (vhb == null) return null;
+  const lim = Math.max(...starMargins(0, Bsky, scope).map((x) => x.margin)) - ext - 0.5;   // faintest star seen, magnitude
+  return lim >= vhb + 0.3 ? 3 : lim >= vhb - 1.5 ? 2 : lim >= vhb - 2.7 ? 1 : 0;
 }
 function cause(o, cond, scope, lv) { return cond.alt < 25 ? 'low' : 'faint'; }
 
@@ -282,6 +296,13 @@ export function describe(o, r) {
     TR: ['Easy to pick out — compare it with the stars around it', 'A faint new star — check the chart closely', 'Very faint — at the limit'],
     MS: ['Plenty of meteors — look anywhere, not at the radiant', 'Some meteors — lie back and give it 20 minutes', 'Only the odd meteor'],
   }[t] || ['Easy', 'Visible', 'Hard'];
+  // Globulars with Harris data: say how far the scope breaks it into stars, not just how bright the glow is.
+  if (t === 'GC' && r.res != null && r.level < 3) {
+    const glow = r.level === 2 ? 'Faint round glow' : r.level === 1 ? 'Round glow' : 'Bright round glow';
+    const lines = [`${glow} with a brighter centre`, `${glow}, grainy — a few stars at the edges with averted vision`, 'Ball of stars: the edges break into stars, the centre stays a glow', 'Ball of stars, resolved right across its face'];
+    const why = { moon: 'Moon washes it out', twilight: 'Sky not dark yet', low: 'Low in the haze', sky: 'Light pollution' }[r.cause];
+    return `${lines[r.res]}${why && r.res < 3 ? ` · ${why}` : ''}`;
+  }
   if (o.planet && (o.id === 'Uranus' || o.id === 'Neptune') && r.level < 3) return r.level === 1 ? 'A tiny disc, almost star-like — high power shows it is not a star' : 'Tiny and faint — hard to tell from a star';
   const why = { moon: 'Moon washes it out', twilight: 'Sky not dark yet', low: 'Low in the haze', sky: 'Light pollution', close: 'Close pair', faint: 'Faint', below: 'Below the horizon', daylight: 'Daylight', blocked: 'Behind the trees or buildings you marked' }[r.cause] || '';
   if (o.shower) return r.level === 3 ? (r.cause === 'daylight' || r.cause === 'twilight' ? 'Not now — wait for full dark' : 'Not now — too few to be worth the wait') : `${['Plenty of meteors — look anywhere, not at the radiant', 'Some meteors — lie back and give it 20 minutes', 'Only the odd meteor'][Math.min(2, r.level)]} · about ${Math.max(1, Math.round(r.hr))} an hour${r.cause === 'moon' ? ' · the Moon hides the fainter ones' : ''}`;

@@ -715,6 +715,19 @@ unrelated extra star in the object-page sentence. Still open with Bryan: whether
     step was silently dropped, so the flow jumped from the previous step straight to blocked-sky tracing. It now
     always runs when its star is on, showing "Earlier tonight: … check again, or keep it".
 
+## Build 120 (Nov 25): globulars break into stars; "there's more to see"
+- Globulars resolve into stars (new `js/globulars.js`, `gcResolve` in vis.js): Harris 2010 horizontal-branch magnitudes
+  (V_HB) for the 107 NGC/IC globulars, fetched Nov 25 with Bryan's OK and checked against known values (M13 14.90,
+  M3 15.64, M5 15.07, M92 15.10). Brightest giants ≈ V_HB − 3. With the faintest star the scope shows in its best
+  eyepiece (less 0.5 mag for the cluster's glow and extinction): reaches V_HB + 0.3 → "resolved right across its face",
+  V_HB − 1.5 → "edges break into stars", V_HB − 2.7 → "grainy, a few stars at the edges", else a glow. Thresholds are a
+  rule of thumb, not a published method. M13 at 60°: 80 mm suburb = glow; 150 mm dark = edges; 16-inch dark = resolved.
+  Credit added under About; globulars.js added to the offline cache (sw.js). Test in plan.test.mjs.
+- "There's more to see" card (`betterNightHTML`) on a deep-sky object's details: when tonight (Moon, twilight, low,
+  light pollution) shows less than the scope can, says what it shows on a moonless night with the object high, from
+  here and from a dark site if that adds more, and the month it's highest at about 10 pm. "First look?" when it isn't
+  logged as seen. Checked: M13 at 6:45 pm tonight from Guelph with the 150.
+
 ## Build 119 (Nov 25): "Passing through" lists only what's worth a look
 - Plan → Passing through (`fillEvents`): a meteor shower only when it gives 5 or more an hour at its best tonight, a
   comet or nova only when the scope can show it from here (rating better than "not visible"), anything already in the
