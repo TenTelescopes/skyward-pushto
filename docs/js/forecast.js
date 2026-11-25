@@ -173,8 +173,8 @@ export function outlook(rows, { moonUp, nelm, fromCheck = false, restOfNight = f
   if (dewHour) {
     const frost = dewHour.c.temp <= 0.5;
     extra.dew = { from: dewHour.r.t, frost };
-    extra.warn.push(`${frost ? 'Frost' : 'Dew'} likely from about ${hhmm(dewHour.r.t)}: keep the finder and eyepieces capped until you use them.`);
-    hints.push(`${frost ? 'Frost' : 'Dew'} forecast: the air is within ${dewHour.c.gap.toFixed(0)}° of its dew point by ${hhmm(dewHour.r.t)}. On a clear night a telescope cools below the air, so the finder, the eyepieces and the small mirror fog first. Keep caps on until you use them, and a dew shield (a tube of foam or card past the end) or a little warmth from a hair dryer on low clears it.`);
+    extra.warn.push(`${frost ? 'Frost' : 'Dew'} likely from about ${hhmm(dewHour.r.t)}: between looks, keep the finder's front cap on, eyepieces capped or in a closed case (or an inside pocket), and the tube's dust cover on.`);
+    hints.push(`${frost ? 'Frost' : 'Dew'} forecast: the air is within ${dewHour.c.gap.toFixed(0)}° of its dew point by ${hhmm(dewHour.r.t)}. On a clear night a telescope cools below the air, so the finder, the eyepieces and the small mirror fog first. Between looks, keep the caps on: the finder's front cap, the eyepieces' caps (or keep spare eyepieces in a closed case or an inside pocket, where they stay warm), and the dust cover on the open end of the tube. A dew shield (a tube of foam or card past the end of the finder) slows it, and a hair dryer on low clears it.`);
   }
   const coldest = cf.filter((x) => x.c.feels != null).sort((a, b) => a.c.feels - b.c.feels)[0];
   if (coldest) {

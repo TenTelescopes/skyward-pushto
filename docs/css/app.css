@@ -641,5 +641,9 @@ details.more.tdetail > summary { padding: 6px 0 10px; }
 .hdkv { grid-template-columns: 8.2em 1fr; }
 .hdkv > span:nth-child(even) { text-align: left; }
 .hdkv > span:nth-child(odd) { color: var(--dim); }
-.hdbtns { position: sticky; bottom: -14px; background: var(--bg); box-shadow: 0 -8px 12px var(--bg); margin: 0 -14px -14px; padding: 8px 14px 14px; }
 .glance > span.warn { border-color: var(--hi); color: var(--hi); }
+/* Hour details: fixed button row under a scrolling middle (no sticky row inside a scroller: it lost taps on iPhone) */
+#dlg .card.hdcard { display: flex; flex-direction: column; overflow: hidden; max-height: 86vh; padding: 0; }
+.hdcard .hdbody { flex: 1 1 auto; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 14px 14px 6px; overscroll-behavior: contain; }
+.hdcard .hdbtns { flex: none; margin: 0; padding: 10px 14px 14px; border-top: 1px solid var(--line); background: var(--panel); }
+.hdcard .hdbtns button { min-height: 50px; flex: 1; touch-action: manipulation; }

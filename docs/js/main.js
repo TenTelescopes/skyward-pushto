@@ -294,7 +294,7 @@ let backTo = 'more';                               // the main tab a sub-screen 
 const BACK = '<button class="back" data-back>‹ Back</button>';
 function bindBack(el) { const b = $('[data-back]', el); if (!b) return; if (flow && flow.i >= 0 && flow.i < flow.steps.length) { b.remove(); return; } b.onclick = () => showTab(backTo); }
 const dlg = () => $('#dlg'), dlgCard = () => $('#dlg-card');
-function closeDlg() { dlg().classList.add('hidden'); dlgCard().innerHTML = ''; }
+function closeDlg() { dlg().classList.add('hidden'); dlgCard().innerHTML = ''; dlgCard().classList.remove('hdcard'); }
 /** Ask for a line of text in the app's own style. Resolves to the text, or null if cancelled. */
 function askText(title, value = '', { hint = '', ok = 'OK', placeholder = '', max = 60 } = {}) {
   return new Promise((resolve) => {
@@ -3600,26 +3600,32 @@ function openHourDetail(rec, ix) {
     if (sl.sb >= 20 && sun <= -18 && (!r.transp || r.transp >= 3)) suits.push('galaxies and nebulae');
   }
   const ap = r.ap, cf = comfort(r), row = (a, b) => `<span>${a}</span><span>${b}</span>`;
-  dlgCard().innerHTML = `<h3 style="margin-top:0;display:flex;align-items:center;gap:8px"><span class="hdface q${hl.lvl}">${f}</span>${t.toLocaleDateString([], { weekday: 'short' })} ${t.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}: ${W}</h3>
+  // Its own layout (Build 114): a scrolling middle and a fixed row of buttons below it, outside the scrolling part,
+  // because on the phone a sticky row inside a scrolling box lost taps to the scroll.
+  dlgCard().classList.add('hdcard');
+  dlgCard().innerHTML = `<div class="hdbody"><h3 style="margin-top:0;display:flex;align-items:center;gap:8px"><span class="hdface q${hl.lvl}">${f}</span>${t.toLocaleDateString([], { weekday: 'short' })} ${t.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}: ${W}</h3>
     ${hl.why.length ? `<p class="small" style="margin:0 0 6px">Held back by: ${esc(hl.why.join(', '))}.</p>` : '<p class="small" style="margin:0 0 6px">Nothing holding it back.</p>'}
     <div class="kv hdkv">
       ${row('Cloud', r.cloud == null ? 'no forecast' : `${Math.round(r.cloud)}%${r.cloudSrc === 'apple' ? ' (Apple Weather)' : ''}`)}
       ${ap && ap.high != null ? row('High cloud', `${Math.round(ap.high)}%${ap.high >= 40 ? ': thin haze, dims faint things' : ''}`) : ''}
-      ${row('Steadiness', see)}
+      ${row('Seeing (steadiness)', see)}
       ${row('Clear air', tr)}
       ${row('Darkness', tw)}
       ${row('Moon', moonTxt)}
       ${row('Light pollution', lpText)}
       ${row('Sky overhead', `${sl.sb.toFixed(1)} mag/arcsec², stars to about mag ${nelm.toFixed(1)} by eye${natAdd ? ` (town lights ${lpSb.toFixed(1)}, the Moon and twilight brighten it by ${natAdd})` : ' (town lights only)'}`)}
       ${cf.temp != null ? row('Temperature', `${Math.round(cf.temp)}°C${cf.feels != null && Math.round(cf.feels) < Math.round(cf.temp) ? `, feels like ${Math.round(cf.feels)}°C in the wind` : ''}${coldWord(cf.feels) ? ': ' + coldWord(cf.feels) : ''}. <b>Dress for about ${Math.round((cf.feels ?? cf.temp) - 10)}°C</b>: you hardly move at a telescope`) : ''}
-      ${cf.gap != null ? row('Dew', `${cf.gap.toFixed(0)}° above the dew point${cf.gap <= 2.5 ? `: ${cf.temp <= 0.5 ? 'frost' : 'dew'} likely on the finder, eyepieces and small mirror; keep caps on` : cf.gap <= 5 ? ': dew possible later as the scope cools' : ': dry'}`) : ''}
+      ${cf.gap != null ? row('Dew', `${cf.gap.toFixed(0)}° above the dew point${cf.gap <= 2.5 ? `: ${cf.temp <= 0.5 ? 'frost' : 'dew'} likely on the finder, eyepieces and small mirror. Between looks: finder cap on, eyepieces capped or in a closed case or pocket, dust cover on the tube` : cf.gap <= 5 ? ': dew possible later as the scope cools' : ': dry'}`) : ''}
       ${cf.wind != null ? row('Wind', `${Math.round(cf.wind)} km/h${cf.gust ? `, gusts ${Math.round(cf.gust)}` : ''}${Math.max(cf.gust || 0, cf.wind) >= 25 ? ': shaky at high power' : ''}`) : ''}
       ${row('Planets up', planets.length ? planets.map((x) => `${esc(x.o.label)} ${x.p.alt.toFixed(0)}° ${compassName(x.p.az)}`).join(', ') : 'none above 10°')}
     </div>
     ${suits.length ? `<p class="small"><b>Good for:</b> ${esc(suits.join('; '))}.</p>` : ''}
     <p class="muted small">${rec.eccc ? `Cloud, steadiness (seeing), clear air (transparency), temperature, dew point and wind: Environment Canada${rec.apple ? '; gusts and high cloud: Apple Weather' : ''}. Feels-like: Environment Canada's wind-chill formula.` : 'Cloud, dew and wind: Apple Weather (no steadiness or clear-air forecast outside Environment Canada\'s area).'} Moon, twilight and town lights: worked out by the app for this spot.</p>
-    <div class="btnrow hdbtns"><button id="hd-prev" ${ix ? '' : 'disabled'}>‹ Earlier</button><button id="hd-next" ${ix < rec.rows.length - 1 ? '' : 'disabled'}>Later ›</button><button id="hd-x">Close</button></div>`;
-  $('#hd-prev').onclick = () => openHourDetail(rec, ix - 1); $('#hd-next').onclick = () => openHourDetail(rec, ix + 1); $('#hd-x').onclick = closeDlg;
+    </div><div class="btnrow hdbtns"><button type="button" id="hd-prev" ${ix ? '' : 'disabled'}>‹ Earlier</button><button type="button" id="hd-next" ${ix < rec.rows.length - 1 ? '' : 'disabled'}>Later ›</button><button type="button" id="hd-x">Close</button></div>`;
+  const body = dlgCard().querySelector('.hdbody'); if (body) body.scrollTop = 0;
+  $('#hd-prev').onclick = (e) => { e.stopPropagation(); openHourDetail(rec, ix - 1); };
+  $('#hd-next').onclick = (e) => { e.stopPropagation(); openHourDetail(rec, ix + 1); };
+  $('#hd-x').onclick = (e) => { e.stopPropagation(); closeDlg(); };
   dlg().classList.remove('hidden');
 }
 document.addEventListener('click', (e) => {
@@ -3636,7 +3642,7 @@ function glanceHTML(rec, n, t = new Date()) {
   chips.push(`<span>${dark && now >= dark && now < (n.astroAm || n.rise || now) && nightKey(t.getTime()) === nightKey(now.getTime()) ? 'Dark now' : 'Dark ' + hm(dark)}</span>`);
   const m = sky.moonInfo(dark || t); chips.push(`<span>${ICON.moon}${Math.round(m.frac * 100)}%</span>`);
   const bort = skyQ() ? bortleOfNelm(checkNelm()) : (mapSky() || {}).bortle; if (bort) chips.push(`<span>Bortle ${bort}</span>`);
-  chips.push(`<span>Steady: ${SEEING_WORD[seeingFor(t)]}</span>`);
+  chips.push(`<span title="Seeing: how steady the air is. Steady air gives sharp planets and close doubles at high power.">Seeing: ${({ poor: 'unsteady', average: 'fair', good: 'steady' })[seeingFor(t)]}</span>`);   // the astronomers' word, with plain values
   if (o && o.extra && o.extra.cold && o.extra.cold.feels <= 5) chips.push(`<span class="${o.extra.cold.feels <= -10 ? 'warn' : ''}" title="Coldest ${Math.round(o.extra.cold.temp)}°C, feels like ${Math.round(o.extra.cold.feels)}°C. Standing still at a telescope, dress for about 10° colder.">Feels ${Math.round(o.extra.cold.feels)}° · dress for ${o.extra.cold.dressFor}°</span>`);
   if (o && o.extra && o.extra.dew) chips.push(`<span title="The air reaches its dew point: the finder, eyepieces and small mirror fog first.">${o.extra.dew.frost ? 'Frost' : 'Dew'} from ${hm(o.extra.dew.from)}</span>`);
   if (rec && rec.rows && rec.rows.length > 2) {                 // the night hour by hour
@@ -3674,8 +3680,8 @@ function outlookHTML(rec, { planStart = null, hint = true } = {}) {
     ${o.best.length ? `<div class="small">Best for: ${esc(o.best.join('; '))}.</div>` : ''}
     ${o.extra && o.extra.warn && o.extra.warn.length ? `<ul class="fcwarn small">${o.extra.warn.map((w) => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}
     <details class="more"><summary>Hour by hour</summary>
-      <div class="fcgrid"><div class="fch lab"><span></span><span>Cloud</span><span>Steady</span><span>Clear air</span><span>Moon</span>${hasComfort ? '<span>Feels like</span><span>Dew gap</span><span>Wind</span>' : ''}${hasHigh ? '<span>High cloud</span>' : ''}</div>${cells}</div>
-      <p class="muted small">${rec.eccc ? 'Steady (seeing) and clear air (transparency) are out of 5. Environment Canada calibrated the steadiness forecast with 28–35 cm telescopes and says it can be a little pessimistic for smaller ones. Your own twinkle check beats it on the night.' : 'Outside Environment Canada\'s area there is no steadiness or clear-air forecast: do the twinkle check on the night.'}${hasComfort ? ' Feels like: °C with wind chill; dress for about 10° colder, since you hardly move at a telescope. Dew gap: how far the air is above its dew point; at 2° or less expect dew (frost below freezing). Wind: km/h (gusts where known).' : ''}</p>
+      <div class="fcgrid"><div class="fch lab"><span></span><span>Cloud</span><span>Seeing</span><span>Clear air</span><span>Moon</span>${hasComfort ? '<span>Feels like</span><span>Dew gap</span><span>Wind</span>' : ''}${hasHigh ? '<span>High cloud</span>' : ''}</div>${cells}</div>
+      <p class="muted small">${rec.eccc ? 'Seeing (how steady the air is) and clear air (transparency) are out of 5. Environment Canada calibrated the steadiness forecast with 28–35 cm telescopes and says it can be a little pessimistic for smaller ones. Your own twinkle check beats it on the night.' : 'Outside Environment Canada\'s area there is no steadiness or clear-air forecast: do the twinkle check on the night.'}${hasComfort ? ' Feels like: °C with wind chill; dress for about 10° colder, since you hardly move at a telescope. Dew gap: how far the air is above its dew point; at 2° or less expect dew (frost below freezing). Wind: km/h (gusts where known).' : ''}</p>
     </details>
     ${hint ? `<p class="muted small iconline" style="margin:4px 0 0">${ICON.bulb}${esc(hintText)}</p>` : ''}
     <p class="muted small fcattr">${rec.eccc ? `${esc(ATTRIB)} · <a href="${LICENCE_URL}" target="_blank" rel="noopener">licence</a>` : ''}${rec.apple ? `${rec.eccc ? '<br>' : ''}<span class="wkmark">${rec.apple.markDark ? `<img src="${esc(rec.apple.markDark)}" alt="Apple Weather" height="12"${theme.shade > 0.5 ? ' style="filter:sepia(1) saturate(8) hue-rotate(-40deg) brightness(.6)"' : ''}>` : ' Weather'}</span> dew, wind${rec.eccc ? ', high cloud' : ' and cloud'} · <a href="${esc(rec.apple.legal || 'https://developer.apple.com/weatherkit/data-source-attribution/')}" target="_blank" rel="noopener">other data sources</a>` : ''}</p>
@@ -3708,12 +3714,12 @@ function openSeeingCheck(mode = 'twinkle') {
   if (mode === 'twinkle') {
     if (!dark) {                                  // daylight or bright twilight: no stars to judge by yet
       const f = seeingSource() === 'forecast' ? ` Until then the app uses Environment Canada's forecast (${SEEING_WORD[seeingNow()]}).` : ' Until then the app assumes an average night.';
-      card.innerHTML = `<h3 style="margin-top:0">Steady air check</h3>
+      card.innerHTML = `<h3 style="margin-top:0">Seeing: steady air check</h3>
         <p><b>This needs stars, so it only works once it is dark.</b> Come back after sunset, when bright stars are out, and it takes ten seconds.${f}</p>
         <button id="see-close" class="primary" style="width:100%;margin-top:6px">${flow ? 'Skip for now' : 'OK'}</button>`;
       $('#see-close').onclick = close; return;
     }
-    card.innerHTML = `<h3 style="margin-top:0">Steady air check</h3>
+    card.innerHTML = `<h3 style="margin-top:0">Seeing: steady air check</h3>
       ${seeingTonight() ? `<p class="small">Earlier tonight: <b>${SEEING_WORD[seeingTonight().v]}</b> (${seeingTonight().how === 'pick' ? 'picked' : 'checked'} at ${hm(new Date(seeingTonight().when))}). The air changes through the evening, so check again, or <button class="mini" id="see-keep">keep it</button></p>` : ''}
       <p>${st ? `Look at <b>${esc(st.o.label)}</b>, ${st.p.alt.toFixed(0)}° up in the ${compassName(st.p.az)}, for about ten seconds.` : dark ? 'Look at any bright star at least halfway up the sky for about ten seconds.' : 'Do this after dark: look at a bright star at least halfway up the sky for about ten seconds.'}
       <span class="muted small">Not a star near the horizon: everything twinkles down there, whatever the air is doing higher up.</span></p>
@@ -4079,7 +4085,7 @@ const ACTIVITIES = [
 const STEP_INFO = {
   check: ['Phone check-up', 'optional, 4 min, once per phone — how far to trust the arrows'],
   sky: ['Sky darkness check', '30 s, once fully dark — count Little Dipper stars'],
-  seeing: ['Steady air check', '10 s, after dark — how much the stars twinkle'],
+  seeing: ['Seeing: steady air check', '10 s, after dark — how much the stars twinkle'],
   horizon: ['Blocked sky', 'one slow turn with the phone, once per place'],
   align: ['Star alignment', '2 min — point at two bright stars'],
 };
