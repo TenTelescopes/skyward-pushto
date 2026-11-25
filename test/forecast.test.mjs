@@ -34,6 +34,26 @@ await ok('fetching: HRDPS first, RDPS cloud when HRDPS has no value, nulls survi
   assert.equal(none, null);
 });
 
+// Build 119: saved copies and no data connection
+await ok('no connection: a saved forecast under 12 hours old is used and marked cached; older is dropped', async () => {
+  const mem = new Map(), storage = { getItem: (k) => mem.get(k) ?? null, setItem: (k, v) => mem.set(k, v) };
+  const good = async (url) => ({ ok: true, json: async () => ({ features: [{ properties: { value: /Seeing|Transparency/.test(url) ? 3 : 10 } }] }) });
+  const dead = async () => { throw new Error('offline'); };
+  const hrs = hoursBetween(H(23), H(26)), t0 = Date.now();
+  const f = await hourlyForecast(43.5, -80.2, hrs, { fetchFn: good, storage, now: t0 });
+  assert.equal(f.cached, false); assert.equal(f.at, t0);
+  let n = 0; const count = async (u) => { n++; return good(u); };
+  const fresh = await hourlyForecast(43.5, -80.2, hrs, { fetchFn: count, storage, now: t0 + 30 * 60000 });
+  assert.equal(n, 0); assert.equal(fresh.cached, false);                                     // under 90 min: no fetch
+  const off = await hourlyForecast(43.5, -80.2, hrs, { fetchFn: dead, storage, online: false, now: t0 + 5 * 3600000 });
+  assert.equal(off.cached, true); assert.equal(off.at, t0); assert.equal(off.length, hrs.length);     // phone says offline: saved copy
+  const failed = await hourlyForecast(43.5, -80.2, hrs, { fetchFn: dead, storage, now: t0 + 3 * 3600000 });
+  assert.equal(failed.cached, true);                                                           // every request failed: saved copy
+  const later = await hourlyForecast(43.5, -80.2, hrs.slice(1), { fetchFn: dead, storage, online: false, now: t0 + 3600000 });
+  assert.equal(later.length, hrs.length - 1);                                                              // later in the night: same copy, fewer hours
+  assert.equal(await hourlyForecast(43.5, -80.2, hrs, { fetchFn: dead, storage, online: false, now: t0 + 13 * 3600000 }), null);   // over 12 h
+});
+
 // Build 111: Apple Weather extras (iPhone app)
 import { mergeApple } from '../docs/js/forecast.js';
 await ok('Apple Weather: merged by hour, fills missing cloud, warns of dew, gusts and high cloud', () => {

@@ -23,7 +23,9 @@ function skyAxes(sky, o, date) {
  *   opts.rotate180: show as a Newtonian does (rotated 180° from the naked-eye view)
  */
 export function drawEyepiece(cv, sky, o, tgt, ep, scope, opts = {}) {
-  const c = cv.getContext('2d'), W = cv.width, H = cv.height, cx = W / 2, cy = H / 2, Rpx = W * 0.47, k = opts.bright ?? 1;
+  // opts.afovScale (simulator): draw the field circle in proportion to the eyepiece's apparent field, as the eye sees it —
+  // a wider eyepiece at the same power shows a bigger circle, with everything in it the same size.
+  const c = cv.getContext('2d'), W = cv.width, H = cv.height, cx = W / 2, cy = H / 2, Rpx = W * 0.47 * (opts.afovScale ? Math.min(1, ep.afov / opts.afovScale) : 1), k = opts.bright ?? 1;
   const col = (r, g = 0, b = 0, a = 1) => tint(r, g, b, a, k);
   const date = opts.date || new Date();
   const mag = scope.fl / ep.fl, tfov = ep.afov / mag, rad = tfov / 2, s = Rpx / rad;   // px per degree
@@ -47,7 +49,9 @@ export function drawEyepiece(cv, sky, o, tgt, ep, scope, opts = {}) {
   const shown = raw || !F.aperture ? 1 : Math.max(0.12, rel ** 0.45);         // compressed for display (an actual 30× drop would be black on a phone)
   // Stars are points: their brightness follows the mirror's light grasp. Drawn relative to a 150 mm mirror (a 200 mm
   // shows every star 0.6 magnitude brighter). Stars fainter than the scope reaches under this sky are left out.
-  const apGain = raw || !F.aperture ? 0 : 5 * Math.log10(scope.aperture / 150);
+  // All off (a perfect night) keeps the scope's own light grasp: a bigger mirror is a benefit, not a loss to switch off
+  // (Build 119; before, all off drew every scope as a 150 mm, so a big one looked dimmer).
+  const apGain = !raw && !F.aperture ? 0 : 5 * Math.log10(scope.aperture / 150);
   // Low in the sky, starlight crosses more air: everything dims by the extinction at the target's altitude.
   const ext = F.altitude && !raw ? extinctionAt(env.alt ?? tgt.alt) : 0;
   const reach = raw ? 99 : nelmEff - ext + 5 * Math.log10((F.aperture ? scope.aperture : 150) / 7) - 1;   // rough telescopic limit, a magnitude in hand
@@ -126,7 +130,13 @@ export function drawEyepiece(cv, sky, o, tgt, ep, scope, opts = {}) {
   if (t === 'GX') ell(o.maj || 3, o.min, o.pa, (a, b) => { glow(a, b, 0.55); c.scale(1, a / b); c.globalAlpha = Math.max(dsoA, alphaFor(sbObj != null ? sbObj - 2.85 : null)); glow(a * 0.12, b * 0.12, 0.9); c.globalAlpha = dsoA; });   // the core: about a fifth of the light in the middle 12 %, so roughly 2.8 mag/arcsec² brighter than the average
   else if (t === 'GC') ell(o.maj || 5, o.maj || 5, 0, (a) => { glow(a, a, 0.85); c.globalAlpha = 1; /* member stars are points: they don't dim, so a globular resolves better at high power */ let sd = 12345; const rnd = () => ((sd = (sd * 16807) % 2147483647) / 2147483647); for (let i = 0; i < 90; i++) { const r = a * Math.sqrt(rnd()) * 0.9, th = rnd() * 7; star(Math.cos(th) * r, Math.sin(th) * r, 10.5, plain); } c.globalAlpha = dsoA; });
   else if (t === 'PN') ell(o.maj || 1, o.min, o.pa, (a, b) => { c.fillStyle = col(200, 60, 40, 0.75); c.beginPath(); c.ellipse(0, 0, a, b, 0, 0, 7); c.fill(); if (/^M57$|Ring/.test(o.label + o.name)) { c.fillStyle = col(10, 0, 0); c.beginPath(); c.ellipse(0, 0, a * 0.45, b * 0.45, 0, 0, 7); c.fill(); } });
-  else if (t === 'NB' || t === 'CN') { ell(o.maj || 10, o.min, o.pa, (a, b) => glow(a, b, 0.35, 0.05)); if (t === 'CN') sprinkle((o.maj || 10) * 0.7, (o.mag ?? 7) + 1); }
+  else if (t === 'NB' || t === 'CN') {
+    // Bright nebulae are far from even: M42's heart and the Lagoon's centre outshine their outskirts by a few magnitudes,
+    // and they are what you see from town. The faint outer glow uses the average brightness; an inner glow, about a
+    // third the size and 2 mag/arcsec² brighter, gets its own contrast (Build 119; before, M42 vanished under a city sky).
+    ell(o.maj || 10, o.min, o.pa, (a, b) => { glow(a, b, 0.35, 0.05); c.globalAlpha = Math.max(dsoA, alphaFor(sbObj != null ? sbObj - 2 : null)); glow(a * 0.32, b * 0.32, 0.6); c.globalAlpha = dsoA; });
+    if (t === 'CN') sprinkle((o.maj || 10) * 0.7, (o.mag ?? 7) + 1);
+  }
   else if (t === 'DN') { ell(o.maj || 10, o.min, o.pa, (a, b) => { c.fillStyle = 'rgba(0,0,0,0.6)'; c.beginPath(); c.ellipse(0, 0, a, b, 0, 0, 7); c.fill(); }); note = 'A dark cloud: look for a patch with fewer stars, not a glow'; }
   else if (t === 'OC') { sprinkle(o.maj || 8, o.mag ?? 7); note = 'Faint cluster stars are sketched to show the look and size, not plotted one by one'; }
   else if (t === 'OC' || t === 'AS') { if (o.maj) { c.restore(); c.save(); c.beginPath(); c.arc(cx, cy, Rpx, 0, 7); c.clip(); c.strokeStyle = col(90, 10, 0, 0.6); c.setLineDash([4, 8]); c.lineWidth = 2; c.beginPath(); c.arc(cx, cy, Math.min(Rpx * 1.5, (o.maj / 120) * s), 0, 7); c.stroke(); c.setLineDash([]); } }
@@ -207,7 +217,10 @@ export function drawEyepiece(cv, sky, o, tgt, ep, scope, opts = {}) {
     // when the eyepiece splits it cleanly. Draw what the eye would make of it instead: clearly apart when split, just
     // touching when tight, one star when below the telescope's limit. Wider pairs keep their true spacing.
     const L = Math.hypot(dx, dy) || 1, truePx = L * s, app = mag * pr.sep / 60;                                   // how far apart the pair looks to the eye, arcminutes
-    const rA = starR(mags[0] || 4), rB = starR(mags[1] || 6);
+    // Spacing is worked out from the stars' sizes without the seeing blur (Build 119): unsteady air swells and smears
+    // each star, but it doesn't move them apart. (Using the swollen sizes pushed the pair wider when seeing was switched
+    // on, which looked like the view zooming out.)
+    const rA = starR(mags[0] || 4) / bloat, rB = starR(mags[1] || 6) / bloat;
     let want = !resolved ? (egg ? (rA + rB) * 0.3 : 0) : touching ? (rA + rB) * 0.55 : split ? Math.min(18, 7 + 3 * Math.log2(app / 4)) * u : 4.5 * u, px = raw || truePx >= want ? truePx : truePx + 0.4 * (want - truePx);   // wider at higher power; only 40% of the way from true scale to that spacing
     // A faint companion must sit clear of the bright star's soft veil, or the picture hides what the eye can see.
     if (raw) { /* true spacing, even if the dots merge */ } else if (split && px < rA * 0.85 + rB + 2 * u) px = rA * 0.85 + rB + 2 * u;
@@ -230,11 +243,11 @@ export function drawEyepiece(cv, sky, o, tgt, ep, scope, opts = {}) {
       c.fillText(txt, x + vx * d, y + vy * d);
     };
     if (resolved && px >= rA * 0.6 + rB) {
-      put(A.x, A.y, -1, `${nm}${la}${opts.thumb ? '' : ` (mag ${(+mags[0]).toFixed(1)})`}`, rA);
-      put(B.x, B.y, 1, `${nm}${lb}${opts.thumb ? '' : ` (mag ${(+mags[1]).toFixed(1)})`}`, rB);
-    } else { c.textAlign = 'left'; c.fillText(`${nm}${la}+${lb}${touching && !opts.thumb ? ' (touching)' : ''}`, Math.max(A.x, B.x) + rA + 6 * u, Math.min(A.y, B.y) - rA); }
+      put(A.x, A.y, -1, `${nm}${la}${opts.thumb ? '' : ` (mag ${(+mags[0]).toFixed(1)})`}`, rA * bloat);
+      put(B.x, B.y, 1, `${nm}${lb}${opts.thumb ? '' : ` (mag ${(+mags[1]).toFixed(1)})`}`, rB * bloat);
+    } else { c.textAlign = 'left'; c.fillText(`${nm}${la}+${lb}${touching && !opts.thumb ? ' (touching)' : ''}`, Math.max(A.x, B.x) + rA * bloat + 6 * u, Math.min(A.y, B.y) - rA); }
     c.textBaseline = 'alphabetic';
-    note = `${pr.c}: ${pr.sep}″ — ${!resolved ? (F.dawes && pr.sep < dawes ? `closer than this mirror's ${dawes.toFixed(2)}″ limit (Dawes: 116 ÷ ${scope.aperture} mm)${egg ? ': an egg-shaped star at best' : ''}` : `closer than tonight's air allows (about ${lim.toFixed(1)}″)`) : touching ? `right at the limit (${lim.toFixed(2)}″): a figure 8 at high power, in steady air` : split ? 'split at this power' : 'tight at this power; try a shorter eyepiece'}`;
+    note = `${pr.c}: ${pr.sep}″ — ${!resolved ? (F.dawes && pr.sep < dawes ? `closer than this mirror's ${dawes.toFixed(2)}″ limit (Dawes: 116 ÷ ${scope.aperture} mm)${egg ? ': an egg-shaped star at best' : ''}` : `closer than tonight's air allows (about ${lim.toFixed(1)}″)`) : touching ? `right at the limit (${lim.toFixed(2)}″): a figure 8 at high power, in steady air (good seeing)` : split ? 'split at this power' : 'tight at this power; try a shorter eyepiece'}`;
   }
   c.restore();
 

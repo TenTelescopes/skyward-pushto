@@ -54,8 +54,20 @@ function save() {
 /** How the eyepiece shows the sky: a Newtonian rotates it (by where the focuser sits); a refractor with a star diagonal
  *  shows it upright but mirror-reversed; a straight-through refractor turns it upside down. */
 function viewMatrix(p, tg) {
-  if (p.type === 'refractor') return p.diagonal ? [[-1, 0], [0, 1]] : [[-1, 0], [0, -1]];
+  if (lensView(p)) return p.diagonal ? [[-1, 0], [0, 1]] : [[-1, 0], [0, -1]];
   return newtonianMatrix(tg, p.focuser ?? 90);
+}
+/** Refractors and Schmidt-Cassegrains / Maksutovs show the sky the same way: upside down straight through, upright but
+ *  mirror-reversed with a star diagonal. Only a Newtonian rotates it by where its focuser sits. (Build 119) */
+const lensView = (p) => p.type === 'refractor' || p.type === 'sct';
+/** Telescope types someone can pick for their own scope. A Newtonian is stored without a type, like the Skywards. */
+const SCOPE_TYPES = [['reflector', 'Reflector: Newtonian or Dobsonian (mirror)'], ['refractor', 'Refractor (lens)'], ['sct', 'Schmidt-Cassegrain or Maksutov']];
+/** What's wrong with an aperture and focal length (mm), or '' when they make sense. */
+function scopeErr(ap, fl) {
+  if (!(ap >= 20 && ap <= 1500)) return 'Aperture should be between 20 and 1500 mm: the clear diameter of the main mirror or lens.';
+  if (!(fl >= 100 && fl <= 10000)) return 'Focal length should be between 100 and 10000 mm. It is printed on the tube or in the manual (or aperture × the f-number).';
+  const f = fl / ap; if (f < 2 || f > 30) return `That makes f/${f.toFixed(1)}, which no ordinary telescope is. Check the two numbers.`;
+  return '';
 }
 const DEFAULT_PROFILES = {
   sw150c: { name: 'Skyward 150 Compact', aperture: 150, fl: 750,
@@ -538,7 +550,7 @@ function drawZones(c, proj, view, col, s) {
   c.restore();
 }
 
-/** Plan: what's passing through tonight — meteor showers, comets and novae from the feed, and the aurora outlook. */
+/** Plan: what's passing through tonight and worth a look — a good meteor shower, a comet or nova in reach, the northern lights. */
 function fillEvents() {
   const el = $('#pl-ev'); if (!el) return;
   const P = planState(), rows = [], nt = sky.nightAt(new Date()), dark = nt.astro || nt.naut || nt.set || new Date();
@@ -553,6 +565,10 @@ function fillEvents() {
   for (const o of sky.objects) {
     if (!o.shower && !o.comet && o.t !== 'TR') continue;
     const b = best(o), inPlan = P.items.some((x) => x.key === o.key);
+    // Only what's worth a look tonight (Build 118): a shower giving 5 or more meteors an hour, a comet or nova the
+    // scope can show from here, or anything already in the plan. The rest stays out of the list.
+    const worth = o.shower ? !!(b && b.r.hr >= 5) : !!(b && b.r.level < 3);
+    if (!worth && !inPlan) continue;
     let line;
     if (o.shower) {
       const sh = o.shower, dd = Math.round(sh.daysFromPeak);
@@ -565,7 +581,6 @@ function fillEvents() {
   }
   const au = auroraTonight();
   if (au && !au.none) rows.push(`<li><div class="grow"><b>Northern lights possible</b><div class="muted small">Kp ${au.kp.toFixed(1)} forecast around ${fmt(au.at)} · look low in the north, away from lights · NOAA forecast</div></div></li>`);
-  else if (au && au.none) rows.push(`<li><div class="grow"><b>Northern lights</b><div class="muted small">Not expected here tonight (NOAA forecast: Kp up to ${au.kp.toFixed(1)}; about ${Math.max(0, Math.ceil(((66.5 - 5 - geomagLat(here().lat, here().lon)) / 2.05) * 10) / 10)} or more is needed here)</div></div></li>`);
   if (!rows.length) { el.innerHTML = ''; return; }
   el.innerHTML = `<div class="sech"><h3>Passing through <span class="muted small">meteors, comets, aurora</span></h3></div><ul class="list hl">${rows.join('')}</ul>`;
   el.querySelectorAll('[data-evinfo]').forEach((d) => d.onclick = () => openObject(d.dataset.evinfo, { row: rowFor(d.dataset.evinfo) }));
@@ -598,7 +613,7 @@ function renderPlanHere() {
       <div class="muted small">${esc(skyName)} · Moon ${moonTxt}</div>
       <div class="muted small">Sunset ${hm(n.set)} · fully dark ${hm(n.astro)} – ${hm(n.astroAm)}</div>
       <div id="pl-fc">${outlookHTML(fcFor(here(), start), { hint: false })}</div>
-      <div class="sess hzrow"><div class="muted small">Steady air: <b>${SEEING_WORD[seeingFor(start)]}</b> ${{ check: `(${seeingTonight() && seeingTonight().how === 'pick' ? 'you picked it' : 'your check'} tonight)`, forecast: "(Environment Canada's forecast — your own check beats it)", assumed: '(not tested, so the app assumes average)' }[seeingSource(start)]}</div>${nightKey(start.getTime()) === nightKey(Date.now()) ? `<button id="pl-seetest" class="mini">${seeingTonight() ? 'Check again' : 'Test it (10 s)'}</button>` : ''}</div>
+      <div class="sess hzrow"><div class="muted small">Steady air (seeing): <b>${SEEING_WORD[seeingFor(start)]}</b> ${{ check: `(${seeingTonight() && seeingTonight().how === 'pick' ? 'you picked it' : 'your check'} tonight)`, forecast: "(Environment Canada's forecast — your own check beats it)", assumed: '(not tested, so the app assumes average)' }[seeingSource(start)]}</div>${nightKey(start.getTime()) === nightKey(Date.now()) ? `<button id="pl-seetest" class="mini">${seeingTonight() ? 'Check again' : 'Test it (10 s)'}</button>` : ''}</div>
       ${P.site ? '' : `<div class="sess hzrow"><div class="muted small">${placeLabel() ? hzLine() : `Blocked sky: ${hzLine()}`}</div><button id="pl-hz" class="mini">${horizonNow() ? 'Change' : 'Trace it'}</button></div>`}
       </details>
       <div id="pl-form" class="${planEdit ? '' : 'hidden'}" style="margin-top:8px">
@@ -608,8 +623,8 @@ function renderPlanHere() {
         <label class="row"><span>Staying out</span><select id="pl-hours">${[1, 1.5, 2, 3, 4, 6, 8].map((h) => `<option value="${h}" ${+P.hours === h ? 'selected' : ''}>${h} hour${h > 1 ? 's' : ''}</option>`).join('')}</select></label>
         <label class="row"><span>Your sky</span><select id="pl-skysel">${SKY_PICKS.map(([m, l]) => `<option value="${m}" ${Math.abs(skyNelm() - m) < 0.26 ? 'selected' : ''}>${l}</option>`).join('')}${SKY_PICKS.some(([m]) => Math.abs(skyNelm() - m) < 0.26) ? '' : `<option selected>${esc(skyQ() ? skyQ().label : skyGuessName())}</option>`}</select></label>
         <div class="btnrow"><button id="pl-skyq" class="mini">Measure it: Little Dipper check (30 s)</button></div>
-        <label class="row"><span>Steady air</span><select id="pl-seeing">${[['poor', 'Poor: bright stars twinkle hard'], ['average', 'Average (most nights)'], ['good', 'Good: stars barely twinkle']].map(([v, l]) => `<option value="${v}" ${seeingNow() === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
-        <p class="muted small" style="margin:2px 0 0">Steady air decides how much power planets and close doubles can take.</p>
+        <label class="row"><span>Steady air (seeing)</span><select id="pl-seeing">${[['poor', 'Poor: bright stars twinkle hard'], ['average', 'Average (most nights)'], ['good', 'Good: stars barely twinkle']].map(([v, l]) => `<option value="${v}" ${seeingNow() === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+        <p class="muted small" style="margin:2px 0 0">Seeing (how steady the air is) decides how much power planets and close doubles can take.</p>
       </div>
     </div>
     ${planWorthKeeping(P) ? '' : plansList().length ? `<div class="btnrow"><button id="pl-mine" class="mini">${planMine ? 'Hide my plans' : 'My plans'} (${plansList().length})</button></div>` : ''}
@@ -1102,7 +1117,7 @@ function rateLineHTML(o, tgt) {
   const high = tgt && tgt.alt > 80 ? '<div class="muted small">Nearly overhead — awkward to aim a Dobsonian there. Easier later.</div>' : '';
   if (!r) return high;
   if (r.level >= 3) return `${rateTag(r)} <b>${esc(describe(o, r))}</b>`;
-  return `${rateTag(r)} <b>${LEVEL_NAMES[r.level]}</b>${r.ep ? ` · best with the ${esc(r.ep.name)}${r.epSteady ? `, the ${esc(r.epSteady.name)} when the air is steady` : ''}` : ''}<div class="muted small">${esc(describe(o, r))}</div>${high}`;
+  return `${rateTag(r)} <b>${LEVEL_NAMES[r.level]}</b>${r.ep ? ` · best with the ${esc(r.ep.name)}${r.epSteady ? `, the ${esc(r.epSteady.name)} when the air is steady (good seeing)` : ''}` : ''}<div class="muted small">${esc(describe(o, r))}</div>${high}`;
 }
 /** Status line under the arrows. Rebuilt only when its state changes, so its buttons stay tappable. */
 let pstatKey = null, rateT = 0, tickT = 0, onState = { key: null, on: false, since: 0 };
@@ -1132,7 +1147,7 @@ function updateEyeview(o, tgt) {
   const ep = eyepiece(), p = profile();
   const longest = p.eyepieces.reduce((a, e) => (e.fl > a.fl ? e : a), p.eyepieces[0]);
   const fz = p.focuser ?? 90;
-  const matrix = state.rot180 ? (p.type === 'refractor' ? viewMatrix(p, tgt) : newtonianMatrix(tgt, fz)) : null;
+  const matrix = state.rot180 ? (lensView(p) ? viewMatrix(p, tgt) : newtonianMatrix(tgt, fz)) : null;
   const r = drawEyepiece(cv, sky, o.pairs && o.key.startsWith('st:') ? { ...o, t: 'DS' } : o, tgt, ep, p, { matrix, bright: vis(), nelm: skyNelm(), env: eyeEnv(tgt), refExit: p.aperture / (p.fl / longest.fl) });
   const exit = p.aperture / r.mag;
   $('#eyenote').innerHTML = `${esc(ep.name)} · ${r.mag.toFixed(0)}× · ${r.tfov >= 1 ? r.tfov.toFixed(1) + '°' : (r.tfov * 60).toFixed(0) + '′'} across${r.mag > 2 * p.aperture ? ' · <b>more power than this scope can use</b>' : ''}${r.note ? '<br>' + esc(r.note) : ''}`;
@@ -2922,10 +2937,23 @@ function renderSetup() {
   el.innerHTML = `${BACK}
     <h2>Telescope</h2>
     <label class="row"><span>Scope</span><select id="s-prof">${Object.entries(state.profiles).map(([k, v]) => `<option value="${k}" ${k === state.active ? 'selected' : ''}>${esc(v.name)}</option>`).join('')}</select></label>
+    <div class="btnrow"><button class="mini" id="s-new">Add your telescope</button>${p.custom ? `<button class="mini" id="s-del">Delete ${esc(p.name)}</button>` : ''}</div>
+    <div id="s-newform" class="card hidden">
+      <b>Your telescope</b>
+      <label class="row"><span>Name</span><input id="n-name" maxlength="40" placeholder="e.g. My 8-inch Dob"></label>
+      <label class="row"><span>Type</span><select id="n-type">${SCOPE_TYPES.map(([k, l]) => `<option value="${k}">${l}</option>`).join('')}</select></label>
+      <label class="row"><span>Aperture (mm)<span class="muted small" style="display:block">Diameter of the main mirror or lens</span></span><input id="n-ap" type="number" inputmode="decimal" placeholder="e.g. 203"></label>
+      <label class="row"><span>Focal length (mm)<span class="muted small" style="display:block">On the tube or in the manual, or aperture × f-number</span></span><input id="n-fl" type="number" inputmode="decimal" placeholder="e.g. 1200"></label>
+      <p class="muted small">It starts with the eyepieces of the ${esc(p.name)}; change them below once it's saved.</p>
+      <p class="small fcbad" id="n-err"></p>
+      <div class="btnrow"><button id="n-save">Save telescope</button><button class="mini" id="n-cancel">Cancel</button></div>
+    </div>
+    <label class="row"><span>Name</span><input id="s-name" maxlength="40" value="${esc(p.name)}"></label>
+    <label class="row"><span>Type</span><select id="s-type">${SCOPE_TYPES.map(([k, l]) => `<option value="${k}" ${(p.type || 'reflector') === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
     <label class="row"><span>Focal length (mm)</span><input id="s-fl" type="number" inputmode="decimal" value="${p.fl}"></label>
-    <label class="row"><span>Aperture (mm)</span><input id="s-ap" type="number" inputmode="decimal" value="${p.aperture}"></label>
-    ${p.type === 'refractor' ? `<label class="row"><span>Star diagonal (right-angle eyepiece adapter)<span class="muted small" style="display:block">With it the view is upright but mirror-reversed; without it, upside down.</span></span><input type="checkbox" id="s-diag" ${p.diagonal ? 'checked' : ''}></label>` : ''}
-    <div class="focpick${p.type === 'refractor' ? ' hidden' : ''}"><div><b>Where is the focuser?</b><p class="muted small" style="margin:4px 0 0">Stand behind the telescope with the tube level, looking the way it points. Tap where the focuser sticks out. On a Skyward it is on the right.</p><p id="s-foclab" style="margin:8px 0 0"></p></div>
+    <label class="row"><span>Aperture (mm)<span class="muted small" style="display:block">Diameter of the main mirror or lens · f/${(p.fl / p.aperture).toFixed(1)}</span></span><input id="s-ap" type="number" inputmode="decimal" value="${p.aperture}"></label>
+    ${lensView(p) ? `<label class="row"><span>Star diagonal (right-angle eyepiece adapter)<span class="muted small" style="display:block">With it the view is upright but mirror-reversed; without it, upside down.</span></span><input type="checkbox" id="s-diagonal" ${p.diagonal ? 'checked' : ''}></label>` : ''}
+    <div class="focpick${lensView(p) ? ' hidden' : ''}"><div><b>Where is the focuser?</b><p class="muted small" style="margin:4px 0 0">Stand behind the telescope with the tube level, looking the way it points. Tap where the focuser sticks out. On a Skyward it is on the right.</p><p id="s-foclab" style="margin:8px 0 0"></p></div>
       <svg viewBox="0 0 160 112" role="group" aria-label="Focuser position"><circle cx="80" cy="70" r="30" class="fp-tube"/><circle cx="80" cy="70" r="20" class="fp-mirror"/><text x="80" y="74" text-anchor="middle" class="fp-t">tube</text>
       ${FOC.map(([v, l]) => { const s = Math.sin(v * D2R), c = Math.cos(v * D2R); return `<g data-foc="${v}" class="fp-opt${(p.focuser ?? 90) === v ? ' on' : ''}" role="button" aria-label="${l}"><line x1="${(80 + 30 * s).toFixed(1)}" y1="${(70 - 30 * c).toFixed(1)}" x2="${(80 + 44 * s).toFixed(1)}" y2="${(70 - 44 * c).toFixed(1)}"/><circle cx="${(80 + 52 * s).toFixed(1)}" cy="${(70 - 52 * c).toFixed(1)}" r="11"/></g>`; }).join('')}</svg></div>
     <p class="muted small">${esc(p.source || '')}</p>
@@ -2972,10 +3000,34 @@ function renderSetup() {
     <p class="muted small mono" id="s-diag"></p>`;
   bindBack(el);
   const num = (id) => parseFloat($(id).value);
-  if ($('#s-diag')) $('#s-diag').onchange = (e) => { p.diagonal = e.target.checked; save(); };
+  // (the star-diagonal box was also #s-diag, the id of the sensor readout at the bottom, so the readout never showed)
+  if ($('#s-diagonal')) $('#s-diagonal').onchange = (e) => { p.diagonal = e.target.checked; save(); };
+  // Your own telescope (Build 119): name, type, aperture and focal length; it starts with the current scope's eyepieces.
+  const form = $('#s-newform');
+  $('#s-new').onclick = () => { form.classList.remove('hidden'); $('#s-new').disabled = true; $('#n-name').focus(); };
+  $('#n-cancel').onclick = () => { form.classList.add('hidden'); $('#s-new').disabled = false; };
+  $('#n-save').onclick = () => {
+    const name = $('#n-name').value.trim(), ap = num('#n-ap'), fl = num('#n-fl'), type = $('#n-type').value;
+    const err = !name ? 'Give it a name, so you can tell it apart in the list.' : scopeErr(ap, fl);
+    if (err) { $('#n-err').textContent = err; return; }
+    const key = 'my' + Date.now().toString(36);
+    state.profiles[key] = { name, aperture: ap, fl, type: type === 'reflector' ? undefined : type, diagonal: type !== 'reflector', focuser: 90, custom: true,
+      source: 'Your own figures.', eyepieces: structuredClone(p.eyepieces), cal: null };
+    state.active = key; state.ep = 0; align = { obs: [], fit: null, syncs: [], confirm: [] }; applyModelSettings(); save(); renderSetup();
+    toast(`${name} added and in use`);
+  };
+  // Deleting takes two taps (no pop-up): the first changes the button to ask again.
+  if ($('#s-del')) $('#s-del').onclick = (e) => {
+    const b = e.currentTarget; if (!b.dataset.sure) { b.dataset.sure = '1'; b.textContent = `Tap again to delete ${p.name}`; setTimeout(() => { if (b.isConnected) { delete b.dataset.sure; b.textContent = `Delete ${p.name}`; } }, 4000); return; }
+    const gone = p.name; delete state.profiles[state.active]; state.active = Object.keys(state.profiles)[0]; state.ep = 0;
+    align = { obs: [], fit: null, syncs: [], confirm: [] }; applyModelSettings(); save(); renderSetup(); toast(`${gone} deleted`);
+  };
+  $('#s-name').onchange = (e) => { const v = e.target.value.trim(); if (v) { p.name = v; save(); } renderSetup(); };
+  $('#s-type').onchange = (e) => { const v = e.target.value; p.type = v === 'reflector' ? undefined : v; if (v !== 'reflector' && p.diagonal == null) p.diagonal = true; save(); renderSetup(); };
   $('#s-prof').onchange = (e) => { state.active = e.target.value; state.ep = 0; align = { obs: [], fit: null, syncs: [], confirm: [] }; applyModelSettings(); save(); renderSetup(); };
-  $('#s-fl').onchange = () => { p.fl = num('#s-fl') || p.fl; save(); renderSetup(); };
-  $('#s-ap').onchange = () => { p.aperture = num('#s-ap') || p.aperture; save(); };
+  // Checked like a new telescope's figures; a number that makes no sense is refused with the reason.
+  $('#s-fl').onchange = () => { const v = num('#s-fl'), e = scopeErr(p.aperture, v); if (e) toast(e, 6000); else { p.fl = v; save(); } renderSetup(); };
+  $('#s-ap').onchange = () => { const v = num('#s-ap'), e = scopeErr(v, p.fl); if (e) toast(e, 6000); else { p.aperture = v; save(); } renderSetup(); };
   const focLab = () => { $('#s-foclab').innerHTML = 'Selected: <b>' + (FOC.find(([v]) => v === (p.focuser ?? 90)) || FOC[4])[1] + '</b>'; };
   focLab();
   el.querySelectorAll('[data-foc]').forEach((g) => g.onclick = () => { p.focuser = +g.dataset.foc; save(); el.querySelectorAll('[data-foc]').forEach((x) => x.classList.toggle('on', x === g)); focLab(); });
@@ -3491,25 +3543,40 @@ function ensureForecast(site, t, done) {
   const inCanadaModels = site.lat >= 20 && site.lat <= 75 && site.lon <= -40 && site.lon >= -160;   // GeoMet's models cover North America
   const wk = appleWeather();
   if (!inCanadaModels && !wk) return null;
-  const k = fcKey(site, t); if (fcStore.has(k)) return fcStore.get(k);
+  // Build 119: a record is fetched again when it failed, is a cached copy (no connection at the time) or is over 90
+  // minutes old, once the phone is online, at most every 2 minutes. While that runs the old forecast stays on screen.
+  const k = fcKey(site, t), old = fcStore.get(k);
+  if (old && (old.loading || old.refreshing || !fcStale(old))) return old;
   const n = sky.nightAt(t), from = n.naut || n.set, to = n.nautAm || n.rise;
-  if (!from || !to || from.getTime() - Date.now() > 3.3 * 864e5 || to < Date.now()) return null;
-  const rec = { loading: true }; fcStore.set(k, rec);
+  if (!from || !to || from.getTime() - Date.now() > 3.3 * 864e5 || to < Date.now()) return old || null;
+  const rec = old || { loading: true }; fcStore.set(k, rec);
+  rec.args = [site, t, done]; if (old) rec.refreshing = true;
   const rest = from < new Date(), hours = hoursBetween(rest ? new Date() : from, to);
   Promise.all([
     inCanadaModels ? hourlyForecast(site.lat, site.lon, hours) : Promise.resolve(null),
     wk && hours.length ? appleHourly(wk, site.lat, site.lon, hours[0], new Date(+hours[hours.length - 1] + 3600000)) : Promise.resolve(null),
   ]).then(([eccc, apple]) => {
-    rec.loading = false;
+    rec.loading = false; rec.refreshing = false; rec.tried = Date.now();
     const rows = mergeApple(eccc, apple, hours);
-    if (!rows) { rec.failed = true; return; }
-    rec.rows = rows; rec.eccc = !!eccc; rec.apple = apple ? apple.attribution || {} : null;
+    if (!rows) { if (!rec.ol) rec.failed = true; if (done) done(); return; }   // nothing new: keep what was showing
+    rec.failed = false; rec.rows = rows; rec.eccc = !!eccc; rec.apple = apple ? apple.attribution || {} : null;
+    rec.at = eccc && eccc.at ? eccc.at : Date.now(); rec.cached = !!(eccc && eccc.cached) && !apple;
     rec.ol = outlook(rows, { moonUp: (h) => { const m = sky.moonInfo(h); return { up: m.alt > 0, frac: m.frac }; }, nelm: skyNelm(), fromCheck: !!skyQ(), restOfNight: rest });
     setSeeing(seeingNow()); planRows = null; rateCache.clear();
     if (done) done();
   });
   return rec;
 }
+const isOnline = () => navigator.onLine !== false;
+/** Worth fetching again: failed, a cached copy, or over 90 minutes old; only when online, at most every 2 minutes. */
+function fcStale(r) {
+  if (!isOnline() || Date.now() - (r.tried || 0) < 120000) return false;
+  return !!(r.failed || r.cached || (r.at && Date.now() - r.at > 90 * 60000));
+}
+/** When the connection comes back, refresh every forecast that failed or is a cached copy (and redraw its screen). */
+window.addEventListener('online', () => { for (const r of fcStore.values()) if (r.args && (r.failed || r.cached)) { r.tried = 0; ensureForecast(...r.args); } });
+/** "Cached forecast from 9:15" when the forecast is a saved copy shown without a data connection, else ''. */
+const fcCachedNote = (rec) => rec && rec.cached && rec.at ? `Cached forecast from ${hm(new Date(rec.at))} (no data connection)` : '';
 /** "Start at the clear spell" when the forecast has cloud first and the plan starts in it. */
 function clearSpellBtn(rec, start) {
   const o = rec && rec.ol; if (!o || !o.from || o.kind === 'cloudy' || !(o.from > rec.rows[0].t)) return '';
@@ -3554,7 +3621,7 @@ function hourLevel(r) {
   const m = sky.moonInfo(r.t); if (m.alt > 0 && m.frac > 0.4) why.push('bright Moon up');
   if (sky.sunAlt(r.t) > -15) why.push('twilight');
   if (r.transp && r.transp <= 2) why.push('hazy');
-  if (r.seeing && r.seeing <= 2) why.push('unsteady air');
+  if (r.seeing && r.seeing <= 2) why.push('unsteady air (poor seeing)');
   return { lvl: Math.min(2, why.length), why };
 }
 /**
@@ -3631,7 +3698,7 @@ function openHourDetail(rec, ix) {
     <div class="kv hdkv">
       ${row('Cloud', r.cloud == null ? 'no forecast' : `${Math.round(r.cloud)}%${r.cloudSrc === 'apple' ? ' (Apple Weather)' : ''}`)}
       ${ap && ap.high != null ? row('High cloud', `${Math.round(ap.high)}%${ap.high >= 40 ? ': thin haze, dims faint things' : ''}`) : ''}
-      ${row('Seeing (steadiness)', see)}
+      ${row('Steadiness (seeing)', see)}
       ${row('Clear air', tr)}
       ${row('Darkness', tw)}
       ${row('Moon', moonTxt)}
@@ -3643,7 +3710,8 @@ function openHourDetail(rec, ix) {
       ${row('Planets up', planets.length ? planets.map((x) => `${esc(x.o.label)} ${x.p.alt.toFixed(0)}° ${compassName(x.p.az)}`).join(', ') : 'none above 10°')}
     </div>
     ${suits.length ? `<p class="small"><b>Good night for:</b> ${esc(suits.join('; '))}.</p>` : ''}
-    <p class="muted small">${rec.eccc ? `Cloud, steadiness (seeing), clear air (transparency), temperature, dew point and wind: Environment Canada${rec.apple ? '; gusts and high cloud: Apple Weather' : ''}. Feels-like: Environment Canada's wind-chill formula.` : 'Cloud, dew and wind: Apple Weather (no steadiness or clear-air forecast outside Environment Canada\'s area).'} Moon, twilight and town lights: worked out by the app for this spot.</p>
+    ${fcCachedNote(rec) ? `<p class="muted small"><b>${fcCachedNote(rec)}.</b></p>` : ''}
+    <p class="muted small">${rec.eccc ? `Cloud, steadiness (seeing), clear air (transparency), temperature, dew point and wind: Environment Canada${rec.apple ? '; gusts and high cloud: Apple Weather' : ''}. Feels-like: Environment Canada's wind-chill formula.` : 'Cloud, dew and wind: Apple Weather (no steadiness (seeing) or clear-air forecast outside Environment Canada\'s area).'} Moon, twilight and town lights: worked out by the app for this spot.</p>
     <p class="muted small hdswipe">Swipe sideways for the next hour.</p></div>`;
   const body = dlgCard().querySelector('.hdbody'); if (body) body.scrollTop = 0;
   fastTap($('#hd-prev'), () => openHourDetail(rec, ix - 1));
@@ -3668,7 +3736,8 @@ document.addEventListener('keydown', (e) => { if (e.key !== 'Enter' && e.key !==
 function glanceHTML(rec, n, t = new Date()) {
   const chips = [], o = rec && rec.ol;
   if (rec && rec.loading) chips.push('<span>Forecast…</span>');
-  else if (o) { const f = verdictFace(o, rec.rows); chips.push(`<span class="${o.kind === 'cloudy' ? '' : 'go'}" title="${f.word}">${f.svg}${o.kind === 'cloudy' ? 'Cloudy' : o.kind === 'clear' ? 'Clear' : `Clear ${hm(o.from)}–${hm(o.to)}`}</span>`); }
+  else if (rec && rec.failed && !isOnline()) chips.push('<span>No data connection</span>');
+  else if (o) { const f = verdictFace(o, rec.rows); chips.push(`<span class="${o.kind === 'cloudy' ? '' : 'go'}" title="${f.word}">${f.svg}${o.kind === 'cloudy' ? 'Cloudy' : o.kind === 'clear' ? 'Clear' : `Clear ${hm(o.from)}–${hm(o.to)}`}</span>`); if (rec.cached) chips.push(`<span title="${fcCachedNote(rec)}">Cached ${hm(new Date(rec.at))}</span>`); }
   const dark = n.astro || n.naut, now = new Date();
   chips.push(`<span>${dark && now >= dark && now < (n.astroAm || n.rise || now) && nightKey(t.getTime()) === nightKey(now.getTime()) ? 'Dark now' : 'Dark ' + hm(dark)}</span>`);
   const m = sky.moonInfo(dark || t); chips.push(`<span>${ICON.moon}${Math.round(m.frac * 100)}%</span>`);
@@ -3690,13 +3759,15 @@ function glanceHTML(rec, n, t = new Date()) {
     }).join('');
     chips.push(`<div class="cbar" aria-label="Sky by hour (tap an hour for details): ${rec.rows.map((r) => QN[q(r)]).join(', ')}">${cells}<div class="cbl"><span class="qkey">Tap an hour for details · ${FACEPIC[0]} great · ${FACEPIC[1]} good · ${FACEPIC[2]} so-so · ${FACEPIC[3]} cloud · ${MOONPIC} bright Moon · tile top: <i class="swm"></i> moonlight · bottom: <i class="swl"></i> light pollution</span></div></div>`);
   }
-  return `<div class="glance">${chips.join('')}${o && o.best && o.best.length ? `<div class="muted small" style="flex-basis:100%">Best for ${esc(o.best[0])}.</div>` : ''}</div>`;
+  return `<div class="glance">${chips.join('')}${o && o.best && o.best.length ? `<div class="muted small" style="flex-basis:100%">${skyWhose(t)} sky conditions are best for ${esc(o.best[0])}.</div>` : ''}</div>`;
 }
+/** "Tonight's", or "Friday night's" for another night (the evening's weekday, also after midnight). (Build 119) */
+const skyWhose = (t) => nightKey(t.getTime()) === nightKey(Date.now()) ? "Tonight's" : `${new Date(t.getTime() - 12 * 3600000).toLocaleDateString([], { weekday: 'long' })} night's`;
 /** The outlook card: verdict, what it suits, hour-by-hour strip, a hint and the credit Environment Canada asks for. */
 function outlookHTML(rec, { planStart = null, hint = true } = {}) {
   if (!rec) return '';
   if (rec.loading) return `<div class="fc muted small">Checking tonight's forecast…</div>`;
-  if (rec.failed || !rec.ol) return `<div class="fc muted small">No forecast right now (offline, or outside the forecast area).</div>`;
+  if (rec.failed || !rec.ol) return `<div class="fc muted small">${isOnline() ? 'No forecast right now: the forecast service didn\'t answer. The app tries again in a couple of minutes.' : 'No forecast: no data connection, and no forecast saved in the last 12 hours.'}</div>`;
   const o = rec.ol, ic = o.kind === 'clear' ? ICON.star : o.kind === 'partly' ? ICON.half : ICON.cloud;
   const hasHigh = !!(rec.apple && rec.rows.some((r) => r.ap && r.ap.high != null)), hasComfort = rec.rows.some((r) => comfort(r).temp != null);
   const cells = rec.rows.map((r) => {
@@ -3708,11 +3779,12 @@ function outlookHTML(rec, { planStart = null, hint = true } = {}) {
   const hintText = o.hints[Math.floor(Date.now() / 864e5) % o.hints.length];
   return `<div class="fc">
     <div><b>${ic} ${esc(o.text)}</b></div>
-    ${o.best.length ? `<div class="small">Best for: ${esc(o.best.join('; '))}.</div>` : ''}
+    ${fcCachedNote(rec) ? `<div class="muted small">${fcCachedNote(rec)}</div>` : ''}
+    ${o.best.length ? `<div class="small">${skyWhose(rec.rows[0].t)} sky conditions are best for ${esc(o.best.join('; '))}.</div>` : ''}
     ${o.extra && o.extra.warn && o.extra.warn.length ? `<ul class="fcwarn small">${o.extra.warn.map((w) => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}
     <details class="more"><summary>Hour by hour</summary>
       <div class="fcgrid"><div class="fch lab"><span></span><span>Cloud</span><span>Seeing</span><span>Clear air</span><span>Moon</span>${hasComfort ? '<span>Feels like</span><span>Dew gap</span><span>Wind</span>' : ''}${hasHigh ? '<span>High cloud</span>' : ''}</div>${cells}</div>
-      <p class="muted small">${rec.eccc ? 'Seeing (how steady the air is) and clear air (transparency) are out of 5. Environment Canada calibrated the steadiness forecast with 28–35 cm telescopes and says it can be a little pessimistic for smaller ones. Your own twinkle check beats it on the night.' : 'Outside Environment Canada\'s area there is no steadiness or clear-air forecast: do the twinkle check on the night.'}${hasComfort ? ' Feels like: °C with wind chill; dress for about 10° colder, since you hardly move at a telescope. Dew gap: how far the air is above its dew point; at 2° or less expect dew (frost below freezing). Wind: km/h (gusts where known).' : ''}</p>
+      <p class="muted small">${rec.eccc ? 'Seeing (how steady the air is) and clear air (transparency) are out of 5. Environment Canada calibrated the steadiness (seeing) forecast with 28–35 cm telescopes and says it can be a little pessimistic for smaller ones. Your own twinkle check beats it on the night.' : 'Outside Environment Canada\'s area there is no steadiness (seeing) or clear-air forecast: do the twinkle check on the night.'}${hasComfort ? ' Feels like: °C with wind chill; dress for about 10° colder, since you hardly move at a telescope. Dew gap: how far the air is above its dew point; at 2° or less expect dew (frost below freezing). Wind: km/h (gusts where known).' : ''}</p>
     </details>
     ${hint ? `<p class="muted small iconline" style="margin:4px 0 0">${ICON.bulb}${esc(hintText)}</p>` : ''}
     <p class="muted small fcattr">${rec.eccc ? `${esc(ATTRIB)} · <a href="${LICENCE_URL}" target="_blank" rel="noopener">licence</a>` : ''}${rec.apple ? `${rec.eccc ? '<br>' : ''}<span class="wkmark">${rec.apple.markDark ? `<img src="${esc(rec.apple.markDark)}" alt="Apple Weather" height="12"${theme.shade > 0.5 ? ' style="filter:sepia(1) saturate(8) hue-rotate(-40deg) brightness(.6)"' : ''}>` : ' Weather'}</span> dew, wind${rec.eccc ? ', high cloud' : ' and cloud'} · <a href="${esc(rec.apple.legal || 'https://developer.apple.com/weatherkit/data-source-attribution/')}" target="_blank" rel="noopener">other data sources</a>` : ''}</p>
@@ -3721,7 +3793,7 @@ function outlookHTML(rec, { planStart = null, hint = true } = {}) {
 function recordSeeing(v, how) {
   state.seeingCheck = { v, how, when: Date.now() }; setSeeing(v); planRows = null; rateCache.clear(); save();
   const cap = { poor: 'planets about 100× at most tonight', average: 'planets up to about 150×', good: 'full power on planets and close doubles' }[v];
-  toast(`Steady air: ${SEEING_WORD[v]} — ${cap}`);
+  toast(`Steady air (seeing): ${SEEING_WORD[v]} — ${cap}`);
   if (!$('#tab-plan').classList.contains('hidden')) renderPlan();
 }
 /** A bright star at least halfway up to judge twinkling on (stars low down always twinkle). */
@@ -3759,11 +3831,11 @@ function openSeeingCheck(mode = 'twinkle') {
         <button data-see="average"><b>Twinkles gently</b><span class="muted small">flickers in brightness; colour stays about the same</span></button>
         <button data-see="poor"><b>Twinkles hard</b><span class="muted small">jumps around and flashes colours</span></button>
       </div>
-      <p class="muted small">Steady air decides how much power planets and close double stars can take tonight. It changes during the night, so this counts for tonight only.</p>
+      <p class="muted small">Seeing (how steady the air is) decides how much power planets and close double stars can take tonight. It changes during the night, so this counts for tonight only.</p>
       <button id="see-ep" style="width:100%">More accurate: look at a star in your ${esc(hi.name)}</button>
       <button id="see-close" style="width:100%;margin-top:6px">${flow ? (seeingSource() === 'forecast' ? `Skip — use the forecast (${SEEING_WORD[seeingNow()]})` : 'Skip — assume average') : 'Close'}</button>`;
   } else {
-    card.innerHTML = `<h3 style="margin-top:0">Steady air: eyepiece check</h3>
+    card.innerHTML = `<h3 style="margin-top:0">Seeing: eyepiece check</h3>
       <p>Put a bright star high in the sky in the middle of your <b>${esc(hi.name)}</b>, focus as sharply as you can, and watch it for half a minute. Which looks most like it?</p>
       <div class="seebtns pics">
         <button data-see="good">${seeingPic('good')}<b>Sharp point with steady rings</b></button>
@@ -3787,14 +3859,14 @@ const TIPS = [
   'The Moon is best near first and last quarter, when shadows along the line between light and dark show the craters. A full Moon is flat and glaring.',
   'Not sure a faint glow is there? Tap the tube gently. The eye notices a faint object much more easily while it moves.',
   'Find with low power, look with more. The widest eyepiece makes finding easy; then step up one at a time.',
-  'Twinkling tells you how steady the air is. Steady air brings out planets and close doubles; dark, clear air brings out galaxies. They are often different nights: crisp, sparkling skies after a cold front tend to be unsteady.',
+  'Twinkling tells you how steady the air is, which astronomers call seeing. Steady air (good seeing) brings out planets and close doubles; dark, clear air brings out galaxies. They are often different nights: crisp, sparkling skies after a cold front tend to be unsteady.',
   'Doubles are perfect for Moon nights and city skies: moonlight and streetlights barely touch them.',
   'Let the telescope cool for 20–30 minutes before trying high power. A warm mirror makes its own shimmer.',
   'Sketching, even badly, makes you see more. You look longer and notice details you would otherwise skip.',
   'A galaxy rated "Challenging" might not show the first time. Try again on a darker night, when it is higher, or from a darker spot.',
   'Colour in double stars shows best slightly out of focus, where the light spreads into small coloured discs.',
-  'The Dawes limit: a telescope can split two equal stars about 116 ÷ its mirror size in mm arcseconds apart. That is 0.77″ for a 150 mm and 0.58″ for a 200 mm, if the air is steady enough.',
-  'A bigger mirror shows more stars and brighter glows at the same power. A "faster" f/4 only looks brighter because the same eyepiece gives it lower power.',
+  'The Dawes limit: a telescope can split two equal stars about 116 ÷ its aperture in mm arcseconds apart. That is 0.77″ for a 150 mm and 0.58″ for a 200 mm, if the air is steady enough (good seeing).',
+  'A bigger aperture (main mirror or lens) shows more stars and brighter glows at the same power. A "faster" f/4 only looks brighter because the same eyepiece gives it lower power.',
 ];
 function tipOfTheNight() { const d = Math.floor((Date.now() - 12 * 3600000) / 86400000); return TIPS[d % TIPS.length]; }
 /** "How this plan was picked": what the app assumed about tonight, in plain words. */
@@ -3803,7 +3875,7 @@ function howPickedHTML(n) {
   return `<ul class="small how">
     <li><b>Sky darkness:</b> ${sq ? `your darkness check (${esc(skyCheckName())})` : `the light-pollution map for this spot (${esc(skyGuessName())}) — do the 30-second check to make it yours`}${!sq && fcFor(here(), new Date()) && fcFor(here(), new Date()).ol && fcFor(here(), new Date()).ol.transp ? `, adjusted for the forecast haze (transparency ${fcFor(here(), new Date()).ol.transp}/5)` : ''}. <i>Do it yourself:</i> count the Little Dipper's stars. All seven means a dark sky that's good for galaxies; only two or three means stick to the Moon, planets, doubles and bright clusters.</li>
     <li><b>Moon:</b> ${Math.round(n.moonFrac * 100)}% lit. ${n.moonFrac > 0.3 ? 'Galaxies and nebulae near it fade, and nothing deep-sky is suggested within 15° of it (its glare fills an open tube).' : 'Not enough to matter much.'} <i>Do it yourself:</i> on Moon nights pick clusters, doubles and planets; save galaxies and nebulae for the week around new Moon.</li>
-    <li><b>Steady air:</b> ${see ? `${SEEING_WORD[see.v]} (${see.how === 'pick' ? 'picked' : 'checked'} tonight)` : seeingSource() === 'forecast' ? `${SEEING_WORD[seeingNow()]}, from Environment Canada's seeing forecast` : 'not tested, so average is assumed'}. It sets how much power planets and close doubles get. <i>Do it yourself:</i> look at a star high up. If it hardly twinkles, use your highest power on planets tonight.</li>
+    <li><b>Steady air (seeing):</b> ${see ? `${SEEING_WORD[see.v]} (${see.how === 'pick' ? 'picked' : 'checked'} tonight)` : seeingSource() === 'forecast' ? `${SEEING_WORD[seeingNow()]}, from Environment Canada's seeing forecast` : 'not tested, so average is assumed'}. It sets how much power planets and close doubles get. <i>Do it yourself:</i> look at a star high up. If it hardly twinkles, use your highest power on planets tonight.</li>
     <li><b>What's chosen:</b> a mix of kinds — a planet, a double, clusters, a nebula, a galaxy — favouring the famous showpieces, things high in the sky, and things you haven't logged yet. Doubles are judged by how bright and colourful they are. <i>Do it yourself:</i> start with whatever is highest. Low objects are seen through more air, so they're dimmer and blurrier.</li>
     <li><b>Eyepieces:</b> big things get your widest view; globulars and small planetaries get more power to show detail; galaxies and nebulae are never made too dim; doubles get enough power to split comfortably. <i>Do it yourself:</i> always find a target in your lowest power, then step up one eyepiece at a time and stop when the view stops getting better.</li>
   </ul>`;
@@ -3811,7 +3883,7 @@ function howPickedHTML(n) {
 /** A rule of thumb for choosing the eyepiece yourself, by kind of object. */
 const EP_TIP = {
   PL: 'Try it: if the planet ripples like it is under water, drop to a longer eyepiece. Detail shows when the image is steady, not when it is biggest.',
-  DS: 'Rule of thumb: power × gap in arcseconds should come to about 240 for an even pair (so a 4″ pair wants about 60×), and more when one star is much fainter. The closest pair any mirror can split is about 116 ÷ its size in mm arcseconds (the Dawes limit).',
+  DS: 'Rule of thumb: power × gap in arcseconds should come to about 240 for an even pair (so a 4″ pair wants about 60×), and more when one star is much fainter. The closest pair any telescope can split is about 116 ÷ its size in mm arcseconds (the Dawes limit).',
   GC: 'Try it: find it at low power, then step up until it stops getting better. Globulars usually look best at 100× or more.',
   PN: 'Try it: at low power a small planetary looks like a star. Add power and it swells into a disc while the real stars stay points.',
   GX: 'Try it: if a galaxy fades as you add power, go back down. Faint glows like a brighter, smaller image. Look slightly to one side of it.',
@@ -3833,12 +3905,12 @@ function epFlag(o, e, p) {
 function epReason(o, r) {
   const k = o.planet ? 'PL' : o.pairs || (o.key || '').startsWith('ds:') ? 'DS' : o.t, steady = SEEING_WORD[seeingNow()];
   if (o.planet && o.id === 'Moon') return 'Shows the whole Moon; zoom in along the shadow line between light and dark.';
-  if (k === 'PL') return `As much power as the air allows on a${steady === 'average' ? 'n average' : ' ' + steady} night${{ check: '', forecast: ' (forecast)', assumed: ' (not tested)' }[seeingSource()]}.`;
+  if (k === 'PL') return `As much power as the air allows: ${steady} seeing tonight${{ check: '', forecast: ' (forecast)', assumed: ' (not tested)' }[seeingSource()]}.`;
   if (k === 'DS') return 'Enough power to split the pair comfortably, no more.';
   if (o.maj && r.ep) { const tf = (r.ep.afov || 62) / (profile().fl / r.ep.fl) * 60; if (tf < o.maj * 1.1) return "It's bigger than this field — your widest view shows the most of it."; }
   return { GC: 'Frames it with room to spare and starts to break it into stars.', PN: 'Makes the small disc big enough to show its shape.', GX: 'Frames it without dimming it too much.', NB: 'Frames the glow without dimming it too much.', CN: 'Frames the glow without dimming it too much.', OC: 'Frames the whole cluster.' }[k] || 'Frames it well.';
 }
-/** Real-world effects the full-screen eyepiece view can switch off, one at a time (all off = raw catalogue). */
+/** Real-world effects the full-screen eyepiece view can switch off, one at a time (all off = a perfect night, with catalogue magnitudes). */
 const EP_FACTORS = [['moon', 'Moon'], ['lp', 'Light pollution'], ['twilight', 'Twilight'], ['transp', 'Transparency'], ['altitude', 'Altitude'], ['seeing', 'Seeing'], ['dawes', 'Dawes limit'], ['aperture', 'Aperture brightness'], ['coma', 'Coma']];
 function epFactors() { const f = (state.ui && state.ui.epF) || {}; return Object.fromEntries(EP_FACTORS.map(([k]) => [k, f[k] !== false])); }
 function setEpFactors(f) { state.ui = state.ui || {}; state.ui.epF = f; save(); }
@@ -3870,7 +3942,7 @@ function openEpZoom(o, epi, at0 = null) {
     <div class="epz-nav"><button class="ibtn" id="epz-prev" aria-label="Previous eyepiece">‹</button><span id="epz-dots"></span><button class="ibtn" id="epz-next" aria-label="Next eyepiece">›</button></div>
     <div class="epz-drawer" id="epz-drawer"><button class="epz-handle" id="epz-hd" aria-expanded="true"><i></i><span id="epz-hdt">Hide controls</span></button>
     <div class="epz-mode"><div class="seg advseg" role="group" aria-label="Controls"><button data-adv="0">Basic</button><button data-adv="1">Advanced: switch effects</button></div><div class="adv"><div class="chips epz-chips">${EP_FACTORS.map(([k, l]) => `<button data-f="${k}" aria-pressed="false">${l}</button>`).join('')}</div>
-      <div class="muted small epz-hint">Switch an effect off to see what it does. All off is the raw catalogue.</div></div>
+      <div class="muted small epz-hint">Switch an effect off to see what it does. All off is a perfect night: dark sky, still air, sharp optics, catalogue magnitudes.</div></div>
       <div class="epz-btns"><span class="adv"><button class="mini" id="epz-all">All on</button><button class="mini" id="epz-none">All off</button></span><button class="mini" id="epz-sim">Open in the simulator</button></div></div>
     <p class="muted small" id="epz-cap"></p></div>`;
   document.body.appendChild(box);
@@ -3903,8 +3975,8 @@ function openEpZoom(o, epi, at0 = null) {
     const f = advOn ? epFactors() : Object.fromEntries(EP_FACTORS.map(([k]) => [k, true])), raw = !Object.values(f).some(Boolean);
     box.querySelectorAll('[data-f]').forEach((b) => { b.classList.toggle('on', !!f[b.dataset.f]); b.setAttribute('aria-pressed', String(!!f[b.dataset.f])); });
     const off = EP_FACTORS.filter(([k]) => !f[k]).map(([, l]) => l.toLowerCase());
-    $('#epz-hdt').textContent = box.classList.contains('dock-min') ? `Show controls${advOn ? ` · ${raw ? 'raw catalogue' : off.length ? off.length + ' effect' + (off.length > 1 ? 's' : '') + ' off' : 'all effects on'}` : ''}` : 'Hide controls';
-    const cap = raw ? 'Raw catalogue: true positions and sizes, every star to magnitude 8 with the brighter ones labelled, no allowance for the sky, the air, your mirror or your eye.'
+    $('#epz-hdt').textContent = box.classList.contains('dock-min') ? `Show controls${advOn ? ` · ${raw ? 'perfect night' : off.length ? off.length + ' effect' + (off.length > 1 ? 's' : '') + ' off' : 'all effects on'}` : ''}` : 'Hide controls';
+    const cap = raw ? 'A perfect night: dark sky, no Moon, clear and still air, overhead, sharp optics. Every star to magnitude 8, the brighter ones labelled with their catalogue magnitude.'
       : off.length ? `Without: ${off.join(', ')}.`
       : r && r.enlarged ? `The planet is drawn ${r.enlarged}× larger than scale.` : r && r.widened ? 'Close pairs are drawn a little wider than scale so the split the eye sees shows up.' : 'To scale for this eyepiece; brightness shown as the eye would see it.';
     $('#epz-cap').textContent = `${cap} ${order.length > 1 ? 'Swipe for the next eyepiece; ' : ''}tap outside the view to close.`;
@@ -3996,7 +4068,7 @@ function openObject(key, opt = {}) {
     <div class="kv">
       ${row ? `<span>Looks best at</span><span>${hm(row.best)} · ${row.alt.toFixed(0)}° ${compassName(row.az)}</span>` : ''}
       <span>Right now</span><span>${o.alt > 0 ? `${o.alt.toFixed(0)}° up, ${compassName(o.az)}` : 'below the horizon'}</span>
-      ${r && r.ep ? `<span>Best eyepiece</span><span>${esc(r.ep.name)} (${(profile().fl / r.ep.fl).toFixed(0)}×)${r.epSteady ? `; ${esc(r.epSteady.name)} (${(profile().fl / r.epSteady.fl).toFixed(0)}×) when the air is steady` : ''}</span>` : ''}
+      ${r && r.ep ? `<span>Best eyepiece</span><span>${esc(r.ep.name)} (${(profile().fl / r.ep.fl).toFixed(0)}×)${r.epSteady ? `; ${esc(r.epSteady.name)} (${(profile().fl / r.epSteady.fl).toFixed(0)}×) when the air is steady (good seeing)` : ''}</span>` : ''}
       ${o.mag != null ? `<span>Brightness</span><span>magnitude ${(+o.mag).toFixed(1)}</span>` : ''}
       ${sizeText(o) ? `<span>${o.maj ? 'Size' : 'Pair'}</span><span>${sizeText(o)}</span>` : ''}
       ${o.pairs || o.sep ? `<span>Your scope splits</span><span>${splitLimit(profile().aperture).toFixed(splitLimit(profile().aperture) < 1 ? 2 : 1)}″ tonight</span>` : ''}
@@ -4071,7 +4143,7 @@ function renderMore() {
     ${item('camera', 'Camera star finder', state.mounting === 'camera' ? (profile().camBore ? 'Finds where the telescope points from the stars · lined up with the eyepiece' : 'Finds where the telescope points from the stars — no star to centre') : 'Works out where the phone’s camera is pointing from the stars')}
     ${item('sky', 'Sky darkness check', skyQ() ? `${esc(skyCheckName())} · ${shortDate(state.skyq.when)}` : mapSky() ? `Map estimate: ${esc(skyGuessName())} — a 30-second check makes it exact` : '30 seconds — tunes the visibility ratings to your sky')}
     <h3>Now and then</h3>
-    ${item('collim', profile().type === 'refractor' ? 'Collimation' : 'Collimate your Skyward', profile().collimated ? `Last done ${shortDate(profile().collimated)} · laser, about 10 minutes` : 'Line up the mirrors with the laser — sharper views, about 10 minutes')}
+    ${item('collim', lensView(profile()) ? 'Collimation' : state.active.startsWith('sw') ? 'Collimate your Skyward' : 'Collimate your telescope', profile().collimated ? `Last done ${shortDate(profile().collimated)} · laser, about 10 minutes` : 'Line up the mirrors with the laser — sharper views, about 10 minutes')}
     ${item('sim', 'Telescope simulator', 'Build any telescope and eyepiece, set the sky and the air, and see what each one changes')}
     ${item('horizon', 'Blocked sky', horizonNow() ? esc(horizonSummary(state.horizon)) : 'Mark trees and buildings so the app never sends you behind them')}
     ${item('test', 'Phone check-up and sensor tests', chk ? `This phone: ${V[chk.result.verdict] || esc(chk.result.verdict)} · ${shortDate(chk.when)}` : 'Find out how accurate this phone can be — 4 minutes')}
@@ -4387,7 +4459,7 @@ function simFrom(o, P, e) {
   const S = simState(), m = sky.moonInfo(), tg = sky.altAz(o);
   Object.assign(S, { fl: P.fl, N: +(P.fl / P.aperture).toFixed(1), ep: e.fl, afov: e.afov || 62, target: o.key, type: P.type || null,
     bortle: skyQ() ? bortleOfNelm(checkNelm()) : (mapSky() || {}).bortle || S.bortle, moon: m.alt > 0 ? Math.round(m.frac * 100) : 0,
-    sun: Math.max(-18, Math.min(0, Math.round(sky.sunAlt()))), alt: Math.max(5, Math.round(tg.alt)), seeing: { poor: 2.5, average: 1.5, good: 1.0 }[seeingNow()] });
+    alt: Math.max(5, Math.round(tg.alt)), seeing: { poor: 2.5, average: 1.5, good: 1.0 }[seeingNow()] });
   save();
 }
 const simObj = (t) => objByKey(t) || sky.objects.find((o) => o.label === t || (o.cats || []).includes(t) || o.id === t);
@@ -4407,7 +4479,7 @@ function renderSim() {
     <p class="simsum" id="sm-sum"></p><p class="muted small" id="sm-note" style="text-align:center;margin:0"></p></div>
     <h3>Telescope</h3>
     ${SL('sm-fl', 'Focal length', 0, 1000, 1, logPos(S.fl, 50, 3000), 'Longer gives more power with the same eyepiece.')}
-    ${SL('sm-n', 'Focal ratio', 2, 20, 0.1, S.N, 'Focal length ÷ mirror size. Fast (small number) means wide fields and more coma; it does not make images brighter by itself.')}
+    ${SL('sm-n', 'Focal ratio', 2, 20, 0.1, S.N, 'Focal length ÷ aperture. Fast (small number) means wide fields and more coma; it does not make images brighter by itself.')}
     <h3>Eyepiece</h3>
     ${SL('sm-ep', 'Eyepiece focal length', 0, 1000, 1, logPos(S.ep, 2, 56), 'Shorter gives more power and a smaller, dimmer view.')}
     <div class="adv">${SL('sm-af', 'Apparent field', 30, 120, 1, S.afov, 'How wide the eyepiece looks: about 50° for a Plössl, 82–100° for wide-angles.')}</div>
@@ -4415,15 +4487,14 @@ function renderSim() {
     ${SL('sm-b', 'Light pollution', 1, 9, 1, S.bortle, 'Bortle 1 is pristine; 9 is a city centre.')}
     ${SL('sm-m', 'Moon', 0, 100, 1, S.moon, '0 = no Moon up. Percent lit, with the Moon 40° up.')}
     <div class="adv">${SL('sm-ms', 'Moon distance from the target', 5, 180, 1, S.moonSep, 'Moonlight is worst close to the Moon.')}
-    ${SL('sm-sun', 'Sun below the horizon', -18, 0, 1, S.sun, '−18° is full dark; above that the sky still has twilight.')}
     ${SL('sm-tr', 'Transparency', 1, 5, 1, S.transp, 'Haze, from Environment Canada\'s 1–5 scale (3 = medium).')}
     ${SL('sm-alt', 'Target altitude', 5, 90, 1, S.alt, 'Low down you look through more air: everything dims.')}
     ${SL('sm-se', 'Seeing', 0.5, 5, 0.1, S.seeing, 'How much the air smears a star, in arcseconds: 1″ is a steady night, 3″+ a shimmering one.')}
     ${SL('sm-pu', 'Your eye\'s pupil', 3, 8, 0.5, S.pupil, 'About 7 mm when young, closer to 5 mm by 60–70. A bigger exit pupil than this is wasted light.')}
     <h3>Effects</h3>
     <div class="chips wrap" id="sm-f">${EP_FACTORS.map(([k, l]) => `<button data-f="${k}">${l}</button>`).join('')}</div>
-    <p class="muted small">Switch an effect off to see its share; all off is the raw catalogue.</p>
-    <div class="btnrow"><button class="mini" id="sm-all">All on</button><button class="mini" id="sm-none">All off (raw)</button></div></div>
+    <p class="muted small">Switch an effect off to see its share; all off is a perfect night (dark sky, still air, sharp optics).</p>
+    <div class="btnrow"><button class="mini" id="sm-all">All on</button><button class="mini" id="sm-none">All off: perfect night</button></div></div>
     <div class="btnrow"><button class="mini" id="sm-mine">Use my telescope</button></div>
     <h3>The numbers</h3><div class="kv" id="sm-stats"></div>`;
   const setAdv = (on) => { state.ui = state.ui || {}; state.ui.adv = on; save(); el.classList.toggle('show-adv', on); el.querySelectorAll('[data-adv]').forEach((b) => b.classList.toggle('on', (b.dataset.adv === '1') === on)); redraw(); };
@@ -4434,17 +4505,17 @@ function renderSim() {
     const adv = !!(state.ui && state.ui.adv);
     const D = S.fl / S.N, M = S.fl / S.ep, exit = D / M, tf = S.afov / M, dawes = 116 / D, f = { ...Object.fromEntries(EP_FACTORS.map(([k]) => [k, true])), ...(adv ? S.f : {}) };
     const nelm = sqmToNelm(BORTLE_SQM[S.bortle]);
-    const env = { nelm, moonCd: S.moon > 0 ? moonlight({ moonAlt: 40, moonFrac: S.moon / 100, sepDeg: S.moonSep, targetAlt: S.alt }) : 0, twiCd: twilight(S.sun),
+    const env = { nelm, moonCd: S.moon > 0 ? moonlight({ moonAlt: 40, moonFrac: S.moon / 100, sepDeg: S.moonSep, targetAlt: S.alt }) : 0, twiCd: 0,   // the simulator always shows full dark (Sun 18° or more below the horizon), whatever the time of day (Build 119)
       transpAdj: transpAdj(S.transp), seeingArc: S.seeing, alt: S.alt, pupil: S.pupil };
     const scope = { aperture: D, fl: S.fl, type: S.type || null, eyepieces: [{ name: `${fmt(S.ep, 1)} mm`, fl: S.ep, afov: S.afov }] };
     let r = null;
-    try { r = drawEyepiece($('#sm-cv'), sky, tgt.pairs && tgt.key.startsWith('st:') ? { ...tgt, t: 'DS' } : tgt, sky.altAz(tgt), scope.eyepieces[0], scope, { bright: vis(), env, factors: f, date: new Date() }); } catch (e) { console.error(e); }
+    try { r = drawEyepiece($('#sm-cv'), sky, tgt.pairs && tgt.key.startsWith('st:') ? { ...tgt, t: 'DS' } : tgt, sky.altAz(tgt), scope.eyepieces[0], scope, { bright: vis(), env, factors: f, date: new Date(), afovScale: 110 }); } catch (e) { console.error(e); }
     $('#sm-note').textContent = r && r.note ? r.note : '';
     const coma = 3 * (tf / 2) / (16 * S.N * S.N) * 3600;                 // arcseconds at the field edge
     const used = Math.min(exit, S.pupil), bright = (used / 7) ** 2 * 100;
     const reach = nelm + (f.transp ? transpAdj(S.transp) : 0) + 5 * Math.log10(D / 7) - 1;
     $('#sm-stats').innerHTML = [
-      ['Mirror (aperture)', `${fmt(D)} mm (${fmt(D / 25.4, 1)}″)`],
+      ['Aperture (main objective diameter)', `${fmt(D)} mm (${fmt(D / 25.4, 1)}″)`],
       ['Magnification', `${fmt(M)}×${M > 2 * D ? ' — past the useful limit' : M < D / S.pupil ? ' — below the useful minimum' : ''}`],
       ['Useful power', `${fmt(D / S.pupil)}× to about ${fmt(2 * D)}×`],
       ['Exit pupil', `${fmt(exit, 1)} mm${exit > S.pupil ? ' — wider than your eye, light wasted' : ''}`],
@@ -4456,14 +4527,14 @@ function renderSim() {
     ].slice(0, adv ? 99 : 5).map(([a, b]) => `<span>${a}</span><span>${b}</span>`).join('');
     $('#sm-sum').textContent = `${fmt(D)} mm f/${fmt(S.N, 1)} · ${fmt(M)}× · exit pupil ${fmt(exit, 1)} mm · field ${tf >= 1 ? fmt(tf, 2) + '°' : fmt(tf * 60) + '′'}${M > 2 * D ? ' · too much power' : exit > S.pupil ? ' · wider than your eye' : ''}`;
     const vals = { 'sm-fl': `${fmt(S.fl)} mm`, 'sm-n': `f/${fmt(S.N, 1)}`, 'sm-ep': `${fmt(S.ep, 1)} mm`, 'sm-af': `${S.afov}°`, 'sm-b': `Bortle ${S.bortle}`, 'sm-m': S.moon ? `${S.moon}% lit` : 'none',
-      'sm-ms': `${S.moonSep}°`, 'sm-sun': S.sun <= -18 ? 'full dark' : `${S.sun}°`, 'sm-tr': `${S.transp}/5`, 'sm-alt': `${S.alt}°`, 'sm-se': `${fmt(S.seeing, 1)}″`, 'sm-pu': `${fmt(S.pupil, 1)} mm` };
+      'sm-ms': `${S.moonSep}°`, 'sm-tr': `${S.transp}/5`, 'sm-alt': `${S.alt}°`, 'sm-se': `${fmt(S.seeing, 1)}″`, 'sm-pu': `${fmt(S.pupil, 1)} mm` };
     for (const [id, v] of Object.entries(vals)) { const x = $('#' + id + '-v'); if (x) x.textContent = v; }
     el.querySelectorAll('[data-f]').forEach((b) => b.classList.toggle('on', f[b.dataset.f] !== false));
   };
   let pend = 0; const redraw = () => { if (!pend) pend = requestAnimationFrame(() => { pend = 0; draw(); }); };
   const bind = (id, key, conv = (v) => +v) => { $('#' + id).oninput = (e) => { S[key] = conv(e.target.value); redraw(); }; $('#' + id).onchange = () => save(); };
   bind('sm-fl', 'fl', (v) => Math.round(logVal(+v, 50, 3000))); bind('sm-n', 'N'); bind('sm-ep', 'ep', (v) => +logVal(+v, 2, 56).toFixed(1)); bind('sm-af', 'afov');
-  bind('sm-b', 'bortle'); bind('sm-m', 'moon'); bind('sm-ms', 'moonSep'); bind('sm-sun', 'sun'); bind('sm-tr', 'transp'); bind('sm-alt', 'alt'); bind('sm-se', 'seeing'); bind('sm-pu', 'pupil');
+  bind('sm-b', 'bortle'); bind('sm-m', 'moon'); bind('sm-ms', 'moonSep'); bind('sm-tr', 'transp'); bind('sm-alt', 'alt'); bind('sm-se', 'seeing'); bind('sm-pu', 'pupil');
   $('#sm-t').onchange = (e) => { S.target = e.target.value; save(); redraw(); };
   el.querySelectorAll('[data-hint]').forEach((b) => b.onclick = (e) => { e.preventDefault(); b.closest('.simrow').classList.toggle('open'); });
   el.querySelectorAll('[data-adv]').forEach((b) => b.onclick = () => setAdv(b.dataset.adv === '1'));
@@ -4477,7 +4548,8 @@ function renderSim() {
 function renderCollim() {
   const el = $('#tab-collim'), P = profile(), fr = Math.round(P.fl / P.aperture * 2) / 2;
   if (P.type === 'refractor') { el.innerHTML = `${BACK}<h2>Collimation</h2><p>Your ${esc(P.name)} is a refractor: its lenses are aligned at the factory and held in a fixed cell, so there is nothing to collimate. If stars ever look like little comets at the centre of the field, the lens cell has been knocked and the maker should look at it.</p>`; bindBack(el); return; }
-  el.innerHTML = `${BACK}<h2>Collimate your Skyward</h2>
+  if (P.type === 'sct') { el.innerHTML = `${BACK}<h2>Collimation</h2><p>Your ${esc(P.name)} is a Schmidt-Cassegrain or Maksutov. A Maksutov is set at the factory and rarely needs it. A Schmidt-Cassegrain is collimated with the three small screws on the front (secondary) mirror while watching a defocused star at high power, which is a different method from the laser steps here: follow the maker's manual.</p>`; bindBack(el); return; }
+  el.innerHTML = `${BACK}<h2>${state.active.startsWith('sw') ? 'Collimate your Skyward' : 'Collimate your telescope'}</h2>
     <p>Collimating lines up the two mirrors so stars come to a sharp point. With the laser it takes about ten minutes, indoors or out. ${fr <= 4.5 ? `Your ${esc(P.name)} is f/${fr}: fast mirrors show small errors, so check it every time you set up.` : 'Check it every few sessions, and after the telescope has been bumped or moved in a car.'}</p>
     <div class="card"><b>Before you start</b>
       <ul class="small" style="margin:6px 0 0 18px;padding:0">

@@ -36,12 +36,31 @@ async function pool(jobs, n = 6) {
 
 /**
  * Hourly forecast for the given hours (Dates) at a place: [{ t, cloud %, seeing 0–5, transp 0–5 }] (each may be null),
- * or null when nothing at all came back. Cached in localStorage for 90 minutes per place and night.
+ * or null when nothing at all came back. The array also carries `at` (ms, when it was fetched) and `cached` (true when
+ * it is a saved copy used because there is no data connection).
+ *
+ * Saved in localStorage per place and night (keyed by the night's last hour, which stays the same as the night goes on):
+ * - under 90 minutes old and online: used as is, no fetch;
+ * - offline (the phone says so, or every request failed): a saved copy up to 12 hours old is used and marked cached;
+ * - older than 12 hours: dropped, and with no connection there is no forecast. (Build 119)
  */
-export async function hourlyForecast(lat, lon, hours, { fetchFn = fetch, storage = (typeof localStorage !== 'undefined' ? localStorage : null) } = {}) {
+export const FRESH_MS = 90 * 60000, KEEP_MS = 12 * 3600000;
+export async function hourlyForecast(lat, lon, hours, { fetchFn = fetch, storage = (typeof localStorage !== 'undefined' ? localStorage : null),
+  online = (typeof navigator === 'undefined' || navigator.onLine !== false), now = Date.now() } = {}) {
   if (!hours.length || lat == null || lon == null) return null;
-  const key = `fc2:${lat.toFixed(2)},${lon.toFixed(2)}:${hourISO(hours[0])}:${hours.length}`;   // fc2: rows now carry temperature, dew point and wind
-  try { const c = storage && JSON.parse(storage.getItem(key) || 'null'); if (c && Date.now() - c.at < 90 * 60000) return c.rows.map((r) => ({ ...r, t: new Date(r.t) })); } catch (e) { /* ignore */ }
+  const key = `fc3:${lat.toFixed(2)},${lon.toFixed(2)}:${hourISO(hours[hours.length - 1])}`;   // fc3: one entry per place and night
+  // The saved copy, cut to the hours asked for (later in the night the first hours have passed).
+  const saved = () => {
+    try {
+      const c = storage && JSON.parse(storage.getItem(key) || 'null'); if (!c || !(now - c.at < KEEP_MS)) return null;
+      const want = new Set(hours.map(hourISO)), rows = c.rows.map((r) => ({ ...r, t: new Date(r.t) })).filter((r) => want.has(hourISO(r.t)));
+      if (!rows.length) return null;
+      return Object.assign(rows, { at: c.at });
+    } catch (e) { return null; }
+  };
+  const c = saved();
+  if (c && now - c.at < FRESH_MS && online) return Object.assign(c, { cached: false });
+  if (!online) return c ? Object.assign(c, { cached: true }) : null;
   const jobs = [];
   for (const t of hours) {
     jobs.push(async () => { const v = await point('HRDPS.CONTINENTAL_NT', lat, lon, t, fetchFn); return v != null ? v : point('RDPS_10km_TotalCloudCover', lat, lon, t, fetchFn); });
@@ -56,9 +75,9 @@ export async function hourlyForecast(lat, lon, hours, { fetchFn = fetch, storage
   }
   const v = await pool(jobs), N = 6;
   const rows = hours.map((t, k) => ({ t, cloud: v[N * k], seeing: v[N * k + 1], transp: v[N * k + 2], temp: v[N * k + 3], dew: v[N * k + 4], wind: v[N * k + 5] != null ? v[N * k + 5] * 3.6 : null }));
-  if (rows.every((r) => r.cloud == null && r.seeing == null && r.transp == null)) return null;
-  try { if (storage) storage.setItem(key, JSON.stringify({ at: Date.now(), rows })); } catch (e) { /* full or blocked */ }
-  return rows;
+  if (rows.every((r) => r.cloud == null && r.seeing == null && r.transp == null)) return c ? Object.assign(c, { cached: true }) : null;   // nothing came back: the saved copy, if any
+  try { if (storage) storage.setItem(key, JSON.stringify({ at: now, rows })); } catch (e) { /* full or blocked */ }
+  return Object.assign(rows, { at: now, cached: false });
 }
 
 /** Whole hours from `from` to `to` (inclusive of the first). */
@@ -161,7 +180,7 @@ export function outlook(rows, { moonUp, nelm, fromCheck = false, restOfNight = f
   const hhmm = (t) => t.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   const window = kind === 'clear' && best.n === ok.length ? (restOfNight ? 'Clear for the rest of the night' : 'Clear all night') : `Clear from about ${hhmm(best.from)} to ${hhmm(new Date(best.to.getTime() + 3600000))}`;
   const bits = [];
-  if (see != null && see > 0) bits.push(`${SCALE[see]} steadiness`);
+  if (see != null && see > 0) bits.push(`${SCALE[see]} steadiness (seeing)`);
   if (tr != null && tr > 0) bits.push(`${SCALE[tr] === 'average' ? 'medium' : SCALE[tr]} transparency`);
   if (brightMoon) bits.push('a bright Moon up');
   const hints = [];
@@ -199,8 +218,8 @@ export function outlook(rows, { moonUp, nelm, fromCheck = false, restOfNight = f
     }
   }
   if (tr != null && tr <= 2) hints.push('Hazy air dims faint things before it bothers bright ones: a night for clusters, doubles and planets.');
-  if (seeingWord(see) === 'poor') hints.push('Unsteady air blurs planets at high power. Stay at medium power, or wait: the air often settles later in the night.');
-  if (seeingWord(see) === 'good' && tr != null && tr <= 3) hints.push('Steady air often comes with a little haze — the same calm, moist air. Good news for planets and doubles.');
+  if (seeingWord(see) === 'poor') hints.push('Unsteady air (poor seeing) blurs planets at high power. Stay at medium power, or wait: the air often settles later in the night.');
+  if (seeingWord(see) === 'good' && tr != null && tr <= 3) hints.push('Steady air (good seeing) often comes with a little haze — the same calm, moist air. Good news for planets and doubles.');
   hints.push('Transparency is how clear the air is, which matters for faint galaxies and nebulae. Seeing is how steady it is, which matters for detail on planets and close doubles. The two rarely peak together: crisp nights after a cold front are often unsteady, and calm, slightly hazy nights are often the steadiest.');
   return { kind, from: best.from, to: new Date(best.to.getTime() + 3600000), seeing: see, transp: tr, brightMoon, effNelm, extra,
     text: `${window}${bits.length ? ', with ' + bits.join(', ') : ''}.`, best: out, hints };

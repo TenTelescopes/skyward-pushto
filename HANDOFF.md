@@ -715,6 +715,57 @@ unrelated extra star in the object-page sentence. Still open with Bryan: whether
     step was silently dropped, so the flow jumped from the previous step straight to blocked-sky tracing. It now
     always runs when its star is on, showing "Earlier tonight: … check again, or keep it".
 
+## Build 119 (Nov 25): "Passing through" lists only what's worth a look
+- Plan → Passing through (`fillEvents`): a meteor shower only when it gives 5 or more an hour at its best tonight, a
+  comet or nova only when the scope can show it from here (rating better than "not visible"), anything already in the
+  plan; the northern lights only when NOAA's Kp makes them possible here (the "not expected" line is gone). With nothing
+  worth a look the section is hidden. Checked: Nov 25 (nothing, hidden), Dec 13 (Geminids, peak, about 14 an hour).
+- Eyepiece view: switching the seeing effect on no longer spreads a double apart. The pair's spacing (want / clearance
+  of the companion from the bright star's glow) now uses the star sizes without the seeing swell (`starR / bloat`);
+  only the drawn glows swell and blur. Reported on Achird at 4 mm (the pair looked like it zoomed out).
+- Simulator: the apparent-field (AFOV) slider now changes the size of the field circle, as it looks at the eyepiece
+  (`drawEyepiece` option `afovScale`: radius × AFOV/110, so 110° fills the frame). Before, it only widened the true field
+  inside a fixed circle, so everything shrank a little and the slider seemed to do nothing. Checked at 40/62/100°: the
+  circle grows from 1.23° to 3.07° of sky with the target the same size.
+- Simulator: always full dark. The "Sun below the horizon" slider is gone and the twilight term is 0, whatever the time
+  of day (asked for in the field).
+- Eyepiece view: bright nebulae (NB, CN) get an inner glow a third the size and 2 mag/arcsec² brighter than the
+  average, so M42's heart still shows under a city sky. A rough rule; no sourced core surface brightness yet.
+- Eyepiece view and simulator: "All off" is now a perfect night with your scope (dark sky, no Moon or twilight, clear
+  air, overhead, still air, no coma, catalogue magnitudes beside the stars). It keeps the scope's light grasp; before,
+  it drew every scope as a 150 mm. It looked dimmer and smaller than all on because the grey sky glow, the seeing swell
+  and the coma tails were gone: stars become sharp small points on black, which is the better view.
+- Wording: the simulator's "Mirror (aperture)" row is now "Aperture (main objective diameter)", right for a mirror or a lens;
+  tips that said "mirror size" now say "aperture".
+- Forecast with no data connection (`hourlyForecast`, `ensureForecast`, `fcStale`): one saved copy per place and night
+  (key `fc3:`, by the night's last hour, cut to the hours asked for). Under 90 minutes old and online: used without a
+  fetch. Offline (the phone says so, or every request failed): a copy up to 12 hours old is shown, marked "Cached 12:05"
+  on the home tiles and "Cached forecast from 12:05 (no data connection)" in the outlook and hour details; older is
+  dropped. With nothing saved: "No data connection" (offline) or "the forecast service didn't answer" (online).
+  While the app is open a failed, cached or 90-minute-old forecast is fetched again on the next redraw (at most every
+  2 minutes, the old one stays on screen meanwhile), and at once when the phone reports it is back online. Before, a
+  failed forecast was never retried and an open app never refreshed. Tests: forecast.test.mjs (saved copies). Checked
+  in the browser with the forecast service faked: online, offline with a copy, offline without, back online.
+- Your own telescope (Setup → Telescope): "Add your telescope" opens a short form: name, type (Newtonian/Dobsonian,
+  refractor, or Schmidt-Cassegrain/Maksutov), aperture and focal length, checked by `scopeErr` (aperture 20–1500 mm,
+  focal length 100–10000 mm, f/2–f/30). It is saved as profile `my…` with `custom: true` and starts with the current
+  scope's eyepieces. Any scope's name and type can be edited; focal length and aperture changes are checked the same
+  way (refused with the reason). Own telescopes can be deleted (two taps, no pop-up); the built-in ones can't.
+  `lensView(p)`: refractors and SCT/Maks share the view orientation (diagonal = upright, mirror-reversed) and skip the
+  focuser picker; collimation says "Collimate your telescope" for a non-Skyward reflector and points SCT owners to their
+  manual. Fixed: the star-diagonal checkbox had the same id as the sensor readout (#s-diag), so the readout never
+  showed; the checkbox is now #s-diagonal. Checked in the browser: bad focal length refused, an 8-inch SCT added
+  (f/10, diagonal on, no focuser picker), renamed, a 5 mm aperture refused, deleted with two taps.
+- Forecast wording: "Best for …" is now "Tonight's sky conditions are best for …" on the home tiles and the outlook card
+  (`skyWhose`: "Friday night's" for another night in the plan).
+- Wording: every "steadiness" on screen now reads "steadiness (seeing)": the forecast sentence ("good steadiness
+  (seeing)"), the hour details row (was "Seeing (steadiness)"), and the source notes under the forecast.
+- Wording, to teach the term: "steady air" on screen is paired with "seeing" too. Labels: "Steady air (seeing):" (plan,
+  check result, tips list, plan picker); "Seeing: eyepiece check" (was "Steady air: eyepiece check"); "Seeing (how
+  steady the air is) decides how much power…"; "when the air is steady (good seeing)"; "Unsteady air (poor seeing)";
+  "needs steady air (good seeing)"; planets: "As much power as the air allows: good seeing tonight". Left alone where
+  "steady" isn't about the air (hold steady, a steady pace, a planet's steady light, steady diffraction rings).
+
 ## Build 118 (Nov 25): hour details controls moved to the top
 - The bottom Earlier / Later / Close row still took several taps on the phone. The card now has a header: ‹ (earlier),
   the hour with its face and "N of M", › (later), ✕ (close), 48 px buttons using `fastTap`. Swiping the card sideways

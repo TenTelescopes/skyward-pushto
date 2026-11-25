@@ -275,7 +275,7 @@ export function describe(o, r) {
     GC: ['Bright ball of stars, edges sparkle', 'Round fuzzy glow, brighter centre', 'Faint round smudge'],
     OC: ['Rich, sparkling group of stars', 'A loose group of fainter stars', 'A few faint stars — hard to pick out from the background'],
     AS: ['Easy star pattern', 'Faint star pattern', 'Hard to make out'],
-    DS: ['Splits cleanly — look for colour', 'Splits with the higher power', 'A tough split — needs steady air'],
+    DS: ['Splits cleanly — look for colour', 'Splits with the higher power', 'A tough split — needs steady air (good seeing)'],
     PL: ['Bright and easy', 'Visible', 'Hard to spot'],
     ST: ['Bright star — look at its colour', 'Easy star', 'Faint star'],
     CM: ['Bright fuzzy head — look for a tail', 'Soft round glow with a brighter middle', 'Faint smudge — averted vision helps'],
