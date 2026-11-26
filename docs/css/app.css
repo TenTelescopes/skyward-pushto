@@ -671,3 +671,6 @@ html.dlg-open #dlg .hdcard { touch-action: pan-y; }
 .mnt-end > span { font-size: 14px; }
 .mnt-end .chips { margin: 4px 0; }
 .mnt-other summary { font-size: 14px; }
+/* Shared race start (Build 123) */
+.gwait { text-align: center; }
+.gwait-n { font-size: 44px; font-weight: 700; color: var(--hi); line-height: 1.1; margin-top: 4px; }

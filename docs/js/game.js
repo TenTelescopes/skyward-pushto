@@ -108,17 +108,22 @@ const B32 = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
 function short(h, len) { let s = ''; for (let i = 0; i < len; i++) { s += B32[h % 32]; h = Math.floor(h / 32); } return s; }
 
 /** Challenge: who plays what. Same code = same targets, same style, same order. */
-export function encodeChallenge({ style, tokens, created = Date.now(), host = '' }) {
-  const body = ['SKYG' + GAME_VERSION, style, Math.floor(created / 60000).toString(36), tokens.join(','), host.replace(/[|,]/g, ' ').slice(0, 24)].join('|');
+// `start` (ms, optional; Build 123): a shared start time, so every phone that scans the code counts down to the same
+// moment. It goes in a 6th field; codes without it are unchanged, so older race codes still work here (an older app
+// can't read a code with a start time).
+export function encodeChallenge({ style, tokens, created = Date.now(), host = '', start = null }) {
+  const f = ['SKYG' + GAME_VERSION, style, Math.floor(created / 60000).toString(36), tokens.join(','), host.replace(/[|,]/g, ' ').slice(0, 24)];
+  if (start) f.push(Math.round(start / 1000).toString(36));
+  const body = f.join('|');
   return body + '|' + short(hash(body), 4);
 }
 export function decodeChallenge(code) {
   const p = String(code).trim().split('|');
-  if (p.length !== 6 || !/^SKYG\d+$/.test(p[0])) throw new Error('Not a Skyward challenge code');
-  const body = p.slice(0, 5).join('|');
-  if (short(hash(body), 4) !== p[5]) throw new Error('Challenge code is damaged — scan or paste it again');
+  if ((p.length !== 6 && p.length !== 7) || !/^SKYG\d+$/.test(p[0])) throw new Error('Not a Skyward challenge code');
+  const body = p.slice(0, -1).join('|');
+  if (short(hash(body), 4) !== p[p.length - 1]) throw new Error('Challenge code is damaged — scan or paste it again');
   if (!STYLES[p[1]]) throw new Error('Unknown game style in code');
-  return { version: +p[0].slice(4), style: p[1], created: parseInt(p[2], 36) * 60000, tokens: p[3].split(',').filter(Boolean), host: p[4], id: challengeId(code) };
+  return { version: +p[0].slice(4), style: p[1], created: parseInt(p[2], 36) * 60000, tokens: p[3].split(',').filter(Boolean), host: p[4], start: p.length === 7 ? parseInt(p[5], 36) * 1000 : null, id: challengeId(code) };
 }
 /** Short, typeable id used to group results on the leaderboard. */
 export function challengeId(code) { return short(hash(String(code).trim()), 6); }

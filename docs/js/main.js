@@ -2038,10 +2038,11 @@ function loadChallenge(code) {
   game = { phase: 'ready', code, ch, style: ch.style, targets, missing, splits: [], penalty: 0, hints: 0, manual: 0, i: 0 };
   renderGame();
 }
-function startGame() {
+/** Start the race: a 3-second countdown, or to `at` (a shared start time, ms) when one is given. */
+function startGame(at = null) {
   game.play = game.targets.filter((o) => playable(o));        // targets not up at this site are left out, without penalty
   if (!game.play.length) return toast('None of these targets are above 20° here right now.');
-  game.phase = 'count'; game.countEnd = Date.now() + 3000; game.i = 0; game.splits = []; game.penalty = 0; game.hints = 0; game.manual = 0; game.dw = {};
+  game.phase = 'count'; game.countEnd = at || Date.now() + 3000; game.i = 0; game.splits = []; game.penalty = 0; game.hints = 0; game.manual = 0; game.dw = {};
   renderGame();
 }
 function foundRadius(o) {
@@ -2553,14 +2554,21 @@ function renderReady(el) {
   el.innerHTML = `<h2>${esc(STYLES[g.style].name)} <span class="muted" style="font-size:15px;font-weight:400">· code ${esc(g.ch.id)}</span></h2>
     <p class="muted small">${g.ch.host ? 'Set by ' + esc(g.ch.host) + ' · ' : ''}set up ${shortDate(g.ch.created)} · about ${len.toFixed(0)}° of pushing in all${g.missing ? ` · ${g.missing} target(s) not in this app version` : ''}</p>
     <ol class="small">${g.targets.map((o) => `<li>${esc(o.label)} <span class="muted">${esc(typeLabel(o.t))}${o.mag != null ? ', mag ' + (+o.mag).toFixed(1) : ''} · ${o.alt.toFixed(0)}° ${compassName(o.az)}</span>${o.alt < 20 ? ' <b>— not up here, will be left out</b>' : ''}</li>`).join('')}</ol>
-    <div class="card" style="text-align:center"><b>Same site? Others scan this in Play → Join: scan to race the same ${g.targets.length}.</b>
+    ${g.ch.start ? `<div class="card gwait"><div class="muted small">Everyone starts together at ${new Date(g.ch.start).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' })}</div><div class="gwait-n mono" id="g-wait">…</div></div>` : ''}
+    <div class="card" style="text-align:center"><b>Same site? Others scan this in Play → Join: scan to race the same ${g.targets.length}${g.ch.start ? ', starting together' : ''}.</b>
       <canvas id="g-qr" width="520" height="520" style="width:70%;max-width:260px;display:block;margin:8px auto;border-radius:8px"></canvas>
-      <div class="btnrow"><button id="g-copy">Copy / share code</button></div></div>
+      <div class="btnrow"><button id="g-copy">Copy / share code</button></div>
+      ${g.ch.start ? '' : `<div class="muted small" style="margin-top:6px">Start everyone together in:</div><div class="chips" style="justify-content:center">${[[30, '30 s'], [60, '1 min'], [120, '2 min']].map(([sec, l]) => `<button data-gstart="${sec}">${l}</button>`).join('')}</div>`}</div>
     <div class="btnrow"><button id="g-back">Back</button></div>
-    <div class="actionbar"><button id="g-start" class="primary">Start — 3, 2, 1…</button></div>`;
+    <div class="actionbar"><button id="g-start" class="primary">${g.ch.start ? 'Start now (on my own)' : 'Start — 3, 2, 1…'}</button></div>`;
   drawQR($('#g-qr'), g.code);
   $('#g-copy').onclick = () => exportText(`Skyward challenge ${g.ch.id}`, g.code);
-  $('#g-start').onclick = startGame;
+  $('#g-start').onclick = () => startGame();
+  // Shared start (Build 123): the start time goes into the code, so the QR changes; friends scan the new one.
+  el.querySelectorAll('[data-gstart]').forEach((b) => b.onclick = () => {
+    const c = g.ch; loadChallenge(encodeChallenge({ style: c.style, tokens: c.tokens, created: c.created, host: c.host, start: Date.now() + +b.dataset.gstart * 1000 }));
+    toast('Friends scan the new code. Every phone counts down to the same moment.', 3500);
+  });
   $('#g-back').onclick = () => { game = null; renderGame(); };
 }
 function renderPlay(el) {
@@ -2588,6 +2596,16 @@ function renderPlay(el) {
 function updateGame() {
   if (mar) return updateMar();
   const g = game; if (!g) return;
+  // Waiting for a shared start: show the time left, then the usual 3-2-1 ends exactly on the shared moment. A phone
+  // whose clock puts the start more than 3 minutes away (we only offer up to 2) is told so instead of waiting.
+  if (g.phase === 'ready' && g.ch.start) {
+    const ms = g.ch.start - Date.now(), w = $('#g-wait');
+    if (ms > 3.5 * 60000) { if (w) w.textContent = 'Check the clock'; if (!g.clockWarned) { g.clockWarned = true; toast(`This phone's clock puts the start ${Math.round(ms / 60000)} minutes away. Check the time in Settings, or use Start now.`, 6000); } return; }
+    const sec = Math.max(0, Math.ceil(ms / 1000)); if (w) w.textContent = `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+    if (ms <= 3000 && ms > -15000) startGame(g.ch.start);          // the last 3 seconds count down as usual
+    else if (ms <= -15000 && !g.lateNote) { g.lateNote = true; if (w) w.textContent = 'Already started'; toast('The group has already started. Tap Start now: your time counts from your own Go.', 5000); }
+    return;
+  }
   if (g.phase === 'count') {
     const left = Math.ceil((g.countEnd - Date.now()) / 1000);
     const tm = $('#g-timer'); if (tm) tm.textContent = left > 0 ? String(left) : 'Go!';

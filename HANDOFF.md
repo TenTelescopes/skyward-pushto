@@ -715,6 +715,16 @@ unrelated extra star in the object-page sentence. Still open with Bryan: whether
     step was silently dropped, so the flow jumped from the previous step straight to blocked-sky tracing. It now
     always runs when its star is on, showing "Earlier tonight: … check again, or keep it".
 
+## Build 123 (Nov 26): start a race together
+- Race: start everyone together. The ready screen offers "Start everyone together in: 30 s / 1 min / 2 min"; that start
+  time goes into the race code (6th field, base-36 seconds; `encodeChallenge({start})`), so the QR changes and every
+  phone that scans it shows "Everyone starts together at 9:00:41 PM" and a big count (0:28…), then the usual 3-2-1
+  beeps end exactly on the shared moment (`startGame(at)`). Joining up to 15 s late starts at once (time counted from
+  their own Go); later than that it says the group has started. A phone whose clock puts the start over 3.5 minutes
+  away is told to check its clock. Relies on phone clocks agreeing (normally well under a second). Codes without a
+  start time are unchanged; an older app can't read a code with one. Checked with two simulated phones: B joined by
+  the code 9 s later and both stopwatches started within 54 ms. Test in plan.test.mjs.
+
 ## Build 122 (Nov 26): where a scope's numbers come from
 - Setup showed the scope's source note on its own, under the focuser picture ("D150F750 primary — Skyward 150 Compact
   Sourcing Guide (Jan 2026)"), which read like a stray label. It now sits right under the aperture as "Where these

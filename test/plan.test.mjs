@@ -144,3 +144,14 @@ ok('M13: an 80 mm shows a glow, a 16-inch under a dark sky resolves it across th
   assert.ok(R('M13', { nelm: 6.3 }, S150).res > R('M13', { alt: 25, moonAlt: 40, moonFrac: 0.97, moonSep: 90 }, S150).res);   // a dark night shows more than a moonlit one
   assert.match(describe(m13, R('M13', { nelm: 6.3 }, S400)), /resolved/);
 });
+
+// Build 123: race codes can carry a shared start time; codes without one are unchanged
+import { encodeChallenge as encC, decodeChallenge as decC } from '../docs/js/game.js';
+ok('race code: shared start time round-trips, and a plain code still reads', () => {
+  const t0 = Date.UTC(2026, 10, 26, 2, 0, 0), start = t0 + 60000;
+  const plain = encC({ style: 'push', tokens: ['M13', 'M57'], created: t0, host: 'Bryan' });
+  assert.equal(plain.split('|').length, 6); assert.equal(decC(plain).start, null);
+  const timed = encC({ style: 'push', tokens: ['M13', 'M57'], created: t0, host: 'Bryan', start });
+  const d = decC(timed); assert.equal(d.start, start); assert.deepEqual(d.tokens, ['M13', 'M57']); assert.equal(d.host, 'Bryan');
+  assert.throws(() => decC(timed.replace('M57', 'M58')), /damaged/);
+});
