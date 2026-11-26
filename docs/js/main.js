@@ -2271,7 +2271,7 @@ function routeStops() {
   stops.forEach((s, i) => { s.hop = i ? sepDeg(stops[i - 1].alt, stops[i - 1].az, s.alt, s.az) : null; });
   return stops;
 }
-const ROUTE_HOLD = 3600, ROUTE_MOVE = 1100;     // ms looking at a stop, ms travelling to the next
+const ROUTE_HOLD = 1440, ROUTE_MOVE = 440;      // ms looking at a stop, ms travelling to the next (Build 124: 2.5× faster than 3600/1100)
 function renderRoute() {
   const el = $('#tab-route'), P = planState();
   if (!route) route = { stops: routeStops(), i: 0, f: 1, playing: true, t0: performance.now() };
@@ -2284,11 +2284,12 @@ function renderRoute() {
     <div class="rtgrid"><canvas id="rt-map" class="chart rtmap" width="800" height="800"></canvas><div id="rt-views" class="rtviews"></div></div>
     ${bad.length ? `<p class="small" style="text-align:center;margin:4px 0"><b>${bad.length} stop${bad.length === 1 ? ' is' : 's are'} behind your blocked sky at the planned time:</b> ${bad.map((s) => esc(s.o.label)).join(', ')}</p>` : ''}
     <p class="muted small" style="text-align:center;margin:4px 0">Map: the whole sky, rim = horizon, middle = overhead${horizonNow() ? ', hatched = your blocked sky' : ''}.</p>
-    <div class="actionbar"><button id="rt-prevb" class="nav" aria-label="Previous stop">‹</button><button id="rt-play" class="primary wide"></button><button id="rt-nextb" class="nav" aria-label="Next stop">›</button></div>`;
+    <div class="actionbar"><button id="rt-prevb" class="nav" aria-label="Back one stop">◀ Back</button><button id="rt-play" class="primary wide"></button><button id="rt-nextb" class="nav" aria-label="Forward one stop">Next ▶</button></div>`;
   $('#rt-back').onclick = () => showTab('plan');
   const go = (i) => { route.i = Math.max(0, Math.min(S.length - 1, i)); route.f = 0; route.t0 = performance.now(); routeCard(); };
-  $('#rt-prevb').onclick = () => { route.playing = false; go(route.i - 1); route.f = 1; routeCard(); };
-  $('#rt-nextb').onclick = () => { route.playing = false; go(route.i + 1); };
+  // Back / Next step one stop and keep playing or paused as it was (Build 124; they used to pause it).
+  $('#rt-prevb').onclick = () => { go(route.i - 1); route.f = 1; route.t0 = performance.now() - ROUTE_MOVE; routeCard(); };
+  $('#rt-nextb').onclick = () => { go(route.i + 1); };
   $('#rt-play').onclick = () => { if (!route.playing && route.i >= S.length - 1) go(0); route.playing = !route.playing; route.t0 = performance.now() - (route.f >= 1 ? ROUTE_MOVE : 0); routeCard(); };
   routeCard(); drawRouteMap();
 }

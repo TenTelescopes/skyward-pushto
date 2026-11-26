@@ -715,6 +715,11 @@ unrelated extra star in the object-page sentence. Still open with Bryan: whether
     step was silently dropped, so the flow jumped from the previous step straight to blocked-sky tracing. It now
     always runs when its star is on, showing "Earlier tonight: … check again, or keep it".
 
+## Build 124 (Nov 26): faster route preview
+- Route preview 2.5× faster: 1.44 s at each stop and 0.44 s moving to the next (was 3.6 s and 1.1 s). The buttons
+  read "◀ Back · Pause/Play · Next ▶" (were ‹ and ›), and Back/Next now keep it playing or paused as it was (they used
+  to pause it). Checked in the browser: 4 stops in 6 s, pause holds, Next then Back returns to the same stop.
+
 ## Build 123 (Nov 26): start a race together
 - Race: start everyone together. The ready screen offers "Start everyone together in: 30 s / 1 min / 2 min"; that start
   time goes into the race code (6th field, base-36 seconds; `encodeChallenge({start})`), so the QR changes and every
