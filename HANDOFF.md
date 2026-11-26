@@ -715,6 +715,11 @@ unrelated extra star in the object-page sentence. Still open with Bryan: whether
     step was silently dropped, so the flow jumped from the previous step straight to blocked-sky tracing. It now
     always runs when its star is on, showing "Earlier tonight: … check again, or keep it".
 
+## Build 121 (Nov 25): forecast legend tidied
+- The key under the hour tiles wrapped in the middle of an item ("bottom: [swatch]" on one line, "light pollution" on
+  the next). Each picture now stays with its word (`.qkey b`, nowrap), and the tile colours get a line of their own:
+  "Tile top: [moonlight swatch] moonlight · bottom: [light-pollution swatch] light pollution". Checked at iPhone 13 width.
+
 ## Build 120 (Nov 25): globulars break into stars; "there's more to see"
 - Globulars resolve into stars (new `js/globulars.js`, `gcResolve` in vis.js): Harris 2010 horizontal-branch magnitudes
   (V_HB) for the 107 NGC/IC globulars, fetched Nov 25 with Bryan's OK and checked against known values (M13 14.90,

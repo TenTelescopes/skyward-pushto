@@ -629,6 +629,10 @@ details.more.tdetail > summary { padding: 6px 0 10px; }
 /* Build 114: tiles coloured by moonlight (top, blues) and light pollution (bottom, browns to yellow); keep the marks readable on light tiles */
 .cbar > i b { text-shadow: 0 0 3px #000, 0 0 2px #000; }
 .cbar > i .skm, .cbar > i .skp { filter: drop-shadow(0 0 1.5px rgba(0,0,0,.8)); }
+/* Legend (Build 121): each key item (picture + word) stays together; the tile colours get their own line. */
+.cbar .qkey b { font-weight: inherit; white-space: nowrap; display: inline-flex; align-items: center; gap: 3px; }
+.cbar .cbl { flex-wrap: wrap; }
+.cbar .qkey.tkey { flex-basis: 100%; }
 .cbar .qkey .swm, .cbar .qkey .swl { display: inline-block; width: 22px; height: 9px; border-radius: 3px; vertical-align: 0; }
 .cbar .qkey .swm { background: linear-gradient(to right, rgb(6,8,16), rgb(20,44,110), rgb(88,140,214), rgb(214,230,255)); }
 .cbar .qkey .swl { background: linear-gradient(to right, rgb(6,8,16), rgb(104,70,30), rgb(244,226,156)); }

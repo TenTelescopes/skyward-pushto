@@ -3757,7 +3757,7 @@ function glanceHTML(rec, n, t = new Date()) {
       const sl = hourSkyLight(r.t);
       return `<i role="button" tabindex="0" data-g="${gid}" data-hi="${ix}" class="q${hl.lvl}${dk ? ' dk' : ''}" style="background:${tileBG(sl)}" title="${hh(r.t)}: ${QN[hl.lvl]}${hl.why.length ? ' (' + hl.why.join(', ') + ')' : ''} · sky about ${sl.sb.toFixed(1)} mag/arcsec² (top: Moon and twilight; bottom: light pollution)">${moon ? MOONPIC : '<em class="skg"></em>'}${FACEPIC[q(r)]}<b>${lab}</b></i>`;
     }).join('');
-    chips.push(`<div class="cbar" aria-label="Sky by hour (tap an hour for details): ${rec.rows.map((r) => QN[q(r)]).join(', ')}">${cells}<div class="cbl"><span class="qkey">Tap an hour for details · ${FACEPIC[0]} great · ${FACEPIC[1]} good · ${FACEPIC[2]} so-so · ${FACEPIC[3]} cloud · ${MOONPIC} bright Moon · tile top: <i class="swm"></i> moonlight · bottom: <i class="swl"></i> light pollution</span></div></div>`);
+    chips.push(`<div class="cbar" aria-label="Sky by hour (tap an hour for details): ${rec.rows.map((r) => QN[q(r)]).join(', ')}">${cells}<div class="cbl"><span class="qkey">Tap an hour for details · <b>${FACEPIC[0]} great</b> · <b>${FACEPIC[1]} good</b> · <b>${FACEPIC[2]} so-so</b> · <b>${FACEPIC[3]} cloud</b> · <b>${MOONPIC} bright Moon</b></span><span class="qkey tkey"><b>Tile top: <i class="swm"></i> moonlight</b> · <b>bottom: <i class="swl"></i> light pollution</b></span></div></div>`);
   }
   return `<div class="glance">${chips.join('')}${o && o.best && o.best.length ? `<div class="muted small" style="flex-basis:100%">${skyWhose(t)} sky conditions are best for ${esc(o.best[0])}.</div>` : ''}</div>`;
 }
