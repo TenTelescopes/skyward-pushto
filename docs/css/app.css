@@ -666,3 +666,8 @@ html.dlg-open #dlg .hdbody { touch-action: pan-y; }
 .hdcard .hdtop .ibtn:disabled { opacity: .3; }
 .hdcard .hdswipe { text-align: center; margin: 10px 0 4px; }
 html.dlg-open #dlg .hdcard { touch-action: pan-y; }
+/* Phone position: which end the phone's top edge points to (Build 122) */
+.mnt-end { margin: 4px 0 8px; }
+.mnt-end > span { font-size: 14px; }
+.mnt-end .chips { margin: 4px 0; }
+.mnt-other summary { font-size: 14px; }

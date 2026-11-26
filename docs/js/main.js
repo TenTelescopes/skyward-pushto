@@ -69,9 +69,12 @@ function scopeErr(ap, fl) {
   const f = fl / ap; if (f < 2 || f > 30) return `That makes f/${f.toFixed(1)}, which no ordinary telescope is. Check the two numbers.`;
   return '';
 }
+/** The note on where a scope's numbers come from: the built-in scopes use the current wording (an older saved copy
+ *  may still hold an earlier one), your own scope says so. (Build 122) */
+const scopeNote = (p) => (!p.custom && DEFAULT_PROFILES[state.active] ? DEFAULT_PROFILES[state.active].source : p.source) || '';
 const DEFAULT_PROFILES = {
   sw150c: { name: 'Skyward 150 Compact', aperture: 150, fl: 750,
-    source: 'D150F750 primary — Skyward 150 Compact Sourcing Guide (Jan 2026)', focuser: 90,
+    source: 'Skyward 150 mirror: 150 mm across, 750 mm focal length (sold as "D150F750": D for diameter, F for focal length). Edit if yours is marked differently.', focuser: 90,
     eyepieces: [{ name: '23 mm', fl: 23, afov: 62, verified: false }, { name: '10 mm', fl: 10, afov: 62, verified: false }, { name: '4 mm', fl: 4, afov: 62, verified: false }], cal: null },
   sw200v: { name: 'Skyward 200 Visual', aperture: 200, fl: 800,
     source: '200 mm f/4 primary, 800 mm focal length (confirmed by Ten Telescopes). Edit if your mirror is marked differently.', focuser: 90,
@@ -86,7 +89,7 @@ const DEFAULT_PROFILES = {
 const DEFAULTS = {
   v: 1, profiles: DEFAULT_PROFILES, active: 'sw150c', mounting: 'top-sky', mode: 'gyro', compassCorr: 0,
   site: { lat: 43.65, lon: -79.38, elev: 100, source: 'default (Toronto) — set your location' },
-  smooth: 0.6, minAlt: 10, bright: 1, ep: 0, useRate: false, catFilter: 'M', upOnly: true, sort: 'best',
+  smooth: 0.6, minAlt: 10, bright: 1, ep: 0, useRate: false, catFilter: 'ALL', upOnly: true, sort: 'best',
   history: [], target: null, log: [], sound: 'chime', skyCorr: true,
   launch: { check: false, sky: false, align: true },
 };
@@ -639,7 +642,7 @@ function renderPlanHere() {
       ${openStar ? `<div class="planbar" id="pl-open">Start with a sync star: <b>★ ${esc(openStar.o.label)}</b>, ${openStar.dist.toFixed(0)}° from ${esc((objByKey(P.items[0].key) || {}).label || 'your first target')}. Centring it first makes the arrows accurate from the start. <button id="pl-openadd" class="mini primary">Add it</button></div>` : ''}
       <ul class="list" id="pl-list">${P.items.map((it, i) => planItemHTML(it, i)).join('')}</ul>
       <div class="btnrow"><button id="pl-go" class="primary">Start observing</button><button id="pl-route">Best order + sync stars</button></div>
-      <div class="btnrow"><button id="pl-prev">▶ Preview the route</button></div>
+      <div class="btnrow"><button id="pl-prev">▶ Preview the route</button><button id="pl-race">Race this plan with friends</button></div>
       <div class="chips wrap"><button id="pl-bytime">Order by time</button><button id="pl-nosync" ${nSync ? '' : 'disabled'}>Remove sync stars</button><button id="pl-auto">Rebuild for me</button><button id="pl-clear">Clear</button></div>
       <p class="muted small tipline">${ICON.bulb}${esc(tipOfTheNight())}</p>
       <details class="more"><summary>How this plan was picked</summary>${howPickedHTML(n)}</details>
@@ -697,6 +700,17 @@ function renderPlanHere() {
   if ($('#pl-reorder')) $('#pl-reorder').onclick = () => keepScroll(() => { planReorder = !planReorder; renderPlan(); });
   if ($('#pl-route')) {
     $('#pl-prev').onclick = () => { route = null; showTab('route'); };
+    // Race this plan (Build 122): everyone at the site races the plan's targets in the plan's order, as many as it has.
+    // It is an ordinary race code, so friends join with Play → Join: scan (the QR on the next screen) or paste.
+    $('#pl-race').onclick = () => {
+      sky.updateAll();
+      const objs = P.items.filter((x) => !x.sync).map((x) => objByKey(x.key)).filter(Boolean);
+      if (objs.length < 2) return toast('Add at least two targets to race.');
+      const up = objs.filter((o) => playable(o)).length;
+      loadChallenge(encodeChallenge({ style: state.gameStyle || 'push', tokens: objs.map(tokenFor), host: state.player || '' }));
+      showTab('game');
+      if (up < objs.length) toast(`${objs.length - up} of ${objs.length} aren't above 20° right now and will be skipped`, 4000);
+    };
     $('#pl-go').onclick = () => {
       const pp = planProgress(), next = (pp && pp.next) || P.items[0];
       if (!sensors || !sensors.fresh()) return launch('resume');     // start the sensors (and any ticked tune-up steps) first
@@ -878,7 +892,8 @@ function fillPlanSuggestionsHere() {
 }
 
 // ---------------------------------------------------------------- FIND
-const CATS = [['M', 'Messier'], ['C', 'Caldwell'], ['H400', 'Herschel 400'], ['DS', 'RASC doubles'], ['AS', 'Asterisms'], ['PL', 'Planets & Moon'], ['ST', 'Bright stars'], ['ALL', 'All']];
+// "All" comes first and is the default (Build 122).
+const CATS = [['ALL', 'All'], ['M', 'Messier'], ['C', 'Caldwell'], ['H400', 'Herschel 400'], ['DS', 'RASC doubles'], ['AS', 'Asterisms'], ['PL', 'Planets & Moon'], ['ST', 'Bright stars']];
 let findQ = '', findLimit = 150, lastSkyUpdate = 0;
 function inCat(o, c) {
   if (c === 'ALL') return true;
@@ -956,7 +971,7 @@ function renderFind() {
     <ul class="list" id="flist"></ul>`;
   bindQuickStart(el);
   $('#q').addEventListener('input', (e) => { findQ = e.target.value; findLimit = 150; fillFind(); });
-  el.querySelectorAll('[data-cat]').forEach((b) => b.onclick = () => { state.catFilter = b.dataset.cat; save(); renderFind(); });
+  el.querySelectorAll('[data-cat]').forEach((b) => b.onclick = () => { state.catFilter = b.dataset.cat; state.catPicked = true; save(); renderFind(); });
   $('[data-up]', el).onclick = () => { state.upOnly = !state.upOnly; save(); renderFind(); };
   $('[data-unseen]', el).onclick = () => { state.unseenOnly = !state.unseenOnly; save(); renderFind(); };
   el.querySelectorAll('[data-sort]').forEach((b) => b.onclick = () => { state.sort = b.dataset.sort; save(); renderFind(); });
@@ -1766,6 +1781,24 @@ function mountCheckRead() {
   return { cur, best, screenUp };
 }
 const mountChecked = () => state.mountOk && state.mountOk.mount === state.mounting && Date.now() - state.mountOk.t < 14 * 3600e3;
+/**
+ * "Phone on the scope: <how> · Change" (Build 122): always on the Align page and in Setup, so the way the phone sits
+ * can be told to the app directly. Change opens the pictures; picking one clears the alignment (it depends on it).
+ */
+let mountRowOpen = false;   // the pictures stay open while someone flips through them (each pick redraws the page)
+function mountRowHTML() {
+  const m = MOUNTINGS[state.mounting];
+  return `<div class="card mntrow"><div class="row" style="border:0;padding:0"><span>Phone on the scope: <b>${esc(m.label)}</b></span><button class="mini" id="mr-change" aria-expanded="${mountRowOpen}">${mountRowOpen ? 'Done' : 'Change'}</button></div>
+    <div id="mr-pick"${mountRowOpen ? '' : ' class="hidden"'}><p class="muted small" style="margin:6px 0">Tap the picture that matches how the phone sits on the tube.</p>${mountPickerHTML()}</div></div>`;
+}
+function wireMountRow(redraw) {
+  const b = $('#mr-change'), pick = $('#mr-pick'); if (!b || !pick) return;
+  b.onclick = () => { mountRowOpen = pick.classList.toggle('hidden') === false; b.setAttribute('aria-expanded', mountRowOpen); b.textContent = mountRowOpen ? 'Done' : 'Change'; };
+  wireMountPicker(pick, (ch) => {
+    if (ch) { state.mountOk = { mount: state.mounting, t: Date.now(), manual: true }; save(); toast(`Phone on the scope: ${MOUNTINGS[state.mounting].label.toLowerCase()}. Align again.`, 3500); }
+    redraw();
+  });
+}
 function mountCheckHTML() {
   if (mountChecked() || align.obs.length) return '';
   return `<div class="card mntcheck" id="mc-card"><b>First: is the phone set the right way round?</b>
@@ -1788,7 +1821,7 @@ function wireMountCheck() {
     if (alt >= 60 && k !== state.mounting && MOUNTINGS[k].d.join() !== MOUNTINGS[state.mounting].d.join()) {
       out.innerHTML = `<p class="small"><b>The phone looks different from the setting.</b> With the tube up, it is the phone's <b>${{ 'top-sky': 'top edge', 'top-mirror': 'bottom edge', 'across-right': 'right edge', 'across-left': 'left edge', camera: 'back (the camera side)' }[k]}</b> that points at the sky, so the phone is probably <b>${esc(MOUNTINGS[k].label.toLowerCase())}</b>.</p><div class="btnrow"><button id="mc-sw" class="primary">Switch to that</button><button id="mc-no">No, keep mine</button></div>`;
       $('#mc-sw').onclick = () => { setMounting(k); state.mountOk = { mount: k, t: Date.now(), alt }; save(); toast(`Phone position set: ${MOUNTINGS[k].label.toLowerCase()}`, 3500); renderAlign(); };
-      $('#mc-no').onclick = () => { out.innerHTML = '<p class="small muted">Kept. If the arrows go the wrong way, open Setup → phone mount.</p>'; };
+      $('#mc-no').onclick = () => { out.innerHTML = '<p class="small muted">Kept. If the arrows go the wrong way, tap Change next to “Phone on the scope” above.</p>'; };
       return;
     }
     out.innerHTML = r.screenUp >= 60 ? '<p class="small">The <b>screen</b> is facing the sky. On the telescope the screen should face you or out to the side, with one edge or the camera running along the tube.</p>'
@@ -1819,6 +1852,7 @@ function renderAlign() {
   } else assistHTML = '<p class="muted">No bright stars above 15° right now.</p>';
   el.innerHTML = `${BACK}
     <h2>Star alignment</h2>
+    ${mountRowHTML()}
     ${state.mode !== 'compass' ? mountCheckHTML() : ''}
     ${state.mounting === 'camera' && state.mode !== 'compass' ? `<div class="card"><b>Your phone looks along the tube</b><p class="muted small" style="margin:4px 0 8px">The camera can do this for you: no star to find or centre.</p><button id="a-cam" class="primary">${profile().camBore ? 'Align with the camera' : 'Line up and align with the camera'}</button></div>` : ''}
     ${state.mode === 'compass' ? `<p class="muted">Compass mode is on: azimuth comes from the magnetometer. Star alignment below uses the gyro instead and is usually more accurate — switch in Setup.</p>` : ''}
@@ -1847,6 +1881,7 @@ function renderAlign() {
   $('#a-tools').ontoggle = (e) => { state.alignTools = e.target.open; save(); };
   if ($('#a-find')) $('#a-find').onclick = () => showTab('find');
   if ($('#a-what')) $('#a-what').onclick = () => openWhatsThis('align');
+  wireMountRow(renderAlign);
   wireMountCheck();
   if ($('#a-cam')) $('#a-cam').onclick = () => { if (!camWiz && !profile().camBore) camWiz = { step: 'start', star: null }; showTab('camera'); };
   const addStar = (o, force) => addAlignStar(o, force);
@@ -2518,7 +2553,7 @@ function renderReady(el) {
   el.innerHTML = `<h2>${esc(STYLES[g.style].name)} <span class="muted" style="font-size:15px;font-weight:400">· code ${esc(g.ch.id)}</span></h2>
     <p class="muted small">${g.ch.host ? 'Set by ' + esc(g.ch.host) + ' · ' : ''}set up ${shortDate(g.ch.created)} · about ${len.toFixed(0)}° of pushing in all${g.missing ? ` · ${g.missing} target(s) not in this app version` : ''}</p>
     <ol class="small">${g.targets.map((o) => `<li>${esc(o.label)} <span class="muted">${esc(typeLabel(o.t))}${o.mag != null ? ', mag ' + (+o.mag).toFixed(1) : ''} · ${o.alt.toFixed(0)}° ${compassName(o.az)}</span>${o.alt < 20 ? ' <b>— not up here, will be left out</b>' : ''}</li>`).join('')}</ol>
-    <div class="card" style="text-align:center"><b>Same site? Others scan this to play the same 10.</b>
+    <div class="card" style="text-align:center"><b>Same site? Others scan this in Play → Join: scan to race the same ${g.targets.length}.</b>
       <canvas id="g-qr" width="520" height="520" style="width:70%;max-width:260px;display:block;margin:8px auto;border-radius:8px"></canvas>
       <div class="btnrow"><button id="g-copy">Copy / share code</button></div></div>
     <div class="btnrow"><button id="g-back">Back</button></div>
@@ -2952,11 +2987,11 @@ function renderSetup() {
     <label class="row"><span>Type</span><select id="s-type">${SCOPE_TYPES.map(([k, l]) => `<option value="${k}" ${(p.type || 'reflector') === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
     <label class="row"><span>Focal length (mm)</span><input id="s-fl" type="number" inputmode="decimal" value="${p.fl}"></label>
     <label class="row"><span>Aperture (mm)<span class="muted small" style="display:block">Diameter of the main mirror or lens · f/${(p.fl / p.aperture).toFixed(1)}</span></span><input id="s-ap" type="number" inputmode="decimal" value="${p.aperture}"></label>
+    ${scopeNote(p) ? `<p class="muted small">Where these numbers come from: ${esc(scopeNote(p))}</p>` : ''}
     ${lensView(p) ? `<label class="row"><span>Star diagonal (right-angle eyepiece adapter)<span class="muted small" style="display:block">With it the view is upright but mirror-reversed; without it, upside down.</span></span><input type="checkbox" id="s-diagonal" ${p.diagonal ? 'checked' : ''}></label>` : ''}
     <div class="focpick${lensView(p) ? ' hidden' : ''}"><div><b>Where is the focuser?</b><p class="muted small" style="margin:4px 0 0">Stand behind the telescope with the tube level, looking the way it points. Tap where the focuser sticks out. On a Skyward it is on the right.</p><p id="s-foclab" style="margin:8px 0 0"></p></div>
       <svg viewBox="0 0 160 112" role="group" aria-label="Focuser position"><circle cx="80" cy="70" r="30" class="fp-tube"/><circle cx="80" cy="70" r="20" class="fp-mirror"/><text x="80" y="74" text-anchor="middle" class="fp-t">tube</text>
       ${FOC.map(([v, l]) => { const s = Math.sin(v * D2R), c = Math.cos(v * D2R); return `<g data-foc="${v}" class="fp-opt${(p.focuser ?? 90) === v ? ' on' : ''}" role="button" aria-label="${l}"><line x1="${(80 + 30 * s).toFixed(1)}" y1="${(70 - 30 * c).toFixed(1)}" x2="${(80 + 44 * s).toFixed(1)}" y2="${(70 - 44 * c).toFixed(1)}"/><circle cx="${(80 + 52 * s).toFixed(1)}" cy="${(70 - 52 * c).toFixed(1)}" r="11"/></g>`; }).join('')}</svg></div>
-    <p class="muted small">${esc(p.source || '')}</p>
     <h3>Eyepieces</h3>
     <p class="muted small">Focal length is printed on the eyepiece. Apparent field is the maker's figure for how wide the view looks (often 50°–70°). The app works out how much sky each one shows.</p>
     <table class="res"><tr><th>Name</th><th>Focal mm</th><th>Apparent field °</th><th>Shows</th><th>In use</th><th></th></tr>
@@ -2970,9 +3005,9 @@ function renderSetup() {
     <label class="row"><span>Star declination (°)</span><input id="drift-d" type="number" inputmode="decimal" placeholder="e.g. 0"></label>
     <div class="btnrow"><button id="drift-go">Set the apparent field of the selected eyepiece</button></div></details>
 
+    ${mountRowHTML()}
     <details class="more"><summary>Phone mount and sensors (advanced)</summary>
     <label class="row"><span>Phone dock</span><select id="s-dock"><option value="yes" ${state.dock !== 'no' ? 'selected' : ''}>Yes, on a bridge mount</option><option value="no" ${state.dock === 'no' ? 'selected' : ''}>No, strapped to the tube</option></select></label>
-    <div class="row" style="display:block"><span>Phone position</span><div id="s-mount">${mountPickerHTML()}</div></div>
     <label class="row"><span>Azimuth source</span><select id="s-mode"><option value="gyro" ${state.mode === 'gyro' ? 'selected' : ''}>Gyro + star alignment (recommended)</option><option value="compass" ${state.mode === 'compass' ? 'selected' : ''}>Compass (no alignment)</option></select></label>
     <label class="row"><span>Compass correction, true − magnetic (°)</span><input id="s-cc" type="number" inputmode="decimal" step="0.1" value="${(+state.compassCorr).toFixed(2)}"></label>
     <label class="row"><span>Apply measured gyro drift between syncs</span><input type="checkbox" id="s-rate" ${state.useRate ? 'checked' : ''}></label>
@@ -3043,7 +3078,7 @@ function renderSetup() {
     const e = eyepiece(); e.afov = +(tf * p.fl / e.fl).toFixed(1); e.verified = true; save(); toast(`True field ${(tf * 60).toFixed(1)}′ → AFOV ${e.afov}°`); renderSetup();
   };
   $('#s-dock').onchange = (e) => { state.dock = e.target.value; save(); };
-  wireMountPicker($('#s-mount'), (ch) => { if (ch) toast(`Phone position: ${MOUNTINGS[state.mounting].where.toLowerCase()} — align again`); renderSetup(); const d = $('#s-mount').closest('details'); if (d) d.open = true; });
+  wireMountRow(renderSetup);
   $('#s-mode').onchange = (e) => { state.mode = e.target.value; save(); };
   $('#s-cc').onchange = () => { state.compassCorr = num('#s-cc') || 0; save(); };
   $('#s-rate').onchange = (e) => { state.useRate = e.target.checked; model.useRate = state.useRate; save(); };
@@ -4794,7 +4829,9 @@ async function cameraFind() {
 }
 
 // ---- Phone position picker: a small picture of each way the phone can sit on the tube ----
-const MOUNT_OFFERED = ['top-sky', 'side-sky', 'camera'];
+// Phone positions (Build 122): three pictures (on top, on the side, camera along the tube), a switch for which end
+// the phone's top edge points to (on top / on the side only), and "across the tube" tucked under "Other ways".
+// All seven positions in MOUNTINGS can be told to the app this way.
 function mountSVG(k) {
   const tube = '<rect x="30" y="10" width="36" height="96" rx="5" class="mt-tube"/><path d="M30 20h36" class="mt-rim"/><text x="48" y="7" class="mt-lab">sky end ★</text><text x="48" y="117" class="mt-lab">mirror end</text>';
   const side = k.startsWith('side'), top = k.startsWith('top');
@@ -4812,10 +4849,14 @@ function mountSVG(k) {
   return `<svg viewBox="0 0 96 120" aria-hidden="true">${tube}${k === 'camera' ? '' : foc}${ph}</svg>`;
 }
 function mountPickerHTML() {
-  // Only the three likely positions are offered; one chosen in an older build stays visible so nobody is stranded.
-  const offered = Object.entries(MOUNTINGS).filter(([k]) => MOUNT_OFFERED.includes(k) || k === state.mounting);
-  return `<div class="mnt-grid">${offered.map(([k, v]) => `<button class="mnt${k === state.mounting ? ' on' : ''}" data-mount="${k}" aria-pressed="${k === state.mounting}" aria-label="${esc(v.label)}">${mountSVG(k)}<b>${esc(v.where)}</b><span>${esc(v.edge)}</span></button>`).join('')}</div>
-    <p class="muted small">Looking at the tube with the sky end at the top. The little bar and the word “top” mark the phone's top edge. ${state.mounting.startsWith('side') ? 'On the side, the round focuser is facing you.' : ''}</p>`;
+  const cur = state.mounting, end = cur.endsWith('mirror') ? 'mirror' : 'sky', flips = cur.startsWith('top') || cur.startsWith('side');
+  const tile = (k) => { const v = MOUNTINGS[k]; return `<button class="mnt${k === cur ? ' on' : ''}" data-mount="${k}" aria-pressed="${k === cur}" aria-label="${esc(v.label)}">${mountSVG(k)}<b>${esc(v.where)}</b><span>${esc(v.edge)}</span></button>`; };
+  const across = cur.startsWith('across');
+  return `<div class="mnt-grid">${[`top-${end}`, `side-${end}`, 'camera'].map(tile).join('')}</div>
+    ${flips ? `<div class="mnt-end"><span>Phone's top edge points to:</span><div class="chips">${[['sky', 'Sky end'], ['mirror', 'Mirror end']].map(([e, l]) => `<button data-end="${e}" class="${e === end ? 'on' : ''}" aria-pressed="${e === end}">${l}</button>`).join('')}</div>
+      <p class="muted small" style="margin:2px 0 0">The app's screen doesn't rotate. At a Newtonian you stand at the sky end, so with the top edge to the mirror end the screen reads the right way up from the eyepiece.</p></div>` : ''}
+    <details class="more mnt-other"${across ? ' open' : ''}><summary>Other ways</summary><div class="mnt-grid">${['across-left', 'across-right'].map(tile).join('')}</div></details>
+    <p class="muted small">Looking at the tube with the sky end at the top. The little bar and the word “top” mark the phone's top edge. ${cur.startsWith('side') ? 'On the side, the round focuser is facing you.' : ''}</p>`;
 }
 function setMounting(k) {
   if (!MOUNTINGS[k] || k === state.mounting) return false;
@@ -4825,6 +4866,8 @@ function setMounting(k) {
 }
 function wireMountPicker(root, after) {
   root.querySelectorAll('.mnt').forEach((b) => { b.onclick = () => { const ch = setMounting(b.dataset.mount); after(ch); }; });
+  // The end switch keeps the position (on top / on the side) and turns the phone round.
+  root.querySelectorAll('[data-end]').forEach((b) => { b.onclick = () => { const base = state.mounting.split('-')[0]; after(setMounting(`${base}-${b.dataset.end}`)); }; });
 }
 // Asked once, the first time someone heads for the telescope: the pointing depends on how the phone sits on the tube.
 function askDock(dest) {
@@ -5097,6 +5140,7 @@ async function init() {
   loadSkyGlow().then((g) => { if (g && !skyQ() && mapSky()) { planRows = null; rateCache.clear(); try { renderLaunch(); } catch (e) { /* launch screen not built yet */ } if (tab === 'plan') renderPlan(); else if (tab === 'find') renderFind(); } }).catch(() => {});
   sound.mode = state.sound || 'chime';
   if (state.rot180 == null) state.rot180 = true;
+  if (!state.catPicked && state.catFilter === 'M') state.catFilter = 'ALL';   // Build 122: the old default (Messier) becomes All, unless someone picked it
   for (const k of ['sw150c', 'sw200v', 'sw400']) if (state.profiles[k] && state.profiles[k].focuser == null) state.profiles[k].focuser = 90;   // Skyward: focuser always on the right
   for (const [k, v] of Object.entries(DEFAULT_PROFILES)) if (!state.profiles[k]) state.profiles[k] = structuredClone(v);
   setSeeing(seeingNow());

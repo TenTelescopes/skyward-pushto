@@ -715,6 +715,30 @@ unrelated extra star in the object-page sentence. Still open with Bryan: whether
     step was silently dropped, so the flow jumped from the previous step straight to blocked-sky tracing. It now
     always runs when its star is on, showing "Earlier tonight: … check again, or keep it".
 
+## Build 122 (Nov 26): where a scope's numbers come from
+- Setup showed the scope's source note on its own, under the focuser picture ("D150F750 primary — Skyward 150 Compact
+  Sourcing Guide (Jan 2026)"), which read like a stray label. It now sits right under the aperture as "Where these
+  numbers come from: …" (`scopeNote`), and the 150's note is in plain words: "Skyward 150 mirror: 150 mm across, 750 mm
+  focal length (sold as "D150F750": D for diameter, F for focal length). Edit if yours is marked differently."
+  Built-in scopes always show the current wording, even when the phone saved an older copy of the profile.
+- Telling the app how the phone sits: a "Phone on the scope: <how> · Change" card (`mountRowHTML`, `wireMountRow`) is
+  now always on the Align page and in Setup (it used to be inside "Phone mount and sensors (advanced)"). Change opens
+  the pictures; picking one clears the alignment and counts as checked. All seven positions can be told to the app
+  now (before, only three): three pictures (on top, on the side, camera along the tube), a "Phone's top edge points
+  to: Sky end | Mirror end" switch for on top / on the side, and "Other ways" (across the tube, either way) tucked
+  away. The note under the switch says why it matters: the screen doesn't rotate, and at a Newtonian you stand at the
+  sky end, so top edge to the mirror end reads the right way up from the eyepiece. The pictures stay open while
+  choosing (`mountRowOpen`). Checked in the browser: switch to the mirror end, camera (switch hidden), across-left
+  under Other ways, and Setup showing the same.
+- Race a plan with friends (Plan tab → "Race this plan with friends", next to Preview the route): makes an ordinary race
+  code from the plan's targets (sync stars left out), in the plan's order, as many as the plan has, with the race
+  style from Play. It opens the race's ready screen with the QR; friends at the site join with Play → Join: scan (or
+  paste). Targets below 20° are skipped when the race starts, as before, and the button says how many. The ready
+  screen now says "race the same N" (was always "the same 10"). Meant to be run there and then by a group; no notes
+  or time window travel with it. Checked in the browser: an 8-target plan at 9 pm → race code with the same 8.
+- Find: "All" is the first list and the default (was Messier, last in the row). A phone still on the old default
+  switches to All once; anyone who tapped a list keeps their pick (`state.catPicked`).
+
 ## Build 121 (Nov 25): forecast legend tidied
 - The key under the hour tiles wrapped in the middle of an item ("bottom: [swatch]" on one line, "light pollution" on
   the next). Each picture now stays with its word (`.qkey b`, nowrap), and the tile colours get a line of their own:
