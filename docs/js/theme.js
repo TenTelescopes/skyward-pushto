@@ -25,7 +25,11 @@ export function starTint(cls, a = 1, k = 1) {
 }
 // token: [day r,g,b,a], [night r,g,b,a] — night values are scaled by the brightness setting k (not alpha).
 const TOKENS = {
-  '--bg': [[5, 9, 30, 1], [0, 0, 0, 1], 0], '--bgm': [[18, 24, 66, 1], [0, 0, 0, 1], 0], '--bg2': [[58, 44, 96, 1], [0, 0, 0, 1], 0],
+  // The sky behind everything: zenith, mid-sky and the horizon. Build 125: a blue dusk (the purple horizon is gone).
+  '--bg': [[4, 8, 26, 1], [0, 0, 0, 1], 0], '--bgm': [[11, 22, 58, 1], [0, 0, 0, 1], 0], '--bg2': [[24, 46, 92, 1], [0, 0, 0, 1], 0],
+  // The one main button on a screen (Build 125): solid gold with dark lettering by day; at Night it stays a dark red
+  // panel with bright lettering, so it adds no light.
+  '--pfill': [[255, 214, 128, 1], [44, 0, 0, 1], 0], '--ptext': [[22, 20, 44, 1], [255, 45, 25, 1], 1], '--pline': [[255, 214, 128, 1], [210, 20, 10, 1], 1],
   '--panel': [[20, 28, 66, 0.78], [13, 0, 0, 1], 0], '--line': [[76, 90, 150, 1], [95, 0, 0, 1], 1], '--dim': [[160, 171, 212, 1], [145, 0, 0, 1], 1],
   '--fg': [[233, 237, 255, 1], [210, 20, 10, 1], 1], '--hi': [[255, 214, 128, 1], [255, 45, 25, 1], 1], '--good': [[126, 231, 170, 1], [255, 95, 45, 1], 1],
   '--press': [[40, 50, 104, 1], [28, 0, 0, 1], 0], '--row': [[33, 42, 88, 1], [23, 0, 0, 1], 0], '--sel': [[44, 56, 118, 1], [23, 0, 0, 1], 0],

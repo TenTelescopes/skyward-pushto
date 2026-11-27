@@ -715,6 +715,40 @@ unrelated extra star in the object-page sentence. Still open with Bryan: whether
     step was silently dropped, so the flow jumped from the previous step straight to blocked-sky tracing. It now
     always runs when its star is on, showing "Earlier tonight: … check again, or keep it".
 
+## Build 125 (Nov 26): design and usability pass, help page, Play
+Asked for: less overwhelming for a first-timer, still practical for a seasoned observer, more fun, a more enticing Play,
+a basic help page, and nothing that looks more machine-made. Audited from screenshots of every main screen at phone size.
+- Start screen: the Start button now sits right under the four choices. The set-up steps fold into one line
+  ("Before you start: seeing check, blocked sky and star alignment · Change"; open state remembered, `state.ui.pathOpen`).
+  The key to the forecast tiles folds behind "What the tiles mean" (`details.tkeyd`, `state.ui.tileKey`). A first visit
+  (`!state.welcomed && !state.seenIntro`) gets a short "First time here?" card with "See how it works". A ? button beside
+  the sun button and a "How this app works" row at the bottom open the help page.
+- Help page (new `tab-help`, `renderHelp`, `HELP_WORDS`; also first in More): what the app is, a sample of the two
+  arrows, a night in four steps, the four ways in, reading the screen (faces, dots, sun and house buttons), first-night
+  tips, a glossary with where the words come from (push-to, seeing, Bortle, Messier, marathon…), and "if something
+  seems off". Back returns to the start screen when it was opened from there (`helpFrom`).
+- Play: "Align first" is a slim strip, not a card ahead of the games. Messier Marathon card: all 110 as a grid of dots
+  (`marathonCard`: bright = in reach tonight for this scope, sky and place via `marathonList`; ringed = found tonight),
+  with the count ("52 of the 110 can still be caught tonight from here"). Race card: a small route picture, the three
+  styles as a segmented control (was a drop-down), "New race", "Join a friend's race", "Paste a code", and "Race your
+  plan" when the plan has two or more targets (`racePlan`, shared with the Plan tab). Lobby render 15–76 ms in Chromium.
+- Look (app.css, last blocks; theme.js): headings, object names and big numbers in the system rounded face
+  (`--round`: ui-rounded = SF Rounded on iPhone, falls back to the system face; no font files, works offline; NOT
+  visible in the Chromium checks, so unseen until it is on a phone). The one main button per screen is filled
+  (`--pfill/--ptext/--pline`: gold by day, a dark red panel at Night so it adds no light; outline when disabled). The
+  background is a blue dusk (the purple horizon is gone). More is a plain list with dividers, not eleven boxed cards.
+  Small labels are sentence case (were capitals). Plan's location block: the two buttons side by side.
+- Wording: about 35 spaced dashes on the most-seen screens rewritten as plain sentences; the status pill says "Turn
+  sensors on" / "Tap to align" (was "Sensors off — tap"). About 110 remain on deeper screens.
+- Fixed while auditing: (1) returning to the start screen (house button and six other places) replayed the splash's
+  2.35 s fade delay, leaving it blank; `showStart()` turns the animation off after the first showing. (2) The four faces
+  in the tile key were all green since Build 121 (colour by position broke when each got wrapped); now by class.
+  (3) Explore said "no set-up" but ran the seeing check and blocked sky by default; it now has its own switch for every
+  step, all off until ticked (`stepKey`). (4) Sliding to the Night look left the forecast tiles blue until the next
+  redraw. 
+- Checked in the browser, Day and Night looks: first visit, skip, each activity, folding steps, help from all three
+  doors, Play, More, Plan; plus the earlier plan race, shared start (5 ms apart) and route preview. Tests pass.
+
 ## Build 124 (Nov 26): faster route preview
 - Route preview 2.5× faster: 1.44 s at each stop and 0.44 s moving to the next (was 3.6 s and 1.1 s). The buttons
   read "◀ Back · Pause/Play · Next ▶" (were ‹ and ›), and Back/Next now keep it playing or paused as it was (they used

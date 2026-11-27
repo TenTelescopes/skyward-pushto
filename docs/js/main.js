@@ -122,6 +122,8 @@ const ICON = {
   full: svg('<path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/>'),
   prev: svg('<path d="m15 5-7 7 7 7"/>'), next: svg('<path d="m9 5 7 7-7 7"/>'),
   cloud: svg('<path d="M7 18h10a4 4 0 0 0 .5-8 6 6 0 0 0-11.4 1.5A3.3 3.3 0 0 0 7 18z"/>'),
+  help: svg('<circle cx="12" cy="12" r="9"/><path d="M9.4 9.3a2.7 2.7 0 1 1 4.1 2.3c-.9.6-1.5 1.1-1.5 2.1"/><path d="M12 16.9v.1"/>'),
+  plan: svg('<path d="M9 6h11M9 12h11M9 18h11"/><path d="m3.5 6 1.2 1.2L6.8 5M3.5 12l1.2 1.2L6.8 11M3.5 18l1.2 1.2L6.8 17"/>'),
   pin: svg('<path d="M12 21s-6.5-6.2-6.5-11a6.5 6.5 0 0 1 13 0c0 4.8-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.3"/>'),
   bulb: svg('<path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3z"/>'),
   half: svg('<circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor"/>'),
@@ -172,11 +174,13 @@ function openShade() {
       <button class="shend" data-v="1" aria-label="Night">${ICON.moon}</button></div>
     <div class="shcap"><span>Day</span><span id="sh-note"></span><span>Night</span></div>`;
   document.body.appendChild(pop);
-  const note = () => { const t = state.shade ?? 0; $('#sh-note').textContent = t > 0.97 ? 'red only — keeps your night vision' : t < 0.03 ? 'easy to read' : 'in between'; };
+  const note = () => { const t = state.shade ?? 0; $('#sh-note').textContent = t > 0.97 ? 'red only, keeps your night vision' : t < 0.03 ? 'easy to read' : 'in between'; };
   note();
   $('#sh-range').oninput = (e) => { setShade(parseFloat(e.target.value), true); note(); };
   pop.querySelectorAll('.shend').forEach((b) => b.onclick = () => { setShade(+b.dataset.v, true); $('#sh-range').value = b.dataset.v; note(); });
-  const close = (e) => { if (!pop.contains(e.target) && !e.target.closest('.shadebtn')) { pop.remove(); document.removeEventListener('pointerdown', close, true); if (tab === 'setup') renderSetup(); if (tab === 'more') renderMore(); } };
+  const close = (e) => { if (!pop.contains(e.target) && !e.target.closest('.shadebtn')) { pop.remove(); document.removeEventListener('pointerdown', close, true); if (tab === 'setup') renderSetup(); if (tab === 'more') renderMore();
+    // the forecast tiles are coloured when drawn: redraw them for the new look (Build 125; they stayed blue at Night)
+    if (!$('#gate').classList.contains('hidden')) renderLaunch(); else if (tab === 'plan') renderPlan(); } };
   document.addEventListener('pointerdown', close, true);
 }
 const IS_STANDALONE = () => (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true || !!window.Capacitor;
@@ -283,13 +287,13 @@ function steerMode() {
 }
 const sensorsWaiting = () => !!sensors && performance.now() - sensorT0 < 3000;
 const SENS_BTN = '<button class="mini primary" id="ps-sens">Turn on</button>';
-const bindSensBtn = (el) => { const b = $('#ps-sens', el); if (b) b.onclick = () => { renderLaunch(); $('#gate').classList.remove('hidden'); }; };
+const bindSensBtn = (el) => { const b = $('#ps-sens', el); if (b) b.onclick = () => { showStart(); }; };
 /** Measured compass uncertainty (arcmin) from the Phone check, or null if never measured. */
 function guessUncertainty() { const ph = state.phonePerf; return ph && ph.compassNoise != null ? Math.hypot(ph.compassNoise, ph.compassSwing || 0) : null; }
 
 // ---------------------------------------------------------------- tabs
 // Five tabs; Align, Log, Tests and Setup live under More.
-const PARENT = { align: 'more', log: 'more', test: 'more', setup: 'more', horizon: 'more', route: 'plan', camera: 'more', collim: 'more', sim: 'more' };
+const PARENT = { help: 'more', align: 'more', log: 'more', test: 'more', setup: 'more', horizon: 'more', route: 'plan', camera: 'more', collim: 'more', sim: 'more' };
 const scrollPos = {}; let pendingScroll = null;
 function showTab(t) {
   const m = $('main'); if (tab && m) scrollPos[tab] = m.scrollTop;
@@ -299,13 +303,16 @@ function showTab(t) {
   document.body.dataset.tab = top;                          // CSS hides the pointing status where it doesn't matter (Find, Plan, More)
   document.querySelectorAll('nav#tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === top));
   document.querySelectorAll('.tab').forEach((s) => s.classList.toggle('on', s.id === 'tab-' + t));
-  ({ plan: renderPlan, find: renderFind, push: renderPush, align: renderAlign, game: renderGame, test: renderTest, setup: renderSetup, more: renderMore, log: renderLog, horizon: renderHorizon, route: renderRoute, camera: renderCamera, collim: renderCollim, sim: renderSim })[t]();
+  ({ plan: renderPlan, find: renderFind, push: renderPush, align: renderAlign, game: renderGame, test: renderTest, setup: renderSetup, more: renderMore, log: renderLog, horizon: renderHorizon, route: renderRoute, camera: renderCamera, collim: renderCollim, sim: renderSim, help: renderHelp })[t]();
   // Lists reopen where you left them; every other screen starts at the top.
   pendingScroll = (t === 'find' || t === 'plan') && scrollPos[t] ? { t, y: scrollPos[t] } : null;
   m.scrollTop = pendingScroll ? pendingScroll.y : 0;
 }
 function restoreScroll() { if (pendingScroll && pendingScroll.t === tab) { $('main').scrollTop = pendingScroll.y; pendingScroll = null; } }
 let backTo = 'more';                               // the main tab a sub-screen was opened from
+let helpFrom = null;                               // 'start' when the help page was opened from the start screen (Back returns there)
+// The key under the forecast tiles remembers whether it was left open (the toggle event doesn't bubble: capture it).
+document.addEventListener('toggle', (e) => { const d = e.target; if (d && d.classList && d.classList.contains('tkeyd')) { state.ui = state.ui || {}; state.ui.tileKey = d.open; save(); } }, true);
 const BACK = '<button class="back" data-back>‹ Back</button>';
 function bindBack(el) { const b = $('[data-back]', el); if (!b) return; if (flow && flow.i >= 0 && flow.i < flow.steps.length) { b.remove(); return; } b.onclick = () => showTab(backTo); }
 const dlg = () => $('#dlg'), dlgCard = () => $('#dlg-card');
@@ -611,7 +618,7 @@ function renderPlanHere() {
       ${(() => { const rec = ensureForecast(here(), start, () => { if (!$('#tab-plan').classList.contains('hidden')) renderPlan(); }); return glanceHTML(rec, n, start) + clearSpellBtn(rec, start); })()}
       ${P.site
         ? `<div class="sess hzrow"><div class="small">${ICON.pin}Planning for <b>${esc(P.site.name)}</b><div class="muted">${P.site.name === coordText(P.site.lat, P.site.lon) ? '' : coordText(P.site.lat, P.site.lon) + ' · '}not where you are now</div></div><div class="btncol"><button id="pl-where" class="mini">Change place</button><button id="pl-here" class="mini">Use where I am</button></div></div>` : ''}
-      ${P.site ? '' : `<div class="sess hzrow"><div class="small">${ICON.pin}${whereText()}<div class="muted">Planning a trip somewhere darker? Pick the spot on the map.</div></div><div class="btncol"><button id="pl-where" class="mini">Plan for another place</button><button id="pl-loc" class="mini">Update location</button></div></div>`}
+      ${P.site ? '' : `<div class="plwhere"><div class="small">${ICON.pin}${whereText()}</div><div class="btnrow"><button id="pl-loc" class="mini">Update location</button><button id="pl-where" class="mini">Plan for another place</button></div><div class="muted small">Going somewhere darker? Pick the spot on a map and plan for its sky.</div></div>`}
       <details class="more tdetail" id="pl-tonight" ${state.ui && state.ui.plTonight ? 'open' : ''}><summary>Tonight in detail</summary>
       <div class="muted small">${esc(skyName)} · Moon ${moonTxt}</div>
       <div class="muted small">Sunset ${hm(n.set)} · fully dark ${hm(n.astro)} – ${hm(n.astroAm)}</div>
@@ -691,7 +698,7 @@ function renderPlanHere() {
   $('#pl-auto').onclick = () => {
     if (P.items.length && !confirmTwice('pl-auto')) return;
     const pick = autoPlan(computePlanRows(), { hours: +P.hours, seen: seenSet() });
-    if (!pick.length) return toast('Nothing suitable in that session — try a later start, or a longer stay.', 4000);
+    if (!pick.length) return toast('Nothing suitable in that session. Try a later start, or a longer stay.', 4000);
     P.done = {}; const r = applyRoute(pick); renderPlan(); $('main').scrollTop = 0;
     toast(`Plan built: ${pick.length} targets${r.nSync ? ` and ${r.nSync} sync star${r.nSync === 1 ? '' : 's'}` : ''}. Reorder or remove anything you like.`, 4500);
   };
@@ -702,15 +709,7 @@ function renderPlanHere() {
     $('#pl-prev').onclick = () => { route = null; showTab('route'); };
     // Race this plan (Build 122): everyone at the site races the plan's targets in the plan's order, as many as it has.
     // It is an ordinary race code, so friends join with Play → Join: scan (the QR on the next screen) or paste.
-    $('#pl-race').onclick = () => {
-      sky.updateAll();
-      const objs = P.items.filter((x) => !x.sync).map((x) => objByKey(x.key)).filter(Boolean);
-      if (objs.length < 2) return toast('Add at least two targets to race.');
-      const up = objs.filter((o) => playable(o)).length;
-      loadChallenge(encodeChallenge({ style: state.gameStyle || 'push', tokens: objs.map(tokenFor), host: state.player || '' }));
-      showTab('game');
-      if (up < objs.length) toast(`${objs.length - up} of ${objs.length} aren't above 20° right now and will be skipped`, 4000);
-    };
+    $('#pl-race').onclick = racePlan;
     $('#pl-go').onclick = () => {
       const pp = planProgress(), next = (pp && pp.next) || P.items[0];
       if (!sensors || !sensors.fresh()) return launch('resume');     // start the sensors (and any ticked tune-up steps) first
@@ -813,7 +812,7 @@ function planItemHTML(it, i) {
   if (i === 0 || !planWhen) planWhen = planSchedule();
   const tAt = planWhen.get(it.key + (it.sync ? '|s' : '')) || new Date(state.plan.start), pAt = sky.altAz(o, tAt);
   const r = it.sync ? null : rowFor(it.key), done = state.plan.done && state.plan.done[it.key], last = i === state.plan.items.length - 1;
-  const info = it.sync ? '<div class="t2">Sync star — centre it, tap Sync, carry on</div>'
+  const info = it.sync ? '<div class="t2">Sync star: centre it, tap Sync, carry on</div>'
     : r ? `<div class="t2"><span class="dots lv${r.level}">${DOTS[r.level]}</span> about ${hm(tAt)} · ${pAt.alt.toFixed(0)}° ${compassName(pAt.az)}${r.ep ? ' · ' + esc(r.ep.name) : ''}</div>${planReorder ? '' : `<div class="t2">${esc(r.desc)}</div>`}`
     : '<div class="t2">Not well placed in this session</div>';
   return `<li class="${done ? 'done' : ''}"><span class="muted small" style="width:16px;text-align:right">${i + 1}</span>
@@ -919,9 +918,9 @@ function alignedNow() { return !!align.fit && align.obs.length >= alignNeeded();
 function readinessHTML() {
   const rows = [], st = pointState();
   if (st === 'off' || st === 'nodata') rows.push(`<div class="strip warn"><span><b>Motion sensors are off.</b></span><button id="qs-start" class="mini primary">Start</button></div>`);
-  else if (st === 'unaligned') rows.push(`<div class="strip warn"><span><b>Not aligned</b> — arrows are a rough guess.</span><button id="qs-align" class="mini primary">Align</button></div>`);
+  else if (st === 'unaligned') rows.push(`<div class="strip warn"><span><b>Not aligned.</b> The arrows are a rough guess.</span><button id="qs-align" class="mini primary">Align</button></div>`);
   else if (st === 'resync') rows.push(`<div class="strip warn"><span><b>Sync recommended.</b> Centre a bright star and tap Sync.</span><button id="qs-align" class="mini">Align</button></div>`);
-  if (!siteKnown()) rows.push(`<div class="strip"><span>Location not set — using Toronto.</span><button id="qs-gps" class="mini primary">Use GPS</button></div>`);
+  if (!siteKnown()) rows.push(`<div class="strip"><span>Location not set: using Toronto.</span><button id="qs-gps" class="mini primary">Use GPS</button></div>`);
   if (!lastCheck() && !state.skipCheck) rows.push(`<div class="strip"><span>Phone check-up not done yet (4 min, optional).</span><button id="qs-check" class="mini">Run it</button><button id="qs-skip" class="mini" aria-label="Dismiss">✕</button></div>`);
   return rows.join('');
 }
@@ -938,11 +937,11 @@ function picksHTML() {
   const sun = sky.sunAlt(), P = tonightPicks();
   return `<div class="sech"><h3>${sun > 0 ? 'Visible in daylight' : sun > -12 ? 'Good in twilight' : 'Best right now'} <span class="muted small">for your ${profile().aperture} mm</span></h3><button id="qs-explore" class="mini">Sky view</button></div>
     ${P.length ? `<div class="picks">${P.map(({ o, r }) => `<button data-go="${esc(o.key)}"><b>${esc(o.label)}</b><span>${esc(o.name || kindLabel(o))}</span><span class="dots lv${r.level}">${DOTS[r.level]}</span><span>${o.alt.toFixed(0)}° up, ${compassName(o.az)}</span></button>`).join('')}</div>`
-      : '<p class="muted small">Nothing is well placed right now — try the Plan tab for later tonight.</p>'}`;
+      : '<p class="muted small">Nothing is well placed right now. Try the Plan tab for later tonight.</p>'}`;
 }
 function bindQuickStart(el) {
   const on = (id, f) => { const b = $('#' + id, el); if (b) b.onclick = f; };
-  on('qs-start', () => { renderLaunch(); $('#gate').classList.remove('hidden'); });
+  on('qs-start', () => { showStart(); });
   on('qs-check', () => { showTab('test'); startTest('check'); });
   on('qs-skip', () => { state.skipCheck = true; save(); renderFind(); });
   on('qs-gps', () => getGPS());
@@ -1191,7 +1190,7 @@ function updateSkyView() {
   const cur = pointing();
   if (!cur) {                                        // no sensor data: still a sky to look at, steered by dragging
     if (sensorsWaiting()) setPstat('wait', 'Waiting for sensors…');
-    else setPstat('sv-off', `<b>Sensors are off</b> — drag the chart to look around. ${SENS_BTN}`, bindSensBtn);
+    else setPstat('sv-off', `<b>Sensors are off.</b> Drag the chart to look around. ${SENS_BTN}`, bindSensBtn);
     const at = { alt: hand.alt, az: hand.az, ready: true };
     trackMotion(null); updateWhere(at);
     drawReticle(null, at, { label: '' }, { noTarget: true, noBanner: true });
@@ -1383,7 +1382,7 @@ function bindChartControls() {
   on('z-auto', () => { setZoom(null); toast('Auto zoom: closes in while the scope is still, widens as you move it', 3500); });
   document.querySelectorAll('#ep-quick [data-epq]').forEach((b) => b.onclick = () => pickEyepiece(+b.dataset.epq));
   on('z-hz', () => { state.hzShow = state.hzShow === false; save(); const b = $('#z-hz'); b.classList.toggle('on', state.hzShow); b.textContent = state.hzShow ? 'Blocked sky: shown' : 'Blocked sky: hidden'; toast(state.hzShow ? 'Hatching on: sky hidden from this spot is marked. Targets behind it stay off your suggestions.' : 'Hatching off. Targets behind your blocked sky still stay off your suggestions.', 4500); });
-  on('z-lock', () => { state.zoomLock = !state.zoomLock; save(); const b = $('#z-lock'); b.classList.toggle('on', state.zoomLock); b.textContent = state.zoomLock ? 'Zoom locked' : 'Lock zoom'; toast(state.zoomLock ? 'Zoom locked — it won\'t zoom out while you move' : 'Zoom unlocked — zooms out while you move'); });
+  on('z-lock', () => { state.zoomLock = !state.zoomLock; save(); const b = $('#z-lock'); b.classList.toggle('on', state.zoomLock); b.textContent = state.zoomLock ? 'Zoom locked' : 'Lock zoom'; toast(state.zoomLock ? 'Zoom locked: it won\'t zoom out while you move' : 'Zoom unlocked — zooms out while you move'); });
   on('z-ep', cycleEyepiece);
   on('z-wide', () => setZoom(30));
   on('z-ctr', () => { chartCentre = chartCentre === 'scope' ? 'target' : 'scope'; $('#z-ctr').textContent = chartCentre === 'scope' ? 'Chart follows: scope' : 'Chart follows: target'; });
@@ -2025,7 +2024,7 @@ function newGame(style) {
   // Only things the visibility model rates Obvious or Visible right now: a race is no fun against a target you can't see.
   const fair = sky.objects.filter((o) => { const r = o.alt > 0 ? rateNow(o) : null; return !r || r.level <= 1; });
   const T = pickTargets(fair, { aperture: profile().aperture, sunAlt: sky.sunAlt(), maxAlt: Math.min(80, ceiling || 80) });
-  if (T.length < 3) return toast(sky.sunAlt() > -6 ? 'Too bright — wait until the sky is darker.' : 'Not enough suitable targets above 25° right now.', 4000);
+  if (T.length < 3) return toast(sky.sunAlt() > -6 ? 'Too bright. Wait until the sky is darker.' : 'Not enough suitable targets above 25° right now.', 4000);
   const route = routeOrder(T, cur && cur.ready ? cur : null);
   const code = encodeChallenge({ style, tokens: route.map(tokenFor), host: state.player || '' });
   loadChallenge(code);
@@ -2085,32 +2084,80 @@ function renderGame() {
   if (game.phase === 'count' || game.phase === 'play') return renderPlay(el);
   if (game.phase === 'done') return renderDone(el);
 }
+/** The plan's targets (sync stars left out), for racing. */
+const planRaceObjs = () => (state.plan && state.plan.items ? state.plan.items.filter((x) => !x.sync).map((x) => objByKey(x.key)).filter(Boolean) : []);
+function racePlan() {
+  sky.updateAll();
+  const objs = planRaceObjs();
+  if (objs.length < 2) return toast('Add at least two targets to race.');
+  const up = objs.filter((o) => playable(o)).length;
+  loadChallenge(encodeChallenge({ style: state.gameStyle || 'push', tokens: objs.map(tokenFor), host: state.player || '' }));
+  showTab('game');
+  if (up < objs.length) toast(`${objs.length - up} of ${objs.length} aren't above 20° right now and will be skipped`, 4000);
+}
+/**
+ * The marathon card's picture (Build 125): all 110 Messier objects as a grid of dots, M1 top left to M110 bottom
+ * right. Bright = can be caught at some point tonight from here with this telescope; ringed = found tonight; faint =
+ * not tonight. Worked out once per night, place, telescope and sky (it rates every object through the night).
+ */
+let marCard = null;
+function marathonCard(found) {
+  const N = nightOf(sky), end = N.nautAm || N.rise, dusk = N.naut || N.set, now = new Date();
+  const start = dusk && now < dusk ? dusk : now;
+  const sig = [N.id, state.active, profile().aperture, skyNelm(), hzSig(), state.site.lat.toFixed(2), state.site.lon.toFixed(2), Math.floor(start.getTime() / 1800000)].join('|');
+  if (!marCard || marCard.sig !== sig) {
+    let rows = []; try { if (end && end > start) rows = marathonList(sky, { start, end, scope: profile(), nelm: skyNelm(), horizon: horizonNow() }); } catch (e) { console.error(e); }
+    const num = (o) => { const c = (o.cats || []).find((x) => /^M\d+$/.test(x)); return c ? +c.slice(1) : 0; };
+    const byNo = {}; for (const o of sky.objects) { const n = num(o); if (n && !o.twin && !byNo[n]) byNo[n] = o.key; }
+    marCard = { sig, can: new Set(rows.map((r) => r.key)), byNo };
+  }
+  const dots = []; let nCan = 0;
+  for (let n = 1; n <= 110; n++) {
+    const k = marCard.byNo[n], got = k && found[k], can = k && marCard.can.has(k); if (can || got) nCan++;
+    dots.push(`<i class="${got ? 'got' : can ? 'can' : ''}"></i>`);
+  }
+  return { html: `<div class="mgrid" role="img" aria-label="${nCan} of the 110 Messier objects can be caught tonight">${dots.join('')}</div>`, nCan };
+}
 function renderLobby(el) {
   const aligned = state.mode === 'gyro' ? !!align.fit : true;
   const sel = state.gameStyle || 'push';
   const M = state.marathon, tonight = nightOf(sky).id, mine = M && M.night === tonight ? M : null, nFound = mine ? Object.keys(mine.found).length : 0;
   const best = state.marathonBest;
+  const MC = marathonCard(mine ? mine.found : {}), nPlan = planRaceObjs().length;
+  const dark = sky.sunAlt() < -12;
   el.innerHTML = `<h2>Play</h2>
-    ${aligned ? '' : `<div class="card"><b>Align first.</b> <span class="small">Both games use the arrows, so the app needs to know where the scope points.</span><div class="btnrow"><button id="g-align">Go to Align</button></div></div>`}
-    <div class="card gamecard"><h3>Messier Marathon</h3>
-      <p class="small">How many Messier objects can you bag tonight? The app picks the order: whatever is about to set comes first, then the shortest hop. No clock, one point each.</p>
-      ${mine ? `<p class="small"><b>${mine.over ? 'Tonight' : 'In progress'}: ${nFound} found.</b></p>` : ''}
-      ${best ? `<p class="muted small">Your best night: ${best.found} of ${best.possible} possible · ${shortDate(best.when)}</p>` : ''}
+    <p class="playlead">Turn tonight's sky into a game. On your own, or against friends at the same site.</p>
+    ${aligned ? '' : `<div class="strip warn"><span>Both games follow the arrows, so align the telescope first. Two minutes.</span><button id="g-align" class="mini">Align</button></div>`}
+    <div class="card gamecard marathon">
+      <div class="gamehead"><h3>Messier Marathon</h3><span class="gamebadge">${mine && !mine.over ? 'in progress' : 'solo'}</span></div>
+      <p class="gamepitch">How many of the 110 can you bag in one night?</p>
+      ${MC.html}
+      <p class="gamestat"><b>${MC.nCan}</b> of the 110 ${dark ? 'can still be caught tonight' : 'will be in reach tonight'} from here${mine ? `, and you have found <b>${nFound}</b>` : ''}.</p>
+      ${best ? `<p class="muted small">Your best night: ${best.found} of ${best.possible} possible, ${shortDate(best.when)}.</p>` : ''}
+      <div class="btnrow"><button id="mm-go" class="primary big" ${aligned ? '' : 'disabled'}>${mine && !mine.over ? 'Carry on' : mine ? 'Start again tonight' : 'Start the marathon'}</button></div>
+      <p class="muted small">No clock, one point each. The app picks the order: whatever is about to set comes first, then the shortest hop.</p>
       <label class="row"><span>Sync stars before long hops <span class="muted small">(a bright star to centre first, so the arrows land closer)</span></span><input type="checkbox" id="mm-sync" ${state.marSync !== false ? 'checked' : ''}></label>
-      <div class="btnrow"><button id="mm-go" class="primary big" ${aligned ? '' : 'disabled'}>${mine && !mine.over ? 'Carry on' : mine ? 'Start again tonight' : 'Start the marathon'}</button></div></div>
-    <div class="card gamecard"><h3>Race</h3>
-      <p class="small">The 10 best targets for your sky right now, a short route, and a stopwatch. Friends at the same site can scan your code and race the same 10.</p>
-      <label class="row"><span>How you find them</span><select id="g-style">${Object.entries(STYLES).map(([k, v]) => `<option value="${k}" ${k === sel ? 'selected' : ''}>${v.name}</option>`).join('')}</select></label>
+    </div>
+    <div class="card gamecard race">
+      <div class="gamehead"><h3>Race</h3><span class="gamebadge">solo or with friends</span></div>
+      <p class="gamepitch">Ten targets, one route, and a stopwatch.</p>
+      <svg class="raceart" viewBox="0 0 300 64" aria-hidden="true"><path d="M14 46 44 22 78 40 106 14 138 30 168 12 198 38 226 24 256 44 286 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="2 5" stroke-linecap="round" opacity=".7"/>${[[14, 46], [44, 22], [78, 40], [106, 14], [138, 30], [168, 12], [198, 38], [226, 24], [256, 44]].map(([x, y], i) => `<circle cx="${x}" cy="${y}" r="${i ? 3.2 : 4.4}" fill="currentColor"/>`).join('')}<path d="M286 18l1.9 4.6 4.9.4-3.7 3.2 1.1 4.8-4.2-2.6-4.2 2.6 1.1-4.8-3.7-3.2 4.9-.4z" class="racestar"/></svg>
+      <p class="small">The app picks the ten best targets for your sky right now. Friends scan your code to race the same ten, and you can all start on the same countdown.</p>
+      <div class="chiplab">How you find them</div>
+      <div class="seg" id="g-style">${Object.entries(STYLES).map(([k, v]) => `<button data-style="${k}" class="${k === sel ? 'on' : ''}">${v.name}</button>`).join('')}</div>
       <p class="muted small" id="g-styledesc">${esc(STYLES[sel].desc)}</p>
-      <div class="btnrow"><button id="g-new" class="primary" ${aligned ? '' : 'disabled'}>New race</button><button id="g-scan">Join: scan</button><button id="g-paste">Join: paste</button></div>
+      <div class="btnrow"><button id="g-new" class="primary big" ${aligned ? '' : 'disabled'}>New race</button></div>
+      <div class="btnrow"><button id="g-scan">Join a friend's race</button><button id="g-paste" class="mini">Paste a code</button></div>
+      ${nPlan >= 2 ? `<button class="linkrow" id="g-plan">${ICON.plan || ''}<span><b>Race your plan</b><span class="muted">The ${nPlan} targets in your plan, in its order</span></span></button>` : ''}
       <details class="more"><summary>Leaderboard and your name</summary>
         <label class="field"><span>Your name on the leaderboard</span><input id="g-name" value="${esc(state.player || '')}" placeholder="e.g. Bryan" maxlength="24"></label>
         <label class="field"><span>Observing site <span class="muted small">(optional)</span></span><input id="g-site" value="${esc(state.siteName || '')}" placeholder="e.g. Torrance Barrens" maxlength="40"></label>
         <div class="btnrow"><button id="g-board">Show leaderboard</button></div>
         <div id="g-boardbox"></div></details></div>`;
+  if ($('#g-plan')) $('#g-plan').onclick = racePlan;
   $('#g-name').onchange = (e) => { state.player = e.target.value.trim(); save(); };
   $('#g-site').onchange = (e) => { state.siteName = e.target.value.trim(); save(); };
-  $('#g-style').onchange = (e) => { state.gameStyle = e.target.value; save(); $('#g-styledesc').textContent = STYLES[state.gameStyle].desc; };
+  el.querySelectorAll('[data-style]').forEach((b) => b.onclick = () => { state.gameStyle = b.dataset.style; save(); el.querySelectorAll('[data-style]').forEach((x) => x.classList.toggle('on', x === b)); $('#g-styledesc').textContent = STYLES[state.gameStyle].desc; });
   if ($('#g-align')) $('#g-align').onclick = () => showTab('align');
   $('#mm-sync').onchange = (e) => { state.marSync = e.target.checked; save(); };
   $('#mm-go').onclick = () => {
@@ -2236,7 +2283,7 @@ function updateMar() {
   if (!mar || mar.done) return;
   const now = Date.now(), r = mar.cur;
   if (!r) { if (now - marT > 20000) { marT = now; const p = marPick(); if (mar && (p.next || !p.waiting)) renderGame(); } return; }
-  if (r.to.getTime() <= now) { toast(`${r.o.label} has gone — on to the next`, 3000); marPick(); renderGame(); return; }
+  if (r.to.getTime() <= now) { toast(`${r.o.label} has gone. On to the next`, 3000); marPick(); renderGame(); return; }
   const o = mar.sync ? mar.sync.o : r.o, tgt = sky.altAz(o), cur = pointing(), st = $('#g-status'); if (!st) return;
   if (!mar.sync && blocked(horizonNow(), tgt.alt, tgt.az)) { toast(`${o.label} has slipped behind your blocked sky`, 3000); state.marathon.later[r.key] = now + 20 * 60000; marPick(); renderGame(); return; }
   if (!cur || !cur.ready) { st.textContent = 'Waiting for sensors / alignment…'; drawReticle(null, tgt, o, { canvas: $('#g-chart'), view: 6, centre: 'target' }); return; }
@@ -2423,7 +2470,7 @@ const HZ_BACK = () => (hzInFlow() ? '' : `<button class="back" id="hz-back">‹ 
 const hzDone = () => { state.launch.horizon = false; save(); flowStepDone('horizon'); };
 /** Open Blocked sky from anywhere; its back button returns to where you came from. */
 function openHorizon(from = 'more') { hzFrom = from; $('#gate').classList.add('hidden'); showTab('horizon'); }
-function hzBindBack() { const b = $('#hz-back'); if (b) b.onclick = () => { hzTrace = null; if (hzFrom === 'start') { renderLaunch(); $('#gate').classList.remove('hidden'); } else showTab(hzFrom); }; }
+function hzBindBack() { const b = $('#hz-back'); if (b) b.onclick = () => { hzTrace = null; if (hzFrom === 'start') { showStart(); } else showTab(hzFrom); }; }
 const hzLine = () => (placeLabel() ? `${esc(placeLabel())}: ` : '') + (horizonNow() ? esc(horizonSummary(state.horizon)).replace(/^B/, placeLabel() ? 'b' : 'B') : 'none marked');
 const SIM_URL = new URLSearchParams(location.search).has('sim');
 /** Where the phone's top edge points when it is held in the hand like a spyglass: height from gravity, direction from the compass. */
@@ -3425,7 +3472,7 @@ function pointState() {
 function updateStatus() {
   const short = profile().name.replace(/^Skyward\s+/, ''), sc = $('#st-scope'); if (sc.dataset.name !== short) { sc.dataset.name = short; sc.innerHTML = `<small>Scope:</small><span>${esc(short)}</span>`; sc.setAttribute('aria-label', `Scope: ${short} — telescope settings`); }
   const st = pointState();
-  const txt = { off: 'Sensors off — tap', nodata: 'No sensor data — tap', compass: 'Compass mode', unaligned: 'Not aligned — tap',
+  const txt = { off: 'Turn sensors on', nodata: 'No sensor data', compass: 'Compass mode', unaligned: 'Tap to align',
     resync: 'Re-sync on a star', aligned: cap1(syncAgo()) }[st];
   const pill = $('#st-pill'); if (pill.textContent !== txt) pill.textContent = txt; if (pill.dataset.st !== st) pill.dataset.st = st;
   const d = $('#s-diag'); if (d && sensors) d.textContent = `${sensors.constructor === SimSensors ? 'SIMULATED · ' : ''}${sensors.rateHz.toFixed(0)} Hz · compass: ${sensors.compassSource || 'none'}${sensors.compassAccuracy != null ? ' ±' + sensors.compassAccuracy + '°' : ''}${sensors.compassCal ? ' · ' + sensors.compassCal : ''}`;
@@ -3811,7 +3858,7 @@ function glanceHTML(rec, n, t = new Date()) {
       const sl = hourSkyLight(r.t);
       return `<i role="button" tabindex="0" data-g="${gid}" data-hi="${ix}" class="q${hl.lvl}${dk ? ' dk' : ''}" style="background:${tileBG(sl)}" title="${hh(r.t)}: ${QN[hl.lvl]}${hl.why.length ? ' (' + hl.why.join(', ') + ')' : ''} · sky about ${sl.sb.toFixed(1)} mag/arcsec² (top: Moon and twilight; bottom: light pollution)">${moon ? MOONPIC : '<em class="skg"></em>'}${FACEPIC[q(r)]}<b>${lab}</b></i>`;
     }).join('');
-    chips.push(`<div class="cbar" aria-label="Sky by hour (tap an hour for details): ${rec.rows.map((r) => QN[q(r)]).join(', ')}">${cells}<div class="cbl"><span class="qkey">Tap an hour for details · <b>${FACEPIC[0]} great</b> · <b>${FACEPIC[1]} good</b> · <b>${FACEPIC[2]} so-so</b> · <b>${FACEPIC[3]} cloud</b> · <b>${MOONPIC} bright Moon</b></span><span class="qkey tkey"><b>Tile top: <i class="swm"></i> moonlight</b> · <b>bottom: <i class="swl"></i> light pollution</b></span></div></div>`);
+    chips.push(`<div class="cbar" aria-label="Sky by hour (tap an hour for details): ${rec.rows.map((r) => QN[q(r)]).join(', ')}">${cells}<details class="tkeyd"${state.ui && state.ui.tileKey ? ' open' : ''}><summary><span>Tap an hour for details</span><span class="tkeyb">What the tiles mean</span></summary><div class="cbl"><span class="qkey"><b class="kq0">${FACEPIC[0]} great</b> · <b class="kq1">${FACEPIC[1]} good</b> · <b class="kq2">${FACEPIC[2]} so-so</b> · <b class="kq3">${FACEPIC[3]} cloud</b> · <b>${MOONPIC} bright Moon</b></span><span class="qkey tkey"><b>Tile top: <i class="swm"></i> moonlight</b> · <b>bottom: <i class="swl"></i> light pollution</b></span></div></details></div>`);
   }
   return `<div class="glance">${chips.join('')}${o && o.best && o.best.length ? `<div class="muted small" style="flex-basis:100%">${skyWhose(t)} sky conditions are best for ${esc(o.best[0])}.</div>` : ''}</div>`;
 }
@@ -4152,7 +4199,7 @@ function openObject(key, opt = {}) {
       ${isTarget ? `<span>Your log</span><span>${seen ? 'Seen ✓' : last ? RESULT[last.seen] : 'Not logged yet'}${last ? ' · ' + shortDate(last.t) : ''}</span>` : ''}
     </div>
     ${r && r.ep ? `<div class="why"><b>Why the ${esc(r.ep.name)}?</b> ${esc(epReason(o, r))}${epTip(o) ? `<div class="tip">${esc(epTip(o))}</div>` : ''}</div>` : ''}
-    <div class="btnrow"><button id="sh-go" class="primary">Push to it</button>${isTarget ? `<button id="sh-plan">${inPlan ? '✓ In plan — remove' : '+ Add to plan'}</button>` : ''}</div>
+    <div class="btnrow"><button id="sh-go" class="primary">Push to it</button>${isTarget ? `<button id="sh-plan">${inPlan ? '✓ In plan (remove)' : '+ Add to plan'}</button>` : ''}</div>
     ${isTarget ? `<div class="btnrow"><button id="sh-seen">${seen ? 'Log it again ✓' : 'Log as seen ✓'}</button></div>` : ''}`;
   box.classList.remove('hidden'); card.scrollTop = 0;
   { const row = $('#sh-eps'), more = $('#sh-more'); if (row && more && row.scrollWidth > row.clientWidth + 4) { more.classList.remove('hidden'); row.addEventListener('scroll', () => more.classList.add('hidden'), { once: true, passive: true }); } }
@@ -4215,18 +4262,19 @@ function renderMore() {
   // Grouped by when you need them: every night, now and then, your records, then setup. The start screen is the
   // house button at the top of every screen.
   el.innerHTML = `<h2>More</h2>
+    ${item('help', 'How this app works', 'What it does, a first night, and the words you’ll meet')}
     <h3>Each night</h3>
-    ${item('align', 'Star alignment', state.mode === 'compass' ? 'Compass mode — no alignment needed' : alignedNow() ? `Aligned on ${align.obs.map((o) => esc(o.label)).join(' and ')} · ${syncAgo()}` : 'Not aligned yet — two minutes, and the app shows you which stars')}
-    ${item('camera', 'Camera star finder', state.mounting === 'camera' ? (profile().camBore ? 'Finds where the telescope points from the stars · lined up with the eyepiece' : 'Finds where the telescope points from the stars — no star to centre') : 'Works out where the phone’s camera is pointing from the stars')}
-    ${item('sky', 'Sky darkness check', skyQ() ? `${esc(skyCheckName())} · ${shortDate(state.skyq.when)}` : mapSky() ? `Map estimate: ${esc(skyGuessName())} — a 30-second check makes it exact` : '30 seconds — tunes the visibility ratings to your sky')}
+    ${item('align', 'Star alignment', state.mode === 'compass' ? 'Compass mode: no alignment needed' : alignedNow() ? `Aligned on ${align.obs.map((o) => esc(o.label)).join(' and ')} · ${syncAgo()}` : 'Not aligned yet. Two minutes, and the app shows you which stars')}
+    ${item('camera', 'Camera star finder', state.mounting === 'camera' ? (profile().camBore ? 'Finds where the telescope points from the stars · lined up with the eyepiece' : 'Finds where the telescope points from the stars, with no star to centre') : 'Works out where the phone’s camera is pointing from the stars')}
+    ${item('sky', 'Sky darkness check', skyQ() ? `${esc(skyCheckName())} · ${shortDate(state.skyq.when)}` : mapSky() ? `Map estimate: ${esc(skyGuessName())}. A 30-second check makes it exact` : '30 seconds: tunes the visibility ratings to your sky')}
     <h3>Now and then</h3>
-    ${item('collim', lensView(profile()) ? 'Collimation' : state.active.startsWith('sw') ? 'Collimate your Skyward' : 'Collimate your telescope', profile().collimated ? `Last done ${shortDate(profile().collimated)} · laser, about 10 minutes` : 'Line up the mirrors with the laser — sharper views, about 10 minutes')}
+    ${item('collim', lensView(profile()) ? 'Collimation' : state.active.startsWith('sw') ? 'Collimate your Skyward' : 'Collimate your telescope', profile().collimated ? `Last done ${shortDate(profile().collimated)} · laser, about 10 minutes` : 'Line up the mirrors with the laser for sharper views. About 10 minutes')}
     ${item('sim', 'Telescope simulator', 'Build any telescope and eyepiece, set the sky and the air, and see what each one changes')}
     ${item('horizon', 'Blocked sky', horizonNow() ? esc(horizonSummary(state.horizon)) : 'Mark trees and buildings so the app never sends you behind them')}
-    ${item('test', 'Phone check-up and sensor tests', chk ? `This phone: ${V[chk.result.verdict] || esc(chk.result.verdict)} · ${shortDate(chk.when)}` : 'Find out how accurate this phone can be — 4 minutes')}
+    ${item('test', 'Phone check-up and sensor tests', chk ? `This phone: ${V[chk.result.verdict] || esc(chk.result.verdict)} · ${shortDate(chk.when)}` : 'Find out how accurate this phone can be. 4 minutes')}
     <h3>Your records</h3>
-    ${item('log', 'Observing log', st.total ? `${st.total} object${st.total === 1 ? '' : 's'} seen · Messier ${st.messier} of ${st.messierTotal}` : 'Nothing logged yet — your Messier count and milestones live here')}
-    ${item('backup', 'Back up or restore', state.backedUp ? `Last backup ${shortDate(state.backedUp)} · your log, plans and places` : 'Keep a copy of your log, plans and places — they live only on this phone')}
+    ${item('log', 'Observing log', st.total ? `${st.total} object${st.total === 1 ? '' : 's'} seen · Messier ${st.messier} of ${st.messierTotal}` : 'Nothing logged yet. Your Messier count and milestones live here')}
+    ${item('backup', 'Back up or restore', state.backedUp ? `Last backup ${shortDate(state.backedUp)} · your log, plans and places` : 'Keep a copy of your log, plans and places. They live only on this phone')}
     <h3>Setup</h3>
     ${item('setup', 'Telescope, eyepieces, location and phone mount', `${esc(profile().name)} · ${esc(MOUNTINGS[state.mounting] ? MOUNTINGS[state.mounting].label : 'phone mount')}`)}
     <h3>Quick settings</h3>
@@ -4239,7 +4287,7 @@ function renderMore() {
     <p class="muted small" style="text-align:center;margin-top:14px">Skyward Push-To · ${esc(($('#build') || {}).textContent || '')} · credits are in Setup</p>`;
   el.querySelectorAll('[data-go]').forEach((b) => b.onclick = () => {
     const k = b.dataset.go;
-    if (k === 'sky') openSkyCheck(); else if (k === 'backup') openBackup(); else if (k === 'horizon') openHorizon('more'); else if (k === 'start') { renderLaunch(); $('#gate').classList.remove('hidden'); } else showTab(k);
+    if (k === 'sky') openSkyCheck(); else if (k === 'backup') openBackup(); else if (k === 'horizon') openHorizon('more'); else if (k === 'start') { showStart(); } else { if (k === 'help') helpFrom = null; showTab(k); }
   });
   $('#m-br').oninput = (e) => { state.bright = parseFloat(e.target.value); applyTheme(); save(); };
   $('#m-day').onchange = (e) => setShade(e.target.checked ? 0 : 1);
@@ -4263,18 +4311,20 @@ const ACTIVITIES = [
   ['plan', 'Plan', 'Pick targets for a night out', '<path d="M9 6h11M9 12h11M9 18h11"/><path d="m3.5 6 1.2 1.2L6.8 5M3.5 12l1.2 1.2L6.8 11M3.5 18l1.2 1.2L6.8 17"/>'],
 ];
 const STEP_INFO = {
-  check: ['Phone check-up', 'optional, 4 min, once per phone — how far to trust the arrows'],
-  sky: ['Sky darkness check', '30 s, once fully dark — count Little Dipper stars'],
-  seeing: ['Seeing: steady air check', '10 s, after dark — how much the stars twinkle'],
+  check: ['Phone check-up', 'optional, 4 min, once per phone: how far to trust the arrows'],
+  sky: ['Sky darkness check', '30 s, once fully dark: count Little Dipper stars'],
+  seeing: ['Seeing: steady air check', '10 s, after dark: how much the stars twinkle'],
   horizon: ['Blocked sky', 'one slow turn with the phone, once per place'],
-  align: ['Star alignment', '2 min — point at two bright stars'],
+  align: ['Star alignment', '2 min: point at two bright stars'],
 };
 /** The stops that make sense on the way to each activity. Planning and exploring need no phone check-up. */
 const PATH = { observe: ['check', 'sky', 'seeing', 'horizon', 'align'], game: ['check', 'horizon', 'align'], explore: ['check', 'sky', 'seeing', 'horizon', 'align'], plan: ['check', 'sky', 'seeing', 'horizon'], resume: ['check', 'sky', 'seeing', 'horizon', 'align'] };
 /** Is a stop switched on? Blocked sky starts on until this spot has a map, then stays off unless the user ticks it. */
 // Exploring offers the alignment too, but it starts off there (exploring needs no set-up): its own switch.
-const stepKey = (k, act) => (act === 'explore' && k === 'align' ? 'alignExplore' : k);   // Explore keeps its own (off by default) alignment switch
-const stepOn = (k, act) => (k === 'horizon' ? (state.launch.horizon ?? (!horizonNow() && !curPlace())) : k === 'seeing' ? (state.launch.seeing ?? true) : !!state.launch[stepKey(k, act)]);
+// Build 125: Explore keeps its own switch for every step, all off until ticked, so "no set-up" is true on a first visit
+// (before, only its alignment switch was separate, and the seeing check and blocked sky ran by default).
+const stepKey = (k, act) => (act === 'explore' ? `${k}Explore` : k);
+const stepOn = (k, act) => (act === 'explore' ? !!state.launch[`${k}Explore`] : k === 'horizon' ? (state.launch.horizon ?? (!horizonNow() && !curPlace())) : k === 'seeing' ? (state.launch.seeing ?? true) : !!state.launch[stepKey(k, act)]);
 const GO = { observe: 'Start observing', explore: 'Start exploring', game: 'Start the game', plan: 'Start planning' };
 let flow = null;   // { steps: [..], i, dest, started, quiet }
 const stepsFor = (dest) => (PATH[dest] || []).filter((k) => stepOn(k, dest) && !(k === 'align' && alignedNow()));   // the steady-air check always runs when its star is on: the air changes through the evening
@@ -4283,7 +4333,7 @@ function tonightLine() {
   try {
     const now = new Date(), sun = sky.sunAlt(now), n = sky.nightAt(now);
     const dark = n.astro || n.naut, m = sky.moonInfo(now);
-    const when = sun > -18 && dark && now < dark ? `${sun > 0 ? 'Daylight now — dark' : 'Getting dark — fully dark'} from ${hm(dark)}`
+    const when = sun > -18 && dark && now < dark ? `${sun > 0 ? 'Daylight now, dark' : 'Getting dark, fully dark'} from ${hm(dark)}`
       : sun <= -18 ? `Dark now${n.astroAm ? ', until ' + hm(n.astroAm) : ''}` : sun > 0 ? 'Daylight' : 'Twilight';
     const moon = `Moon ${Math.round(m.frac * 100)}% lit${m.alt > 0 ? (n.moonSet && n.moonSet > now ? ', sets ' + hm(n.moonSet) : ', up') : (n.moonRise && n.moonRise > now ? ', rises ' + hm(n.moonRise) : ', down')}`;
     const at = dark && now < dark ? dark : now;
@@ -4300,38 +4350,45 @@ function planProgress() {
   const next = P.items.find((x) => !(P.done && P.done[x.key]));
   return { total: T.length, done, next: done < T.length ? next : null };
 }
+/** Back to the start screen. Its fade-in (timed to follow the splash) only belongs to the first showing: without this,
+ *  every return left the screen blank for over two seconds (Build 125). */
+function showStart() { $('#launch').style.animation = 'none'; renderLaunch(); $('#gate').classList.remove('hidden'); }
 function renderLaunch() {
   const L = state.launch, chk = lastCheck(), sq = skyQ(), pp = planProgress();
   const V = { solid: 'solid', usable: 'usable', poor: 'poor', unsuitable: 'not suitable', incomplete: 'incomplete' };
   const status = {
-    check: chk ? `done — ${V[chk.result.verdict] || chk.result.verdict}` : STEP_INFO.check[1],
+    check: chk ? `done: ${V[chk.result.verdict] || chk.result.verdict}` : STEP_INFO.check[1],
     sky: (sky.sunAlt() > -18 ? `needs a fully dark sky (from ${hm(sky.night().astro || sky.night().naut)}) · ` : '') + (sq ? `last: ${sq.label.toLowerCase()}` : STEP_INFO.sky[1]),
     align: alignedNow() ? 'already aligned' : STEP_INFO.align[1],
-    seeing: (sky.sunAlt() > -6 ? 'needs stars: only possible once it is dark · ' : '') + (seeingTonight() ? `earlier tonight: ${SEEING_WORD[seeingTonight().v]} — 10 s to check again` : seeingSource() === 'forecast' ? `forecast says ${SEEING_WORD[seeingNow()]} — 10 s to check it yourself` : STEP_INFO.seeing[1]),
+    seeing: (sky.sunAlt() > -6 ? 'needs stars: only possible once it is dark · ' : '') + (seeingTonight() ? `earlier tonight: ${SEEING_WORD[seeingTonight().v]}, 10 s to check again` : seeingSource() === 'forecast' ? `forecast says ${SEEING_WORD[seeingNow()]}, 10 s to check it yourself` : STEP_INFO.seeing[1]),
     horizon: horizonNow() || placeLabel() ? hzLine() : STEP_INFO.horizon[1],
   };
   const act = ACTIVITIES.some((x) => x[0] === state.launchAct) ? state.launchAct : 'observe', stops = PATH[act];
-  $('#launch').innerHTML = `<div class="lhead"><h1>Skyward <span>Push-To</span></h1><button class="hbtn shadebtn" id="l-shade" aria-label="Day or night look"></button></div>
+  const first = !state.welcomed && !state.seenIntro;                       // nobody has started anything on this phone yet
+  const onNames = stops.filter((k) => stepOn(k, act) && !(k === 'align' && alignedNow())).map((k) => STEP_INFO[k][0].replace('Seeing: steady air check', 'Seeing check'));
+  const pathOpen = !!(state.ui && state.ui.pathOpen);
+  $('#launch').innerHTML = `<div class="lhead"><h1>Skyward <span>Push-To</span></h1><span class="lhbtns"><button class="hbtn" id="l-help" aria-label="How this app works">${ICON.help}</button><button class="hbtn shadebtn" id="l-shade" aria-label="Day or night look"></button></span></div>
+    ${first ? `<div class="welcome"><b>First time here?</b><p>Your telescope has no motors. This app is its guide: the phone rides on the tube and shows which way to push, and how far, until your target is in the eyepiece.</p><div class="btnrow"><button id="l-tour" class="primary">See how it works</button><button id="l-skip">I'll find my way</button></div></div>` : ''}
     ${(() => { const rec = ensureForecast(state.site, new Date(), () => { const f = fcFor(state.site, new Date()); const el = $('#l-fc'), g = $('#l-glance'); if (el) el.innerHTML = outlookHTML(f); if (g) g.outerHTML = glanceHTML(f, sky.nightAt(new Date())).replace('class="glance"', 'class="glance" id="l-glance"'); });
       return glanceHTML(rec, sky.nightAt(new Date())).replace('class="glance"', 'class="glance" id="l-glance"'); })()}
     <details class="more tdetail"><summary>Tonight in detail</summary><p class="tonight">${esc(tonightLine())}</p><div id="l-fc">${outlookHTML(fcFor(state.site, new Date()))}</div></details>
     <div class="whereline"><span class="muted small">${ICON.pin}${whereText()}</span><button id="l-loc" class="mini">Update location</button></div>
-    ${pp && pp.next ? `<button id="l-resume" class="primary" style="width:100%;margin:6px 0 2px">Carry on with your plan — ${pp.done} of ${pp.total} done</button>` : ''}
+    ${pp && pp.next ? `<button id="l-resume" class="primary" style="width:100%;margin:6px 0 2px">Carry on with your plan: ${pp.done} of ${pp.total} done</button>` : ''}
     <h3 class="lq">What are we up to?</h3>
     <div class="lgrid">${ACTIVITIES.map(([k, t, sub, ic]) => `<button class="act${k === act ? ' on' : ''}" data-act="${k}"><svg class="ic" viewBox="0 0 24 24">${ic}</svg><b>${t}</b><span class="muted">${sub}</span></button>`).join('')}</div>
+    <div class="stop end go1"><button id="l-go" class="primary">${GO[act]}</button></div>
+    <details class="more pathd" id="l-path"${pathOpen ? ' open' : ''}><summary><span class="pathsum"><b>Before you start:</b> ${onNames.length ? esc(onNames.join(', ').replace(/, ([^,]*)$/, ' and $1').toLowerCase()) : 'nothing, straight to the sky'}</span><span class="pathch">${pathOpen ? 'Hide' : 'Change'}</span></summary>
     <div class="path">
-      <h3 class="lq lq2">Start-up refinements</h3><div class="pnote">Tap a star to turn that step on or off (bright = on).</div>
+      <h3 class="lq lq2">Start-up refinements</h3><div class="pnote">All optional. Tap a star to turn that step on or off (bright = on).</div>
       ${['check', 'sky', 'seeing', 'horizon', 'align'].map((k) => (stops.includes(k)
-    ? `<label class="stop"><input type="checkbox" data-step="${stepKey(k, act)}" ${stepOn(k, act) ? 'checked' : ''}><span><b>${STEP_INFO[k][0]}</b><span class="muted">${k === 'horizon' ? (stepOn(k) || horizonNow() || placeLabel() ? status[k] : 'skipped') : esc(stepOn(k, act) ? status[k] : k === 'check' ? (chk ? `done — ${V[chk.result.verdict] || chk.result.verdict}` : 'optional — once per phone, 4 min: how far to trust the arrows and the sky view') : k === 'align' && act === 'explore' ? (alignedNow() ? 'already aligned' : 'optional — 2 min, makes the chart match the real sky') : k === 'sky' && !sq && mapSky() ? `skipped — using the map estimate, about Bortle ${mapSky().bortle}` : 'skipped')}</span></span>${k === 'horizon' ? '<button id="l-hz" class="mini" type="button">Open</button>' : ''}</label>`
+    ? `<label class="stop"><input type="checkbox" data-step="${stepKey(k, act)}" ${stepOn(k, act) ? 'checked' : ''}><span><b>${STEP_INFO[k][0]}</b><span class="muted">${k === 'horizon' ? (stepOn(k, act) || horizonNow() || placeLabel() ? status[k] : 'skipped') : esc(stepOn(k, act) ? status[k] : k === 'check' ? (chk ? `done: ${V[chk.result.verdict] || chk.result.verdict}` : 'optional, once per phone, 4 min: how far to trust the arrows and the sky view') : k === 'align' && act === 'explore' ? (alignedNow() ? 'already aligned' : 'optional, 2 min: makes the chart match the real sky') : k === 'sky' && !sq && mapSky() ? `skipped: using the map estimate, about Bortle ${mapSky().bortle}` : 'skipped')}</span></span>${k === 'horizon' ? '<button id="l-hz" class="mini" type="button">Open</button>' : ''}</label>`
     : `<div class="stop na"><input type="checkbox" disabled aria-hidden="true"><span><b>${STEP_INFO[k][0]}</b><span class="muted">not needed for this</span></span></div>`)).join('')}
-      <div class="stop end"><span class="dest"></span><button id="l-go" class="primary">${GO[act]}</button></div>
-    </div>
-    <details class="more"><summary>How it works</summary>
-      <ol class="how"><li><b>Clip the phone into its dock</b> — screen up, top of the phone toward the sky end of the tube.</li>
-      <li><b>Align on two bright stars.</b> The app tells you which ones and where to look.</li>
-      <li><b>Pick a target and follow the arrows.</b> A chime tells you when it should be in the eyepiece.</li>
-      <li><b>Tap Sync whenever you centre something.</b> It keeps the pointing accurate all night.</li></ol>
-      <p class="muted small">Works offline. Add it to your Home Screen for a full-screen app.</p></details>`;
+    </div></details>
+    <button class="linkrow" id="l-how">${ICON.help}<span><b>How this app works</b><span class="muted">A two-minute read: what it does, a first night, and the words you'll meet</span></span></button>`;
+  { const d = $('#l-path'); d.ontoggle = () => { state.ui = state.ui || {}; state.ui.pathOpen = d.open; save(); $('.pathch', d).textContent = d.open ? 'Hide' : 'Change'; }; }
+  const openHelpFromStart = () => { if (!state.welcomed) { state.welcomed = true; save(); } $('#gate').classList.add('hidden'); helpFrom = 'start'; showTab('help'); };
+  $('#l-help').onclick = $('#l-how').onclick = openHelpFromStart;
+  if ($('#l-tour')) { $('#l-tour').onclick = openHelpFromStart; $('#l-skip').onclick = () => { state.welcomed = true; save(); renderLaunch(); }; }
   $('#launch').querySelectorAll('[data-step]').forEach((c) => c.onchange = () => { state.launch[c.dataset.step] = c.checked; save(); renderLaunch(); });
   $('#launch').querySelectorAll('[data-act]').forEach((b) => b.onclick = () => { const g = $('#gate'), y = g.scrollTop; state.launchAct = b.dataset.act; save(); renderLaunch(); g.scrollTop = y; });
   $('#l-go').onclick = () => launch(act);
@@ -4341,6 +4398,79 @@ function renderLaunch() {
   if ($('#l-resume')) $('#l-resume').onclick = () => launch('resume');
   applyTheme();
 }
+// ---------------------------------------------------------------- HELP: what the app is, a first night, the words (Build 125)
+// One page a newcomer can read in two minutes, reached from the start screen (the ? button, the welcome card, the link
+// under Start) and from More. Written the way an observer would explain it at the eyepiece; the terms give their origin.
+const HELP_WORDS = [
+  ['Push-to', 'A telescope you move by hand while something tells you where to push. The name is a play on “go-to” telescopes, which drive themselves to a target with motors.'],
+  ['Alignment', 'Showing the app two known stars so it learns how the phone sits on your telescope. Two minutes, at the start of the night.'],
+  ['Sync', 'Telling the app “this is centred in my eyepiece right now”. It corrects the small drift that builds up as the night goes on.'],
+  ['Seeing', 'How steady the air is. In good seeing stars are sharp points and planets show fine detail; in poor seeing everything shimmers. It is the old observers’ word for how well you can see through the air tonight.'],
+  ['Transparency', 'How clear the air is. Haze, smoke and thin cloud dim galaxies and nebulae even when the stars look steady.'],
+  ['Bortle', 'A 1 to 9 scale of sky darkness: 1 is a pristine desert sky, 9 is a city centre. Named for John Bortle, the American observer who published it in Sky & Telescope in 2001.'],
+  ['Messier objects', 'M13, M31, M42 and the rest: 110 bright clusters, nebulae and galaxies. The list was begun in the 1700s by the French comet hunter Charles Messier, who wanted to stop mistaking them for comets. They are the classic first targets.'],
+  ['Messier Marathon', 'Finding as many of the 110 as you can in one night, a challenge amateur astronomers came up with in the 1970s. All 110 are only possible around new Moon in March; any night makes a good partial run.'],
+  ['Star-hop', 'Finding a target the old way: start at a bright star and step from star to star along a chart until you arrive.'],
+  ['Averted vision', 'Looking slightly to one side of a faint object. The edge of your vision is more sensitive to dim light than the centre, so the object brightens.'],
+  ['Field of view', 'How much sky an eyepiece shows. The app draws it as a circle on the chart.'],
+  ['Collimation', 'Lining up a reflector’s mirrors so stars focus to sharp points. The word comes from the Latin for bringing into a straight line.'],
+];
+function renderHelp() {
+  const el = $('#tab-help'), fromStart = helpFrom === 'start';
+  const toStart = () => { helpFrom = null; showStart(); };
+  const way = (k, t, d) => `<li><b>${t}</b><span>${d}</span></li>`;
+  el.innerHTML = `<button class="back" id="h-back">‹ ${fromStart ? 'Start screen' : 'Back'}</button>
+    <h2>How this app works</h2>
+    <p class="helplead">Your telescope has no motors: you move it by hand. This app is its guide. The phone rides on the tube, feels where the telescope is pointing, and shows which way to push, and how far, until your target is in the eyepiece.</p>
+    <div class="guide helpdemo" aria-hidden="true"><div class="delta"><div class="lab">Turn</div><div class="val">${L_ARR} 12.4°</div><div class="dir">left</div></div><div class="delta"><div class="lab">Tilt</div><div class="val">▲ 3.1°</div><div class="dir">up</div></div></div>
+    <p class="muted small" style="text-align:center;margin-top:2px">Push until both numbers reach zero. That's the whole idea.</p>
+
+    <h3>A night with it</h3>
+    <ol class="nightsteps">
+      <li><b>Put the phone on the tube.</b> In the Skyward dock it sits screen up, top edge toward the sky end. Any other way works too; you tell the app how it sits.</li>
+      <li><b>Align on two bright stars.</b> The app names them and shows where to look. Centre each one in the eyepiece and tap. It takes about two minutes and it is what makes the arrows trustworthy.</li>
+      <li><b>Pick a target and follow the arrows.</b> A chime means it should be in the eyepiece.</li>
+      <li><b>Tap Sync now and then.</b> Whenever something is centred, a sync keeps the pointing sharp for the rest of the night.</li>
+    </ol>
+
+    <h3>Four ways to use it</h3>
+    <ul class="ways">
+      ${way('observe', 'Observe', 'Pick targets and follow the arrows. The usual way to spend a night.')}
+      ${way('explore', 'Explore', 'No set-up at all. Swing the telescope, or just hold the phone up, and see what is there. A good first look, even indoors.')}
+      ${way('plan', 'Plan', 'Say when you are going out and for how long. The app picks what suits your telescope and your sky, in an order that saves pushing.')}
+      ${way('game', 'Play', 'The Messier Marathon, or a timed race against friends at the same site.')}
+    </ul>
+
+    <h3>Reading the screen</h3>
+    <p class="small"><b>The faces.</b> Each tile on the start screen is an hour of tonight: <span class="kq0">${FACEPIC[0]}</span> great, <span class="kq1">${FACEPIC[1]}</span> good, <span class="kq2">${FACEPIC[2]}</span> so-so, <span class="kq3">${FACEPIC[3]}</span> cloud. Tap an hour for the details.</p>
+    <p class="small"><b>The dots.</b> Beside every target: <span class="dots lv0">●●●</span> obvious, <span class="dots lv1">●●○</span> visible, <span class="dots lv2">●○○</span> challenging, <span class="dots lv3">○○○</span> not tonight. That is worked out for your telescope, your sky and this moment.</p>
+    <p class="small"><b>The sun button</b> at the top fades the screen from the blue Day look to red-only Night. Red light leaves your night vision alone, so switch over once you are at the eyepiece.</p>
+    <p class="small"><b>The house button</b> always brings you back to the start screen.</p>
+
+    <h3>First night? Start small</h3>
+    <ul class="how">
+      <li>Skip the optional checks. Star alignment is the only step that matters, and Explore doesn't even need that.</li>
+      <li>Begin with something bright: the Moon, Saturn or Jupiter, a double star such as Albireo. “Best right now” under Find is sorted for exactly this.</li>
+      <li>Find things with your lowest-power eyepiece (the biggest number on the barrel), then switch up.</li>
+      <li>Give your eyes 20 minutes in the dark before you judge a faint galaxy, and try looking slightly to one side of it.</li>
+      <li>Dress for 10°C colder than the forecast. You will be standing still.</li>
+    </ul>
+
+    <details class="more"><summary>Words you'll meet</summary>
+      <dl class="words">${HELP_WORDS.map(([w, d]) => `<dt>${w}</dt><dd>${d}</dd>`).join('')}</dl></details>
+    <details class="more"><summary>If something seems off</summary>
+      <ul class="how">
+        <li><b>The arrows send you the wrong way.</b> The app has the phone the wrong way round. Open Star alignment and tap Change beside “Phone on the scope”.</li>
+        <li><b>It chimes, but the target isn't in the eyepiece.</b> Use your lowest-power eyepiece, centre anything bright nearby and tap Sync. If it keeps happening, align again.</li>
+        <li><b>The numbers don't move.</b> The motion sensors are off. Tap the message at the top of the screen.</li>
+        <li><b>A target says “not tonight”.</b> It is too low, too faint for tonight's sky, or behind something you marked as blocked. Its page says which.</li>
+      </ul></details>
+    <p class="muted small" style="margin-top:14px">It works without a signal once it has loaded. Your log, plans and settings stay on this phone.</p>
+    ${fromStart ? '<div class="actionbar"><button id="h-start" class="primary wide">Back to the start screen</button></div>' : ''}`;
+  $('#h-back').onclick = () => (fromStart ? toStart() : showTab(backTo));
+  if ($('#h-start')) $('#h-start').onclick = toStart;
+}
+
 // ---------------------------------------------------------------- camera star finder
 // The phone's camera photographs the sky, the app recognises the stars, and that tells it where the telescope points —
 // no star to pick, find or centre. Only meaningful for pointing when the phone is mounted looking along the tube.
@@ -4930,7 +5060,7 @@ function launch(dest) {
   if (!siteKnown() && !locAsked && !state.locNever) { askLocation(dest); return; }
   if (dest !== 'plan' && dest !== 'explore' && !state.dock) { askDock(dest); return; }
   initSound();                                    // audio can only start from a tap
-  state.seenIntro = true;
+  state.seenIntro = true; state.welcomed = true;
   if (!state.launch.check && !lastCheck()) state.skipCheck = true;   // chose not to test: don't nag about it later
   save();
   flow = { steps: stepsFor(dest === 'resume' ? 'observe' : dest), i: -1, dest, started: false, quiet: dest === 'plan' };
@@ -5011,7 +5141,7 @@ function openSkyCheck() {
       <div class="whereline"><span class="muted small">${ICON.pin}${whereText()}</span><button id="sq-loc" class="mini">Update location</button></div>
       <div id="sq-lp">${g ? lightHereHTML(g, here) : '<p class="muted small">Loading the light-pollution map…</p>'}</div>
       ${sky.sunAlt() > -18 ? `<p class="small"><b>The darkness check needs a fully dark sky</b> (from about ${hm(sky.nightAt(new Date()).astro || sky.nightAt(new Date()).naut)}, when the Sun is 18° down). Before that, twilight hides faint stars and the result would read too bright. Until then the light-pollution map is used.</p>` : ''}
-      <button id="sq-go" class="${sky.sunAlt() > -18 ? '' : 'primary'}" style="width:100%;margin-top:8px">${state.skyq ? 'Check again — 30 seconds' : 'Do the 30-second darkness check'}${sky.sunAlt() > -18 ? ' anyway' : ''}</button>
+      <button id="sq-go" class="${sky.sunAlt() > -18 ? '' : 'primary'}" style="width:100%;margin-top:8px">${state.skyq ? 'Check again (30 seconds)' : 'Do the 30-second darkness check'}${sky.sunAlt() > -18 ? ' anyway' : ''}</button>
       <button id="sq-close" style="width:100%;margin-top:6px">${flow ? 'Skip' : 'Close'}</button>`;
     if (g) wireLightMap($('#sq-lp'), g);
     $('#sq-go').onclick = () => runSkyCheck();
@@ -5174,10 +5304,10 @@ async function init() {
   $('#hb-fs').innerHTML = ICON.full;
   // Home: the start screen, one tap from anywhere (it used to be at the bottom of More).
   $('#hb-home').innerHTML = '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"><path d="M3 11 12 3.5 21 11"/><path d="M5.5 9.5V20h13V9.5"/><path d="M10 20v-5.5h4V20"/></svg>';
-  $('#hb-home').onclick = (e) => { e.stopPropagation(); renderLaunch(); $('#gate').classList.remove('hidden'); };
+  $('#hb-home').onclick = (e) => { e.stopPropagation(); showStart(); };
   $('#hb-fs').onclick = (e) => { e.stopPropagation(); toggleFullscreen(); };
   $('#st-scope').onclick = () => showTab('setup');
-  $('#st-pill').onclick = () => { const st = pointState(); if (st === 'off' || st === 'nodata') { renderLaunch(); $('#gate').classList.remove('hidden'); } else showTab('align'); };
+  $('#st-pill').onclick = () => { const st = pointState(); if (st === 'off' || st === 'nodata') { showStart(); } else showTab('align'); };
   // iOS ignores user-scalable=no: stop the page itself from pinch-zooming (the charts handle their own pinch).
   document.addEventListener('gesturestart', (e) => e.preventDefault());
   if (IS_STANDALONE()) $('#hb-fs').classList.add('hidden');

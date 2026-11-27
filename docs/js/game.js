@@ -5,7 +5,7 @@ import { sepDeg } from './model.js';
 export const GAME_VERSION = 1;
 export const STYLES = {
   push: { name: 'Push race', desc: 'Arrows on. Fastest to all 10 wins.' },
-  hop: { name: 'Star-hop', desc: 'No arrows — find each target from the chart. The app confirms when you\'re on it.' },
+  hop: { name: 'Star-hop', desc: 'No arrows. Find each target from the chart; the app confirms when you\'re on it.' },
   hybrid: { name: 'Hybrid', desc: 'Star-hop, but a Hint shows the arrows for 10 s at a +30 s penalty.' },
 };
 export const PENALTY = { skip: 120, hint: 30 };

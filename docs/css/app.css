@@ -674,3 +674,101 @@ html.dlg-open #dlg .hdcard { touch-action: pan-y; }
 /* Shared race start (Build 123) */
 .gwait { text-align: center; }
 .gwait-n { font-size: 44px; font-weight: 700; color: var(--hi); line-height: 1.1; margin-top: 4px; }
+
+/* ================================================================ Build 125: design pass
+   Lettering: headings, object names and the big numbers use the system's rounded face (SF Rounded on an iPhone),
+   the look of the engraving on an eyepiece barrel; body text stays the plain system face. No font files: the app
+   works offline. Elsewhere it falls back to the ordinary system face. */
+:root { --round: ui-rounded, "SF Pro Rounded", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; --pfill: #2c0000; --ptext: var(--hi); --pline: var(--fg); }
+h1, h2, h3, .target-h .name, .list li .t1, .picks button b, button.act b, .delta .val, .stats b, .spl-name, .gwait-n, .hdtop b { font-family: var(--round); }
+h2 { font-size: 23px; margin: 6px 0 10px; }
+/* One clear main action per screen. */
+button.primary { background: var(--pfill); color: var(--ptext); border-color: var(--pline); font-weight: 700; }
+button.primary:active { background: var(--pfill); filter: brightness(.88); }
+/* Small labels in sentence case (they were capitals). */
+.chiplab { text-transform: none; letter-spacing: 0; font-size: 14px; margin: 10px 0 2px; }
+.delta .lab { text-transform: none; letter-spacing: 0; font-size: 13px; }
+
+/* ---- start screen (Build 125): calmer for a first visit. The key to the tiles and the set-up steps fold away. */
+.lhbtns { display: flex; gap: 6px; }
+.lhead .hbtn { border: 1px solid var(--line); }
+.welcome { border: 1px solid var(--pline); border-radius: 14px; padding: 12px 14px 10px; margin: 10px 0 8px; background: var(--glow); }
+.welcome > b { font-family: var(--round); font-size: 18px; color: var(--hi); }
+.welcome p { margin: 4px 0 2px; font-size: 15px; color: var(--fg); }
+.welcome .btnrow { margin: 10px 0 2px; }
+.kq0 .skp { color: var(--q0); } .kq1 .skp { color: var(--q1); } .kq2 .skp { color: var(--q2); } .kq3 .skp { color: var(--q3); }
+.cbar .qkey .kq0 .skp { color: var(--q0); } .cbar .qkey .kq1 .skp { color: var(--q1); } .cbar .qkey .kq2 .skp { color: var(--q2); } .cbar .qkey .kq3 .skp { color: var(--q3); }
+details.tkeyd { flex-basis: 100%; font-size: 12px; color: var(--dim); }
+details.tkeyd > summary { list-style: none; display: flex; justify-content: space-between; gap: 8px; padding: 7px 2px 9px; cursor: pointer; }
+details.tkeyd > summary::-webkit-details-marker { display: none; }
+.glance .tkeyd summary span { border: 0; padding: 0; border-radius: 0; font-size: 13px; }
+.glance .tkeyd .tkeyb { color: var(--fg); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--line); }
+details.tkeyd[open] > summary .tkeyb::after { content: " ▴"; } details.tkeyd:not([open]) > summary .tkeyb::after { content: " ▾"; }
+details.tkeyd .cbl { padding-bottom: 6px; }
+.stop.end.go1 { margin: 12px 0 0; min-height: 0; }
+.stop.end.go1 button { width: 100%; min-height: 56px; font-size: 18px; border-radius: 14px; font-family: var(--round); }
+details.pathd { border-top: 0; margin-top: 0; }
+details.pathd > summary { display: flex; align-items: baseline; gap: 10px; padding: 10px 2px 12px; font-size: 14px; }
+details.pathd > summary::before, details.pathd[open] > summary::before { content: none; }
+.pathsum { flex: 1; min-width: 0; } .pathsum b { color: var(--fg); font-weight: 600; }
+.pathch { flex: none; color: var(--fg); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--line); }
+details.pathd .path { margin-top: 0; }
+details.pathd .path::before { bottom: 24px; }
+details.pathd .lq2 { margin-top: 4px; }
+.linkrow { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; background: none; border: 0; border-top: 1px solid var(--row); border-radius: 0; padding: 14px 2px; margin-top: 6px; }
+.linkrow svg.ic { flex: none; width: 24px; height: 24px; color: var(--hi); }
+.linkrow b { display: block; color: var(--hi); font-family: var(--round); } .linkrow .muted { display: block; font-size: 13px; }
+
+/* ---- help page (Build 125) */
+.helplead { font-size: 17px; line-height: 1.45; margin: 4px 0 12px; }
+.helpdemo { max-width: 330px; margin: 14px auto 4px; pointer-events: none; }
+#tab-help h3 { font-size: 18px; color: var(--hi); margin: 24px 0 6px; }
+#tab-help p.small, #tab-help ul.how li { font-size: 15px; }
+#tab-help ul.how li { margin: 8px 0; }
+#tab-help .skp { width: 18px; height: 18px; vertical-align: -4px; }
+ol.nightsteps { list-style: none; padding: 0; margin: 8px 0; counter-reset: step; }
+ol.nightsteps li { position: relative; padding-left: 42px; margin: 14px 0; font-size: 15px; counter-increment: step; min-height: 30px; }
+ol.nightsteps li::before { content: counter(step); position: absolute; left: 0; top: -2px; width: 30px; height: 30px; border-radius: 50%; border: 1.5px solid var(--hi); color: var(--hi); font: 700 15px/27px var(--round); text-align: center; }
+ol.nightsteps li b { color: var(--fg); }
+ul.ways { list-style: none; padding: 0; margin: 6px 0; }
+ul.ways li { display: grid; grid-template-columns: 78px 1fr; gap: 10px; padding: 11px 0; border-bottom: 1px solid var(--row); font-size: 15px; }
+ul.ways li:last-child { border-bottom: 0; }
+ul.ways b { font-family: var(--round); color: var(--hi); font-size: 16px; }
+dl.words { margin: 0 0 8px; }
+dl.words dt { font-family: var(--round); font-weight: 700; color: var(--fg); margin-top: 12px; }
+dl.words dd { margin: 2px 0 0; font-size: 14px; color: var(--dim); }
+
+/* ---- Play (Build 125): two game cards that show what you're in for */
+.playlead { font-size: 16px; margin: 0 0 10px; color: var(--fg); }
+.gamecard { padding: 16px 14px 12px; border-radius: 16px; }
+.gamehead { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.gamecard .gamehead h3 { margin: 0; font-size: 22px; color: var(--hi); font-weight: 700; }
+.gamebadge { font-size: 12px; color: var(--dim); border: 1px solid var(--line); border-radius: 10px; padding: 1px 8px; white-space: nowrap; }
+.gamecard p.gamepitch { font-size: 17px; margin: 2px 0 10px; color: var(--fg); }
+.gamestat { font-size: 15px; } .gamestat b { color: var(--hi); font-family: var(--round); font-size: 17px; }
+/* 110 dots, 22 across: the marathon card */
+.mgrid { display: grid; grid-template-columns: repeat(22, 1fr); gap: 5px 0; justify-items: center; padding: 10px 6px; margin: 4px 0 8px; background: var(--chart); border: 1px solid var(--row); border-radius: 10px; }
+.mgrid i { width: 5px; height: 5px; border-radius: 50%; background: var(--ghost); opacity: .55; }
+.mgrid i.can { width: 7px; height: 7px; margin: -1px; background: var(--fg); opacity: 1; }
+.mgrid i.got { width: 9px; height: 9px; margin: -2px; background: var(--good); opacity: 1; box-shadow: 0 0 0 2px var(--chart), 0 0 0 3px var(--good); }
+.raceart { display: block; width: 100%; height: auto; margin: 2px 0 8px; color: var(--fg); background: var(--chart); border: 1px solid var(--row); border-radius: 10px; }
+.raceart .racestar { fill: var(--hi); }
+.gamecard .seg { margin: 4px 0 6px; }
+.gamecard .btnrow { margin: 10px 0 6px; }
+.gamecard .linkrow { margin-top: 2px; }
+.gamecard button.big:disabled { opacity: .45; }
+
+/* ---- More (Build 125): a plain list with dividers; it was eleven boxed cards */
+#tab-more h3 { font-size: 14px; font-weight: 600; color: var(--dim); margin: 22px 0 0; }
+#tab-more button.act { position: relative; margin: 0; padding: 12px 30px 12px 2px; background: none; border: 0; border-bottom: 1px solid var(--row); border-radius: 0; }
+#tab-more button.act:active { background: var(--press); }
+#tab-more button.act::after { content: "›"; position: absolute; right: 8px; top: 50%; transform: translateY(-52%); font-size: 22px; color: var(--dim); }
+#tab-more button.act b { font-size: 17px; }
+
+/* ---- Plan: where you're planning for, then the two buttons side by side (they were squeezed into a narrow column) */
+.plwhere { border-top: 1px solid var(--row); margin-top: 8px; padding-top: 10px; }
+.plwhere .btnrow { margin: 8px 0 6px; }
+/* The key's two colour swatches follow the Night look (the tiles themselves turn red there). */
+html[data-theme="night"] .cbar .qkey .swm, html[data-theme="night"] .cbar .qkey .swl { background: linear-gradient(to right, rgb(16,0,0), rgb(150,20,10)); }
+/* A main button that can't be used yet reads as an outline, not a muddy fill. */
+button.primary:disabled { background: none; color: var(--dim); border-color: var(--line); opacity: .75; }
