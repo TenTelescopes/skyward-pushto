@@ -721,7 +721,9 @@ details.pathd .lq2 { margin-top: 4px; }
 
 /* ---- help page (Build 125) */
 .helplead { font-size: 17px; line-height: 1.45; margin: 4px 0 12px; }
-.helpdemo { max-width: 330px; margin: 14px auto 4px; pointer-events: none; }
+/* the tour's sky chart: a finger on it scrolls the page (the other charts take the touch for themselves) */
+canvas.chart.helpchart { width: min(100%, 340px); margin: 8px auto 10px; pointer-events: none; touch-action: auto; }
+#hd-cap { text-align: center; font-size: 15px; line-height: 1.4; color: var(--hi); margin: 12px auto 0; max-width: 340px; min-height: 5.6em; }
 #tab-help h3 { font-size: 18px; color: var(--hi); margin: 24px 0 6px; }
 #tab-help p.small, #tab-help ul.how li { font-size: 15px; }
 #tab-help ul.how li { margin: 8px 0; }
@@ -787,10 +789,12 @@ button.primary:disabled { background: none; color: var(--dim); border-color: var
 .mntpic { flex: none; width: 46px; } .mntpic svg { display: block; width: 100%; height: auto; }
 .mnttxt { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.3; }
 .mnttxt b { font-weight: 600; font-size: 15px; }
-.mntrow.plain { margin: 0 0 6px; padding: 8px 0 0; border-top: 1px solid var(--row); }
-.mntrow.plain .mntpic { width: 34px; }
-.mntrow.plain .mnttxt b { font-size: 14px; }
+/* Build 130: the compact row is a strip of its own with a picture big enough to read, so the position is hard to miss */
+.mntrow.plain { margin: 8px 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+.mntrow.plain .mntpic { width: 54px; }
+.mntrow.plain .mnttxt b { font-size: 15px; color: var(--hi); }
 .mntrow.plain .mnttxt .small { font-size: 13px; }
+.helpmount { max-width: 340px; margin: 0 auto; } .helpmount > p { margin: 4px 2px 0; }
 
 /* ---- an activity's start-up screen (Build 127): its name, then the steps and Start as a path of stars */
 .stagehead { display: flex; align-items: center; gap: 12px; margin: 6px 0 2px; }

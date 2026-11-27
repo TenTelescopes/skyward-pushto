@@ -715,6 +715,65 @@ unrelated extra star in the object-page sentence. Still open with Bryan: whether
     step was silently dropped, so the flow jumped from the previous step straight to blocked-sky tracing. It now
     always runs when its star is on, showing "Earlier tonight: … check again, or keep it".
 
+## Build 130 (Nov 27): one phone position everywhere, and shown; tour wording
+- Reported from TestFlight: the tour assumed an orientation that the other screens did not, and nothing obvious said
+  which way the app has the phone mounted. Cause: the Build 129 tour chart guessed the pointing direction from how the
+  phone was held (top edge, or the back when held up), while every other screen uses the position that is set
+  (`state.mounting`). The tour chart now uses the set position too (`model.axis()`, and the alignment if there is one).
+- The "Phone on the scope" row (picture, the position in words, Change) is now a bordered strip with a larger picture,
+  and appears on: the start screen, each activity's start-up screen (not Plan), the tour under its chart, the Sky view
+  and the target view under their charts, as well as Star alignment and Setup. Changing it anywhere changes it
+  everywhere (and clears the alignment, as before).
+- In-the-hand hint for every position (`handHint`): "point the top edge of the phone at the sky, like a TV remote",
+  bottom / left / right edge, or "aim its back camera at the sky" for Looking along. Used in the tour and the Sky view.
+- The tour's daytime line said "daylight or not", which read as careless. Now: "By day or behind cloud these stars are
+  still there, just not visible right now" (at night: "right now, even if cloud is hiding it").
+- Build numbers: the label now moves on whenever the iPhone project already carries the current number (a sync was run
+  with it, so it may have been uploaded), since an upload must have a higher number than the last.
+
+## Build 129 (Nov 27): the tour shows the real sky
+- The tour shows the real sky, not numbers (asked for: "an actual image of the sky and have them navigate; if it's
+  daytime just show whatever is up including the sun"). The Turn / Tilt boxes at the top of the tour (live since Build 128) are replaced by
+  the app's own chart (`drawReticle` on `#hd-chart`, driven by `helpDemoTick`), following the phone: the cross in the
+  middle is where the phone points, and a real object that is up is ringed as the thing to steer to (`helpTargets`:
+  the Moon, then Venus, Jupiter, Saturn or Mars, then the brightest stars; 15° to 75° up, at least 20° apart, never
+  within 30° of the Sun, and never the Sun itself). Within 3° for half a second: the on-target chime, "On the
+  telescope, Vega would now be in the eyepiece", then the next object. By day the chart is the same, with the Sun and
+  its solar-filter warning drawn when it is in view, and the caption says "By day or behind cloud these stars are still
+  there, just not visible right now" (at night: "even if cloud is hiding it"). The phone points along
+  its top edge (as on the tube), or out of its back when held up like a window. Direction is from the compass; with
+  no compass the chart starts 25° to one side of the target; with no sensors it is a still chart of the sky around
+  the target. Checked in the browser with the simulator (?sim), for a night and a daytime clock; not yet on a phone:
+  whether the iPhone app starts the sensors without a question, and how steering feels in the hand.
+- The build number moved to 129 in case Build 128 had already gone to TestFlight (an upload needs a higher number
+  than the last one); nothing else differs from 128 but the tour's chart.
+
+## Build 128 (Nov 27): first App Store upload, and what it flagged
+- Build 127 was uploaded to App Store Connect (TestFlight) on Nov 27: the first upload. The listing "Skyward Push-To"
+  exists (bundle ID com.tentelescopes.skyward, SKU skyward-pushto), individual membership.
+- Snag on the way: the Organizer refused with "Team … does not have permission to create iOS App Store provisioning
+  profiles". Xcode had been signed in since before the paid membership; signing out of the Apple Account in Xcode
+  Settings, quitting Xcode and signing in again fixed it (the logs showed Apple's servers never refused anything).
+  An Apple Distribution certificate was also created by hand (Settings → Apple Accounts → Manage Certificates).
+- Apple's email after the upload: (1) ITMS-90683, missing NSLocationAlwaysAndWhenInUseUsageDescription: the location
+  plug-in's code can ask for "always" location. `patch-native.mjs` now adds that message to Info.plist (the app still
+  only asks while open). (2) ITMS-90725: from April 2027 uploads must be built with Xcode 27, which only runs on Apple
+  silicon Macs (Apple's release notes), so the Intel Mac can upload until then; after that an Apple silicon Mac or
+  Xcode Cloud is needed.
+- The build label is 128 so the next upload gets a new build number.
+- Wording (asked for): the welcome card and the help page opened with "Your telescope has no motors", which reads as a
+  shortcoming; a first rewrite called the app "the navigator", which made the user sound like the app's helper. Now
+  "Your telescope is hand-guided: you do the steering. The phone rides on the tube and shows which way to push, and how
+  far, to reach the targets you have selected": the user chooses and steers, the app is the instrument. The Push-to entry in the word list still mentions motors, where it explains
+  go-to telescopes.
+- The tour came up with no sensors (reported from the first TestFlight install). Now the tap that opens the tour from
+  the start screen (See how it works, the ? button, How this app works) also starts the sensors quietly
+  (`warmSensors`): no screen change, no activity, a refusal says nothing and the Start button asks again as before.
+  `startSensors` waits for a quiet start in progress and reuses the sensors it finds. On the web on an iPhone this is
+  where the motion-access question now appears.
+- The tour's Turn / Tilt boxes went live while the sensors are on: a pretend target 12.4° left and 3.1° up of wherever
+  the phone points, counting down as the phone moves. Replaced in Build 129 by the sky chart.
+
 ## Build 127 (Nov 27): shower circles only near the peak; phone position and start-up screens
 - The sky chart drew a 40° dashed circle (with sparks and two lines of text) around the radiant of every active meteor
   shower, so a minor shower two weeks past its peak (Northern Taurids, about 2 an hour) filled the chart. Now only for

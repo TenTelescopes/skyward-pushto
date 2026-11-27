@@ -14,6 +14,9 @@ edit('ios/App/App/Info.plist', (s) => {
   s = add('NSCameraUsageDescription', '<string>The camera finds stars to work out where your telescope is pointing, and scans game codes from other players\' phones.</string>');
   s = add('NSPhotoLibraryAddUsageDescription', '<string>Saves your camera star-finder pictures to Photos. The app never reads your photos.</string>');
   s = add('NSLocationWhenInUseUsageDescription', '<string>Your location is used to compute where objects are in your sky. It never leaves the phone.</string>');
+  // App Store (ITMS-90683, first upload, Build 127): the location plug-in's code can also ask for "always" location, so
+  // Apple wants this message present even though the app only ever asks for location while it is open.
+  s = add('NSLocationAlwaysAndWhenInUseUsageDescription', '<string>Your location is used to compute where objects are in your sky, only while the app is open. It never leaves the phone.</string>');
   // App Store: the app uses only the encryption built into iOS (HTTPS), which is exempt; saves a question on every upload.
   s = add('ITSAppUsesNonExemptEncryption', '<false/>');
   s = s.replace(/(<key>UISupportedInterfaceOrientations<\/key>\s*<array>)[\s\S]*?(<\/array>)/, '$1\n\t\t<string>UIInterfaceOrientationPortrait</string>\n\t$2');

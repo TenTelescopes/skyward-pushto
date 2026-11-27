@@ -1079,12 +1079,13 @@ function renderPush() {
       ${EP_ROW()}
       <canvas id="reticle" class="chart big" width="800" height="800"></canvas>
       <div id="whereami" class="whereami"></div>
+      ${mountRowHTML(true, 'push')}
       ${ZOOM_ROW()}
       <div class="btnrow"><button id="p-hz" class="mini">${placeLabel() ? hzLine() : `Blocked sky: ${hzLine()}`}</button></div>
-      <p class="muted small">The chart follows the scope.${state.mounting === 'top-sky' ? ' In your hand, point the top edge of the phone at the sky, like a TV remote.' : ''} When it says you're near something, tap the name to read about it.</p>
+      <p class="muted small">The chart follows the scope. In your hand, ${handHint()}. When it says you're near something, tap the name to read about it.</p>
       <div class="actionbar"><button id="sv-find" class="primary">Pick a target</button><button id="sv-what">${state.mode === 'compass' || align.obs.length >= alignNeeded() ? 'Sync on this' : 'Align on this'}</button>${align.fit || state.mode === 'compass' ? '' : '<button id="sv-align">Align</button>'}</div>`;
     chartCentre = 'scope';
-    bindChartControls();
+    bindChartControls(); wireMountRow(renderPush, el, 'push');
     $('#sv-find').onclick = () => showTab('find');
     $('#sv-what').onclick = () => openWhatsThis('push');
     $('#p-hz').onclick = () => openHorizon('push');
@@ -1109,6 +1110,7 @@ function renderPush() {
     ${EP_ROW()}
     <canvas id="reticle" class="chart" width="800" height="800"></canvas>
     <div id="whereami" class="whereami"></div>
+    ${mountRowHTML(true, 'push')}
     ${ZOOM_ROW()}
     <h3>In the eyepiece</h3>
     <div class="chips" id="ep-chips">${eps.map((e, i) => `<button data-ep="${i}" class="${i === state.ep ? 'on' : ''}">${esc(e.name)} · ${(profile().fl / e.fl).toFixed(0)}×</button>`).join('')}</div>
@@ -1156,7 +1158,7 @@ function renderPush() {
   $('#p-hz').onclick = () => openHorizon('push');
   $('#b-info').onclick = () => openObject(o.key);
   $('#whereami').onclick = (e) => { const a = e.target.closest('[data-near]'); if (a) openObject(a.dataset.near); };
-  bindChartControls();
+  bindChartControls(); wireMountRow(renderPush, el, 'push');
 }
 let pushBar = null;
 function rateLineHTML(o, tgt) {
@@ -1817,18 +1819,24 @@ const mountChecked = () => state.mountOk && state.mountOk.mount === state.mounti
  * "Phone on the scope: <how> · Change" (Build 122): always on the Align page and in Setup, so the way the phone sits
  * can be told to the app directly. Change opens the pictures; picking one clears the alignment (it depends on it).
  */
-let mountRowOpen = false;   // the pictures stay open while someone flips through them (each pick redraws the page)
+let mountRowOpen = null;    // which screen's row has its pictures open ('align', 'push', …): they stay open while someone flips through them (each pick redraws the page), but only on that screen
 // Build 127: the row carries a small picture of the position, and also sits on the start screen under the location,
 // so the app says how it thinks the phone is mounted before anything else happens. `plain` is that compact form: no
 // card border and the short wording ("On top, top edge to the sky end"). The row is found inside `root`, since the start screen, Align and Setup can each hold one.
-function mountRowHTML(plain = false) {
-  const m = MOUNTINGS[state.mounting];
-  return `<div class="${plain ? 'mntrow plain' : 'card mntrow'}"><div class="mnthead"><span class="mntpic" aria-hidden="true">${mountSVG(state.mounting)}</span><span class="mnttxt"><span class="muted small">Phone on the scope</span><b>${esc(plain ? `${m.where}, ${m.edge.charAt(0).toLowerCase()}${m.edge.slice(1)}` : m.label)}</b></span><button class="mini mr-change" aria-expanded="${mountRowOpen}">${mountRowOpen ? 'Done' : 'Change'}</button></div>
-    <div class="mr-pick${mountRowOpen ? '' : ' hidden'}"><p class="muted small" style="margin:6px 0">Tap the picture that matches how the phone sits on the tube.</p>${mountPickerHTML()}</div></div>`;
+function mountRowHTML(plain = false, at = 'align') {
+  const m = MOUNTINGS[state.mounting], open = mountRowOpen === at;
+  return `<div class="${plain ? 'mntrow plain' : 'card mntrow'}"><div class="mnthead"><span class="mntpic" aria-hidden="true">${mountSVG(state.mounting)}</span><span class="mnttxt"><span class="muted small">Phone on the scope</span><b>${esc(plain ? `${m.where}, ${m.edge.charAt(0).toLowerCase()}${m.edge.slice(1)}` : m.label)}</b></span><button class="mini mr-change" aria-expanded="${open}">${open ? 'Done' : 'Change'}</button></div>
+    <div class="mr-pick${open ? '' : ' hidden'}"><p class="muted small" style="margin:6px 0">Tap the picture that matches how the phone sits on the tube.</p>${mountPickerHTML()}</div></div>`;
 }
-function wireMountRow(redraw, root = document) {
+/** In the hand, the phone points the way it would on the tube: which edge (or the back) to aim at the sky for the position that is set. */
+function handHint() {
+  const d = MOUNTINGS[state.mounting].d;
+  return d[2] ? 'hold the phone up and aim its back camera at the sky'
+    : `point the ${d[1] > 0 ? 'top' : d[1] < 0 ? 'bottom' : d[0] > 0 ? 'right' : 'left'} edge of the phone at the sky${d[1] > 0 ? ', like a TV remote' : ''}`;
+}
+function wireMountRow(redraw, root = document, at = 'align') {
   const b = $('.mr-change', root), pick = $('.mr-pick', root); if (!b || !pick) return;
-  b.onclick = () => { mountRowOpen = pick.classList.toggle('hidden') === false; b.setAttribute('aria-expanded', mountRowOpen); b.textContent = mountRowOpen ? 'Done' : 'Change'; };
+  b.onclick = () => { const open = pick.classList.toggle('hidden') === false; mountRowOpen = open ? at : null; b.setAttribute('aria-expanded', open); b.textContent = open ? 'Done' : 'Change'; };
   wireMountPicker(pick, (ch) => {
     if (ch) { state.mountOk = { mount: state.mounting, t: Date.now(), manual: true }; save(); toast(`Phone on the scope: ${MOUNTINGS[state.mounting].label.toLowerCase()}. Align again.`, 3500); }
     redraw();
@@ -3107,7 +3115,7 @@ function renderSetup() {
     <label class="row"><span>Star declination (°)</span><input id="drift-d" type="number" inputmode="decimal" placeholder="e.g. 0"></label>
     <div class="btnrow"><button id="drift-go">Set the apparent field of the selected eyepiece</button></div></details>
 
-    ${mountRowHTML()}
+    ${mountRowHTML(false, 'setup')}
     <details class="more"><summary>Phone mount and sensors (advanced)</summary>
     <label class="row"><span>Phone dock</span><select id="s-dock"><option value="yes" ${state.dock !== 'no' ? 'selected' : ''}>Yes, on a bridge mount</option><option value="no" ${state.dock === 'no' ? 'selected' : ''}>No, strapped to the tube</option></select></label>
     <label class="row"><span>Azimuth source</span><select id="s-mode"><option value="gyro" ${state.mode === 'gyro' ? 'selected' : ''}>Gyro + star alignment (recommended)</option><option value="compass" ${state.mode === 'compass' ? 'selected' : ''}>Compass (no alignment)</option></select></label>
@@ -3180,7 +3188,7 @@ function renderSetup() {
     const e = eyepiece(); e.afov = +(tf * p.fl / e.fl).toFixed(1); e.verified = true; save(); toast(`True field ${(tf * 60).toFixed(1)}′ → AFOV ${e.afov}°`); renderSetup();
   };
   $('#s-dock').onchange = (e) => { state.dock = e.target.value; save(); };
-  wireMountRow(renderSetup, el);
+  wireMountRow(renderSetup, el, 'setup');
   $('#s-mode').onchange = (e) => { state.mode = e.target.value; save(); };
   $('#s-cc').onchange = () => { state.compassCorr = num('#s-cc') || 0; save(); };
   $('#s-rate').onchange = (e) => { state.useRate = e.target.checked; model.useRate = state.useRate; save(); };
@@ -4413,6 +4421,7 @@ function renderLaunch() {
     const [, title, sub, ic] = ACTIVITIES.find((x) => x[0] === act);
     $('#launch').innerHTML = `<button class="back" id="l-back">‹ Start screen</button>
     <div class="stagehead"><svg class="ic" viewBox="0 0 24 24">${ic}</svg><div><h2>${title}</h2><div class="muted">${sub}</div></div></div>
+    ${act === 'plan' ? '' : mountRowHTML(true, 'stage')}
     <div class="path">
       <h3 class="lq lq2">Start-up refinements</h3><div class="pnote">All optional. Tap a star to turn that step on or off (bright = on).</div>
       ${['check', 'sky', 'seeing', 'horizon', 'align'].map((k) => (stops.includes(k)
@@ -4423,26 +4432,29 @@ function renderLaunch() {
     $('#l-back').onclick = () => { launchStage = null; renderLaunch(); $('#gate').scrollTop = 0; };
     $('#launch').querySelectorAll('[data-step]').forEach((c) => c.onchange = () => { state.launch[c.dataset.step] = c.checked; save(); renderLaunch(); });
     $('#l-go').onclick = () => launch(act);
+    wireMountRow(renderLaunch, $('#launch'), 'stage');
     if ($('#l-hz')) $('#l-hz').onclick = (e) => { e.preventDefault(); e.stopPropagation(); openHorizon('start'); };
     applyTheme();
     return;
   }
   $('#launch').innerHTML = `<div class="lhead"><h1>Skyward <span>Push-To</span></h1><span class="lhbtns"><button class="hbtn" id="l-help" aria-label="How this app works">${ICON.help}</button><button class="hbtn shadebtn" id="l-shade" aria-label="Day or night look"></button></span></div>
-    ${first ? `<div class="welcome"><b>First time here?</b><p>Your telescope has no motors. This app is its guide: the phone rides on the tube and shows which way to push, and how far, until your target is in the eyepiece.</p><div class="btnrow"><button id="l-tour" class="primary">See how it works</button><button id="l-skip">I'll find my way</button></div></div>` : ''}
+    ${first ? `<div class="welcome"><b>First time here?</b><p>Your telescope is hand-guided: you do the steering. The phone rides on the tube and shows which way to push, and how far, to reach the targets you have selected.</p><div class="btnrow"><button id="l-tour" class="primary">See how it works</button><button id="l-skip">I'll find my way</button></div></div>` : ''}
     ${(() => { const rec = ensureForecast(state.site, new Date(), () => { const f = fcFor(state.site, new Date()); const el = $('#l-fc'), g = $('#l-glance'); if (el) el.innerHTML = outlookHTML(f); if (g) g.outerHTML = glanceHTML(f, sky.nightAt(new Date())).replace('class="glance"', 'class="glance" id="l-glance"'); });
       return glanceHTML(rec, sky.nightAt(new Date())).replace('class="glance"', 'class="glance" id="l-glance"'); })()}
     <details class="more tdetail"><summary>Tonight in detail</summary><p class="tonight">${esc(tonightLine())}</p><div id="l-fc">${outlookHTML(fcFor(state.site, new Date()))}</div></details>
     <div class="whereline"><span class="muted small">${ICON.pin}${whereText()}</span><button id="l-loc" class="mini">Update location</button></div>
-    ${mountRowHTML(true)}
+    ${mountRowHTML(true, 'start')}
     ${pp && pp.next ? `<button id="l-resume" class="primary" style="width:100%;margin:6px 0 2px">Carry on with your plan: ${pp.done} of ${pp.total} done</button>` : ''}
     <h3 class="lq">What are we up to?</h3>
     <div class="lgrid">${ACTIVITIES.map(([k, t, sub, ic]) => `<button class="act" data-act="${k}"><svg class="ic" viewBox="0 0 24 24">${ic}</svg><b>${t}</b><span class="muted">${sub}</span></button>`).join('')}</div>
     <button class="linkrow" id="l-how">${ICON.help}<span><b>How this app works</b><span class="muted">A two-minute read: what it does, a first night, and the words you'll meet</span></span></button>`;
-  wireMountRow(renderLaunch, $('#launch'));
+  wireMountRow(renderLaunch, $('#launch'), 'start');
   // The tour opens on top of the start screen, not inside the app (Build 126). Before, it left the start screen, and
   // a newcomer who then tapped a tab at the bottom was in the app without ever tapping Start, so the motion sensors
   // (which the phone only lets the app switch on from that tap) were never on.
-  const openHelpFromStart = () => { if (!state.welcomed) { state.welcomed = true; save(); } helpFrom = 'start'; renderHelp(); };
+  // The tap that opens the tour is also the user gesture the sensors need: they start quietly, so the tour's sky chart
+  // follows the phone and the sensors are already on when the newcomer goes back and taps Start.
+  const openHelpFromStart = () => { if (!state.welcomed) { state.welcomed = true; save(); } initSound(); warmSensors(); helpFrom = 'start'; renderHelp(); };
   $('#l-help').onclick = $('#l-how').onclick = openHelpFromStart;
   if ($('#l-tour')) { $('#l-tour').onclick = openHelpFromStart; $('#l-skip').onclick = () => { state.welcomed = true; save(); renderLaunch(); }; }
   // Tapping one of the four opens its start-up screen (the steps and the Start button).
@@ -4478,9 +4490,10 @@ function renderHelp() {
   const way = (k, t, d) => `<li><b>${t}</b><span>${d}</span></li>`;
   el.innerHTML = `<button class="back" id="h-back">‹ ${fromStart ? 'Start screen' : 'Back'}</button>
     <h2>How this app works</h2>
-    <p class="helplead">Your telescope has no motors: you move it by hand. This app is its guide. The phone rides on the tube, feels where the telescope is pointing, and shows which way to push, and how far, until your target is in the eyepiece.</p>
-    <div class="guide helpdemo" aria-hidden="true"><div class="delta"><div class="lab">Turn</div><div class="val">${L_ARR} 12.4°</div><div class="dir">left</div></div><div class="delta"><div class="lab">Tilt</div><div class="val">▲ 3.1°</div><div class="dir">up</div></div></div>
-    <p class="muted small" style="text-align:center;margin-top:2px">Push until both numbers reach zero. That's the whole idea.</p>
+    <p class="helplead">Your telescope is hand-guided: you do the steering. The phone rides on the tube, feels where the telescope is pointing, and shows which way to push, and how far, to reach the targets you have selected.</p>
+    <p id="hd-cap">The sky right now.</p>
+    <canvas id="hd-chart" class="chart helpchart" width="800" height="800" aria-hidden="true"></canvas>
+    <div class="helpmount">${mountRowHTML(true, 'help')}<p class="muted small">That is how the app takes the phone to sit, on every screen. Not on the telescope yet? In your hand, ${handHint()}.</p></div>
 
     <h3>A night with it</h3>
     <ol class="nightsteps">
@@ -4527,6 +4540,77 @@ function renderHelp() {
   if (fromStart) { el.classList.add('gatehelp'); $('#gate').scrollTop = 0; el.scrollIntoView({ block: 'start' }); }
   $('#h-back').onclick = () => (fromStart ? toStart() : showTab(backTo));
   if ($('#h-start')) $('#h-start').onclick = toStart;
+  wireMountRow(renderHelp, el, 'help');
+  helpDemoStart();
+}
+/**
+ * The tour's sky chart (Build 129, asked for: a real picture of the sky to steer around, not made-up numbers). It is the
+ * same chart as everywhere else (drawReticle), showing the sky where the phone points right now, day or night: by day
+ * the stars that are up are drawn just the same, and so is the Sun with its warning. The cross in the middle is where
+ * the phone points; the red ring, or the arrow at the edge, is a real object to steer to (helpTargets). Within 3° for
+ * half a second: the on-target chime and what that means at the telescope, then the next object.
+ * The phone points the way the app has it mounted (Phone on the scope), exactly as on every other screen: the row under
+ * the chart says which, and can change it. (Build 129 guessed from how the phone was held, so the tour and the Sky view
+ * could disagree.) An alignment is used if there is one.
+ * Direction comes from the compass, which indoors can be well off: fine here, since only moving the phone matters.
+ * Without a compass the chart starts a little to one side of the target. Without sensors it is a still picture of the
+ * sky around the target.
+ */
+let helpDemo = null;
+/** Things to steer to in the tour: the Moon, bright planets, then the brightest stars. Well up, apart from each other, and never near the Sun. */
+function helpTargets() {
+  refreshSky(true);
+  let S = null; try { S = sky.sunAltAz(); } catch (e) { /* no site yet */ }
+  const sunUp = S && S.alt > -1;
+  const pick = (lo, hi, mag) => sky.objects.filter((o) => o.alt != null && o.alt >= lo && o.alt <= hi
+    && (o.planet ? ['Moon', 'Venus', 'Mars', 'Jupiter', 'Saturn'].includes(o.id) : o.key.startsWith('st:') && (o.mag ?? 9) <= mag)
+    && !(sunUp && sepDeg(o.alt, o.az, S.alt, S.az) < 30));
+  let pool = pick(15, 75, 1.6); if (pool.length < 2) pool = pick(10, 85, 2.6);
+  const rank = (o) => (o.id === 'Moon' ? -40 : o.planet ? -20 : 0) + (o.mag ?? 9);   // the Moon first, then planets, then stars, brightest first
+  pool.sort((a, b) => rank(a) - rank(b));
+  const out = []; for (const o of pool) if (out.length < 4 && !out.some((p) => sepDeg(o.alt, o.az, p.alt, p.az) < 20)) out.push(o);
+  return { list: out, day: !!S && S.alt > -6 };
+}
+function helpDemoStart() {
+  if (helpDemo) clearInterval(helpDemo.timer);
+  const d = helpDemo = { n: 0, off: null, okN: 0, hold: 0, found: false, view: 32, drawn: 0, said: '', ...helpTargets(), timer: setInterval(() => helpDemoTick(d), 66) };
+  helpDemoTick(d);
+}
+function helpDemoTick(d) {
+  const cv = $('#hd-chart'), cap = $('#hd-cap');
+  if (helpDemo !== d || !cv || !cv.offsetParent) { clearInterval(d.timer); if (helpDemo === d) helpDemo = null; return; }   // the page has gone
+  const now = performance.now(), say = (t) => { if (d.said !== t) { d.said = t; cap.textContent = t; } };
+  if (d.found && now >= d.hold) { d.found = false; d.n++; d.okN = 0; }          // on to the next object
+  refreshSky();
+  const o = d.list.length ? d.list[d.n % d.list.length] : null, tgt = o ? { alt: o.alt, az: o.az } : null;
+  const name = o ? (o.id === 'Moon' ? 'the Moon' : o.label) : '';
+  if (!sensors || !sensors.fresh()) {                                           // no sensors: a still picture, redrawn now and then
+    if (now - d.drawn < 1500 && d.drawn) return; d.drawn = now;
+    if (o) drawReticle(null, tgt, o, { canvas: cv, view: 30, centre: 'target', noBanner: true });
+    else drawReticle(null, { alt: 45, az: 180 }, { label: '' }, { canvas: cv, view: 30, centre: 'target', noBanner: true, noTarget: true });
+    say(o ? `The sky around ${name} right now. With the motion sensors on, this chart follows the phone and you steer it to ${name}.` : 'The sky to the south right now.');
+    return;
+  }
+  const R = avgR(0.25) || sensors.R, raw = altAzFromVec(mulMV(R, model.axis())), cmp = sensors.compassOffset();
+  const co = azOffset() ?? (cmp == null ? null : cmp + (state.compassCorr || 0));   // the alignment, else the compass
+  if (co == null && d.off == null) d.off = wrap180((tgt ? tgt.az - 25 : 180) - raw.az);
+  const cur = { alt: raw.alt, az: wrap360(raw.az + (co ?? d.off)), ready: true };
+  if (!o) { drawReticle(cur, cur, { label: '' }, { canvas: cv, view: 30, noBanner: true, noTarget: true }); say('The sky where the phone is pointing, right now.'); return; }
+  const sep = sepDeg(cur.alt, cur.az, tgt.alt, tgt.az);
+  if (SIM_URL) window.helpDemo = { cur, tgt, name, sep };                         // test hook (simulator only)
+  d.view += (Math.max(14, Math.min(32, sep * 1.5)) - d.view) * 0.12;            // closes in as the target nears
+  const cc = chartCentre; chartCentre = 'scope';                                // this chart always follows the phone, whatever the Push chart is set to
+  try { drawReticle(cur, tgt, o, { canvas: cv, view: d.view, noBanner: true }); } finally { chartCentre = cc; }
+  // a cross big enough to read as "where the phone points" (the chart's own scope mark is sized for an eyepiece field)
+  const c = cv.getContext('2d'), x = cv.width / 2, y = cv.height / 2;
+  c.strokeStyle = tint(230, 50, 25, 1, vis()); c.lineWidth = 5; c.lineCap = 'round'; c.beginPath(); c.arc(x, y, 30, 0, 7);
+  for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { c.moveTo(x + dx * 16, y + dy * 16); c.lineTo(x + dx * 52, y + dy * 52); }
+  c.stroke(); c.lineCap = 'butt';
+  if (d.found) return;
+  say(d.n ? `Now ${name}. Same idea.`
+    : `Try it now. This is the sky ${siteKnown() ? 'above you' : 'overhead'}${d.day ? '. By day or behind cloud these stars are still there, just not visible right now' : ' right now, even if cloud is hiding it'}. Move the phone until the cross sits on ${name}. That’s the whole idea.`);
+  d.okN = sep < 3 ? d.okN + 1 : 0;
+  if (d.okN >= 8) { cue.onTarget(); tick(); d.found = true; d.hold = now + 3200; say(`That’s it. On the telescope, ${name} would now be in the eyepiece.`); }
 }
 
 // ---------------------------------------------------------------- camera star finder
@@ -5280,14 +5364,28 @@ function runSkyCheck() {
   $('#sq-skip').onclick = () => (flow ? flowNext() : box.classList.add('hidden'));
 }
 
+/**
+ * Quiet start (Build 128), from the tap that opens the tour on the start screen: the sensors begin listening, and nothing
+ * else happens (the start screen stays, no activity begins, the screen is not kept awake). If access is refused or the
+ * device has no sensors it says nothing: the Start button asks again and explains. With ?sim it is the simulator.
+ */
+let warming = null;
+function warmSensors() {
+  if (warming || (sensors && sensors.started)) return;
+  const s = SIM_URL ? new SimSensors() : new Sensors();
+  warming = s.start().then(() => { sensors = s; s.on(onSensor); sensorT0 = performance.now(); if (SIM_URL) window.sim = s; return true; })
+    .catch(() => false).finally(() => { warming = null; });
+}
 async function startSensors(sim) {
   const msg = $('#gate-msg');
   try {
     // Reuse sensors that are already listening: starting a second set would feed every reading in twice.
-    if (sim || !(sensors && sensors.constructor === Sensors && sensors.started)) {
+    if (warming) await warming;                      // the tour's quiet start is still asking for access: let it finish
+    if (!(sensors && sensors.constructor === (sim ? SimSensors : Sensors) && sensors.started)) {
       sensors = sim ? new SimSensors() : new Sensors();
-      await sensors.start(); sensors.on(onSensor); sensorT0 = performance.now();
+      await sensors.start(); sensors.on(onSensor);
     }
+    sensorT0 = performance.now();
     if (sim) {
       window.sim = sensors; // arrow keys move the simulated scope: ←/→ azimuth, ↑/↓ altitude (Shift = fine)
       // Test hook (simulator only): point the simulated scope at an object or at alt/az.
