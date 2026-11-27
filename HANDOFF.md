@@ -715,6 +715,18 @@ unrelated extra star in the object-page sentence. Still open with Bryan: whether
     step was silently dropped, so the flow jumped from the previous step straight to blocked-sky tracing. It now
     always runs when its star is on, showing "Earlier tonight: … check again, or keep it".
 
+## Build 126 (Nov 26): the tour stays on the start screen
+- Reported: a first-time user who took the tour ended up in the app with the sensors off. "See how it works" (and the
+  ? button) left the start screen for the help page inside the app, where the tabs at the bottom were live; tapping one
+  skipped Start, and Start is the tap that switches the motion sensors on (iOS only allows it from a tap).
+- Now the tour is drawn on the start screen's own panel (`renderHelp` into `#launch` when `helpFrom === 'start'`,
+  class `gatehelp`): no tabs or header to wander into, and "Back to the start screen" (a bar flush with the bottom,
+  `.gatebar`) or ‹ Start screen are the only ways on. Background redraws of the start screen (forecast arriving,
+  location) wait while the tour is open (`renderLaunch` returns early), so it isn't wiped mid-read. From More the help
+  page is still an ordinary page with the tabs.
+- Checked in the browser: tour open while the forecast arrives (stays), back (start screen with the forecast, welcome
+  card gone), ? button and back, help from More. Not yet on a phone.
+
 ## Build 125 (Nov 26): design and usability pass, help page, Play
 Asked for: less overwhelming for a first-timer, still practical for a seasoned observer, more fun, a more enticing Play,
 a basic help page, and nothing that looks more machine-made. Audited from screenshots of every main screen at phone size.

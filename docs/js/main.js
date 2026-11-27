@@ -4354,6 +4354,8 @@ function planProgress() {
  *  every return left the screen blank for over two seconds (Build 125). */
 function showStart() { $('#launch').style.animation = 'none'; renderLaunch(); $('#gate').classList.remove('hidden'); }
 function renderLaunch() {
+  if (helpFrom === 'start') return;                    // the tour is open on this panel: background redraws (forecast, location) wait
+  $('#launch').classList.remove('gatehelp');
   const L = state.launch, chk = lastCheck(), sq = skyQ(), pp = planProgress();
   const V = { solid: 'solid', usable: 'usable', poor: 'poor', unsuitable: 'not suitable', incomplete: 'incomplete' };
   const status = {
@@ -4386,7 +4388,10 @@ function renderLaunch() {
     </div></details>
     <button class="linkrow" id="l-how">${ICON.help}<span><b>How this app works</b><span class="muted">A two-minute read: what it does, a first night, and the words you'll meet</span></span></button>`;
   { const d = $('#l-path'); d.ontoggle = () => { state.ui = state.ui || {}; state.ui.pathOpen = d.open; save(); $('.pathch', d).textContent = d.open ? 'Hide' : 'Change'; }; }
-  const openHelpFromStart = () => { if (!state.welcomed) { state.welcomed = true; save(); } $('#gate').classList.add('hidden'); helpFrom = 'start'; showTab('help'); };
+  // The tour opens on top of the start screen, not inside the app (Build 126). Before, it left the start screen, and
+  // a newcomer who then tapped a tab at the bottom was in the app without ever tapping Start, so the motion sensors
+  // (which the phone only lets the app switch on from that tap) were never on.
+  const openHelpFromStart = () => { if (!state.welcomed) { state.welcomed = true; save(); } helpFrom = 'start'; renderHelp(); };
   $('#l-help').onclick = $('#l-how').onclick = openHelpFromStart;
   if ($('#l-tour')) { $('#l-tour').onclick = openHelpFromStart; $('#l-skip').onclick = () => { state.welcomed = true; save(); renderLaunch(); }; }
   $('#launch').querySelectorAll('[data-step]').forEach((c) => c.onchange = () => { state.launch[c.dataset.step] = c.checked; save(); renderLaunch(); });
@@ -4416,8 +4421,11 @@ const HELP_WORDS = [
   ['Collimation', 'Lining up a reflector’s mirrors so stars focus to sharp points. The word comes from the Latin for bringing into a straight line.'],
 ];
 function renderHelp() {
-  const el = $('#tab-help'), fromStart = helpFrom === 'start';
-  const toStart = () => { helpFrom = null; showStart(); };
+  // From the start screen it is drawn in the start screen's own panel (no tabs, no header): the only way on is back to
+  // the start screen and its Start button, which is what turns the sensors on. From More it is an ordinary page.
+  const fromStart = helpFrom === 'start', el = fromStart ? $('#launch') : $('#tab-help');
+  if (fromStart) $('#tab-help').innerHTML = ''; else if ($('#launch #h-back')) renderLaunch();   // one copy at a time (shared ids)
+  const toStart = () => { helpFrom = null; showStart(); $('#gate').scrollTop = 0; };
   const way = (k, t, d) => `<li><b>${t}</b><span>${d}</span></li>`;
   el.innerHTML = `<button class="back" id="h-back">‹ ${fromStart ? 'Start screen' : 'Back'}</button>
     <h2>How this app works</h2>
@@ -4466,7 +4474,8 @@ function renderHelp() {
         <li><b>A target says “not tonight”.</b> It is too low, too faint for tonight's sky, or behind something you marked as blocked. Its page says which.</li>
       </ul></details>
     <p class="muted small" style="margin-top:14px">It works without a signal once it has loaded. Your log, plans and settings stay on this phone.</p>
-    ${fromStart ? '<div class="actionbar"><button id="h-start" class="primary wide">Back to the start screen</button></div>' : ''}`;
+    ${fromStart ? '<div class="actionbar gatebar"><button id="h-start" class="primary wide">Back to the start screen</button></div>' : ''}`;
+  if (fromStart) { el.classList.add('gatehelp'); $('#gate').scrollTop = 0; el.scrollIntoView({ block: 'start' }); }
   $('#h-back').onclick = () => (fromStart ? toStart() : showTab(backTo));
   if ($('#h-start')) $('#h-start').onclick = toStart;
 }

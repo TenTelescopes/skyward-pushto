@@ -772,3 +772,12 @@ dl.words dd { margin: 2px 0 0; font-size: 14px; color: var(--dim); }
 html[data-theme="night"] .cbar .qkey .swm, html[data-theme="night"] .cbar .qkey .swl { background: linear-gradient(to right, rgb(16,0,0), rgb(150,20,10)); }
 /* A main button that can't be used yet reads as an outline, not a muddy fill. */
 button.primary:disabled { background: none; color: var(--dim); border-color: var(--line); opacity: .75; }
+
+/* ---- the help page shown on top of the start screen (Build 126) */
+#launch.gatehelp { padding: 4px 2px 0; }
+#launch.gatehelp h3 { font-size: 18px; color: var(--hi); margin: 24px 0 6px; }
+#launch.gatehelp p.small, #launch.gatehelp ul.how li { font-size: 15px; }
+#launch.gatehelp ul.how li { margin: 8px 0; }
+#launch.gatehelp .skp { width: 18px; height: 18px; vertical-align: -4px; }
+/* The start screen's panel has padding under it, so the bar is pulled down to sit flush with the bottom of the screen. */
+.actionbar.gatebar { bottom: calc(-16px - var(--safe-b)); margin: 16px -18px 0; padding: 10px 18px calc(10px + var(--safe-b)); background: var(--bg2); border-top: 1px solid var(--line); }
