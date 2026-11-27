@@ -781,3 +781,20 @@ button.primary:disabled { background: none; color: var(--dim); border-color: var
 #launch.gatehelp .skp { width: 18px; height: 18px; vertical-align: -4px; }
 /* The start screen's panel has padding under it, so the bar is pulled down to sit flush with the bottom of the screen. */
 .actionbar.gatebar { bottom: calc(-16px - var(--safe-b)); margin: 16px -18px 0; padding: 10px 18px calc(10px + var(--safe-b)); background: var(--bg2); border-top: 1px solid var(--line); }
+
+/* ---- "Phone on the scope" row with its little picture (Build 127): start screen, Align and Setup */
+.mnthead { display: flex; align-items: center; gap: 10px; }
+.mntpic { flex: none; width: 46px; } .mntpic svg { display: block; width: 100%; height: auto; }
+.mnttxt { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.3; }
+.mnttxt b { font-weight: 600; font-size: 15px; }
+.mntrow.plain { margin: 0 0 6px; padding: 8px 0 0; border-top: 1px solid var(--row); }
+.mntrow.plain .mntpic { width: 34px; }
+.mntrow.plain .mnttxt b { font-size: 14px; }
+.mntrow.plain .mnttxt .small { font-size: 13px; }
+
+/* ---- an activity's start-up screen (Build 127): its name, then the steps and Start as a path of stars */
+.stagehead { display: flex; align-items: center; gap: 12px; margin: 6px 0 2px; }
+.stagehead svg.ic { flex: none; width: 34px; height: 34px; color: var(--hi); }
+.stagehead h2 { margin: 0; }
+#launch .back { margin-bottom: 4px; }
+.lgrid button.act { position: relative; }

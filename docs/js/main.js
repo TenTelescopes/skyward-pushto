@@ -523,19 +523,51 @@ function labelX(c, txt, x, y) {
   const half = Math.sqrt(R * R - dy * dy), w = c.measureText(txt).width / 2 + 8;
   return w >= half ? W / 2 : Math.max(W / 2 - half + w, Math.min(W / 2 + half - w, x));
 }
-/** Big dashed zones on the sky chart: meteor showers (around the radiant) and possible aurora (low in the north). */
+/**
+ * A meteor shower worth a big circle on the chart tonight (Build 127): near its peak (within a day and a half, or still
+ * at half its peak rate for the broad ones) and good for at least 5 meteors an hour under a dark sky. Away from the
+ * peak, and for the minor showers, the chart stays clean; the shower is still listed under Find.
+ */
+const showerNearPeak = (sh) => !!sh && sh.zhrNow >= 5 && (Math.abs(sh.daysFromPeak) <= 1.5 || sh.zhrNow >= sh.zhr / 2);
+/** Big dashed zones on the sky chart: a meteor shower near its peak (around the radiant) and possible aurora (low in
+ *  the north, only while the Kp index says it's on). */
 function drawZones(c, proj, view, col, s) {
   const t = performance.now(), D = Math.PI / 180;
   const sunA = sky.sunAlt(new Date());
   if (sunA > -6) return;
   const path = (pts) => { let pen = false; c.beginPath(); for (const p of pts) { const q = p.alt > -3 ? proj(p) : null; if (!q || q.r > view * 2.2) { pen = false; continue; } if (pen) c.lineTo(q.x, q.y); else { c.moveTo(q.x, q.y); pen = true; } } };
+  // The zone's name written along its edge, the way a map labels a contour line, and repeated around it, so any stretch
+  // of the line that crosses the chart says what it is even when the middle of the zone is off screen (Build 127).
+  // `pts` is the line; `ring` when it closes on itself. The first label goes where the line passes nearest the middle
+  // of the chart, the others about a label-and-a-half further along each way.
+  const edgeLabels = (pts, txt, color, ring) => {
+    const W = c.canvas.width, cx = W / 2, cy = c.canvas.height / 2, R = W * 0.46, n = ring ? pts.length - 1 : pts.length;
+    const Q = pts.slice(0, n).map((p) => { const q = p.alt > -3 ? proj(p) : null; return q && q.r <= view ? q : null; });
+    let best = -1, bd = Infinity; Q.forEach((q, i) => { if (q) { const d = Math.hypot(q.x - cx, q.y - cy); if (d < bd) { bd = d; best = i; } } });
+    if (best < 0) return;
+    const at = (i) => (ring ? Q[((i % n) + n) % n] : Q[i]);
+    c.save(); c.setLineDash([]); c.font = `bold ${Math.round(25 * W / 800)}px system-ui`; c.textAlign = 'center'; c.textBaseline = 'middle'; c.lineJoin = 'round';   // sized like the chart's star names
+    const w = c.measureText(txt).width, gap = w * 1.6 + 120;
+    const put = (i, must) => {
+      const q = at(i), a = at(i - 1) || q, b = at(i + 1) || q; if (!q) return;
+      if (!must && Math.hypot(q.x - cx, q.y - cy) + w / 2 > R) return;          // would run off the round chart
+      let ang = Math.atan2(b.y - a.y, b.x - a.x); if (ang > Math.PI / 2) ang -= Math.PI; else if (ang < -Math.PI / 2) ang += Math.PI;   // never upside down
+      c.save(); c.translate(q.x, q.y); c.rotate(ang);
+      c.lineWidth = 8; c.strokeStyle = col(0, 0, 0, 0.92); c.strokeText(txt, 0, 0);   // a dark halo breaks the dashes behind the words
+      c.fillStyle = color; c.fillText(txt, 0, 0); c.restore();
+    };
+    put(best, true);
+    for (const dir of [1, -1]) { let acc = 0, prev = Q[best]; for (let k = 1; k < n / 2; k++) { const q = at(best + dir * k); if (!q) break; acc += Math.hypot(q.x - prev.x, q.y - prev.y); prev = q; if (acc >= gap) { put(best + dir * k, false); acc = 0; } } }
+    c.restore();
+  };
   c.save(); c.lineWidth = 3; c.setLineDash([18, 14]); c.lineDashOffset = -(t / 45) % 32;          // marching ants
   for (const o of sky.objects) {
-    if (!o.shower || o.alt == null || o.alt < -15) continue;
+    if (!o.shower || !showerNearPeak(o.shower) || o.alt == null || o.alt < -15) continue;
     const lat1 = o.alt * D, lon1 = o.az * D, rho = 40 * D, pts = [];
     for (let k = 0; k <= 72; k++) { const th = k * 5 * D, lat2 = Math.asin(Math.sin(lat1) * Math.cos(rho) + Math.cos(lat1) * Math.sin(rho) * Math.cos(th)); const lon2 = lon1 + Math.atan2(Math.sin(th) * Math.sin(rho) * Math.cos(lat1), Math.cos(rho) - Math.sin(lat1) * Math.sin(lat2)); pts.push({ alt: lat2 / D, az: ((lon2 / D) % 360 + 360) % 360 }); }
     const pulse = 0.55 + 0.25 * Math.sin(t / 700);
     c.strokeStyle = col(255, 200, 120, pulse); path(pts); c.stroke();
+    edgeLabels(pts, `${o.label} meteor zone`, col(255, 215, 140), true);
     // a few twinkling sparks inside the zone, so it reads as "meteors anywhere in here"
     c.setLineDash([]); for (let k = 0; k < 7; k++) { const ph = (t / 900 + k * 0.37) % 1, ang = k * 2.4 + Math.floor(t / 900 + k * 0.37) * 1.3, dist = 12 + (k * 37) % 26;
       const lat2 = Math.asin(Math.sin(lat1) * Math.cos(dist * D) + Math.cos(lat1) * Math.sin(dist * D) * Math.cos(ang)), lon2 = lon1 + Math.atan2(Math.sin(ang) * Math.sin(dist * D) * Math.cos(lat1), Math.cos(dist * D) - Math.sin(lat1) * Math.sin(lat2));
@@ -554,6 +586,7 @@ function drawZones(c, proj, view, col, s) {
     const top = [], N = 60;
     for (let k = 0; k <= N; k++) { const az = (300 + k * 120 / N) % 360; top.push({ alt: Math.max(3, au.height * Math.cos(((k / N) - 0.5) * Math.PI * 0.9)), az }); }
     c.strokeStyle = col(120, 255, 160, 0.55 + 0.25 * Math.sin(t / 650)); path(top); c.stroke();
+    edgeLabels(top, 'Northern lights possible below here', col(150, 255, 180), false);
     const mid = proj({ alt: Math.max(6, au.height * 0.55), az: 0 });
     if (mid && mid.r < view * 1.3) { c.setLineDash([]); c.fillStyle = col(150, 255, 180); c.font = 'bold 22px system-ui'; c.textAlign = 'center'; const txt = `Northern lights possible (Kp ${au.kp.toFixed(1)})`; c.fillText(txt, labelX(c, txt, mid.x, mid.y), mid.y); }
   }
@@ -1785,13 +1818,16 @@ const mountChecked = () => state.mountOk && state.mountOk.mount === state.mounti
  * can be told to the app directly. Change opens the pictures; picking one clears the alignment (it depends on it).
  */
 let mountRowOpen = false;   // the pictures stay open while someone flips through them (each pick redraws the page)
-function mountRowHTML() {
+// Build 127: the row carries a small picture of the position, and also sits on the start screen under the location,
+// so the app says how it thinks the phone is mounted before anything else happens. `plain` is that compact form: no
+// card border and the short wording ("On top, top edge to the sky end"). The row is found inside `root`, since the start screen, Align and Setup can each hold one.
+function mountRowHTML(plain = false) {
   const m = MOUNTINGS[state.mounting];
-  return `<div class="card mntrow"><div class="row" style="border:0;padding:0"><span>Phone on the scope: <b>${esc(m.label)}</b></span><button class="mini" id="mr-change" aria-expanded="${mountRowOpen}">${mountRowOpen ? 'Done' : 'Change'}</button></div>
-    <div id="mr-pick"${mountRowOpen ? '' : ' class="hidden"'}><p class="muted small" style="margin:6px 0">Tap the picture that matches how the phone sits on the tube.</p>${mountPickerHTML()}</div></div>`;
+  return `<div class="${plain ? 'mntrow plain' : 'card mntrow'}"><div class="mnthead"><span class="mntpic" aria-hidden="true">${mountSVG(state.mounting)}</span><span class="mnttxt"><span class="muted small">Phone on the scope</span><b>${esc(plain ? `${m.where}, ${m.edge.charAt(0).toLowerCase()}${m.edge.slice(1)}` : m.label)}</b></span><button class="mini mr-change" aria-expanded="${mountRowOpen}">${mountRowOpen ? 'Done' : 'Change'}</button></div>
+    <div class="mr-pick${mountRowOpen ? '' : ' hidden'}"><p class="muted small" style="margin:6px 0">Tap the picture that matches how the phone sits on the tube.</p>${mountPickerHTML()}</div></div>`;
 }
-function wireMountRow(redraw) {
-  const b = $('#mr-change'), pick = $('#mr-pick'); if (!b || !pick) return;
+function wireMountRow(redraw, root = document) {
+  const b = $('.mr-change', root), pick = $('.mr-pick', root); if (!b || !pick) return;
   b.onclick = () => { mountRowOpen = pick.classList.toggle('hidden') === false; b.setAttribute('aria-expanded', mountRowOpen); b.textContent = mountRowOpen ? 'Done' : 'Change'; };
   wireMountPicker(pick, (ch) => {
     if (ch) { state.mountOk = { mount: state.mounting, t: Date.now(), manual: true }; save(); toast(`Phone on the scope: ${MOUNTINGS[state.mounting].label.toLowerCase()}. Align again.`, 3500); }
@@ -1880,7 +1916,7 @@ function renderAlign() {
   $('#a-tools').ontoggle = (e) => { state.alignTools = e.target.open; save(); };
   if ($('#a-find')) $('#a-find').onclick = () => showTab('find');
   if ($('#a-what')) $('#a-what').onclick = () => openWhatsThis('align');
-  wireMountRow(renderAlign);
+  wireMountRow(renderAlign, el);
   wireMountCheck();
   if ($('#a-cam')) $('#a-cam').onclick = () => { if (!camWiz && !profile().camBore) camWiz = { step: 'start', star: null }; showTab('camera'); };
   const addStar = (o, force) => addAlignStar(o, force);
@@ -2470,7 +2506,7 @@ const HZ_BACK = () => (hzInFlow() ? '' : `<button class="back" id="hz-back">‹ 
 const hzDone = () => { state.launch.horizon = false; save(); flowStepDone('horizon'); };
 /** Open Blocked sky from anywhere; its back button returns to where you came from. */
 function openHorizon(from = 'more') { hzFrom = from; $('#gate').classList.add('hidden'); showTab('horizon'); }
-function hzBindBack() { const b = $('#hz-back'); if (b) b.onclick = () => { hzTrace = null; if (hzFrom === 'start') { showStart(); } else showTab(hzFrom); }; }
+function hzBindBack() { const b = $('#hz-back'); if (b) b.onclick = () => { hzTrace = null; if (hzFrom === 'start') { showStart(true); } else showTab(hzFrom); }; }
 const hzLine = () => (placeLabel() ? `${esc(placeLabel())}: ` : '') + (horizonNow() ? esc(horizonSummary(state.horizon)).replace(/^B/, placeLabel() ? 'b' : 'B') : 'none marked');
 const SIM_URL = new URLSearchParams(location.search).has('sim');
 /** Where the phone's top edge points when it is held in the hand like a spyglass: height from gravity, direction from the compass. */
@@ -3144,7 +3180,7 @@ function renderSetup() {
     const e = eyepiece(); e.afov = +(tf * p.fl / e.fl).toFixed(1); e.verified = true; save(); toast(`True field ${(tf * 60).toFixed(1)}′ → AFOV ${e.afov}°`); renderSetup();
   };
   $('#s-dock').onchange = (e) => { state.dock = e.target.value; save(); };
-  wireMountRow(renderSetup);
+  wireMountRow(renderSetup, el);
   $('#s-mode').onchange = (e) => { state.mode = e.target.value; save(); };
   $('#s-cc').onchange = () => { state.compassCorr = num('#s-cc') || 0; save(); };
   $('#s-rate').onchange = (e) => { state.useRate = e.target.checked; model.useRate = state.useRate; save(); };
@@ -4352,7 +4388,12 @@ function planProgress() {
 }
 /** Back to the start screen. Its fade-in (timed to follow the splash) only belongs to the first showing: without this,
  *  every return left the screen blank for over two seconds (Build 125). */
-function showStart() { $('#launch').style.animation = 'none'; renderLaunch(); $('#gate').classList.remove('hidden'); }
+function showStart(keepStage = false) { if (!keepStage) launchStage = null; $('#launch').style.animation = 'none'; renderLaunch(); $('#gate').classList.remove('hidden'); }
+// The start screen has two stages (Build 127): the main one (tonight's sky, where you are, how the phone sits, and the
+// four things to do), and, once one of the four is tapped, that activity's start-up screen: its optional start-up steps
+// as a list of stars to switch on or off, ending in the Start button. `launchStage` is the activity whose start-up
+// screen is showing, or null for the main one.
+let launchStage = null;
 function renderLaunch() {
   if (helpFrom === 'start') return;                    // the tour is open on this panel: background redraws (forecast, location) wait
   $('#launch').classList.remove('gatehelp');
@@ -4365,39 +4406,47 @@ function renderLaunch() {
     seeing: (sky.sunAlt() > -6 ? 'needs stars: only possible once it is dark · ' : '') + (seeingTonight() ? `earlier tonight: ${SEEING_WORD[seeingTonight().v]}, 10 s to check again` : seeingSource() === 'forecast' ? `forecast says ${SEEING_WORD[seeingNow()]}, 10 s to check it yourself` : STEP_INFO.seeing[1]),
     horizon: horizonNow() || placeLabel() ? hzLine() : STEP_INFO.horizon[1],
   };
-  const act = ACTIVITIES.some((x) => x[0] === state.launchAct) ? state.launchAct : 'observe', stops = PATH[act];
+  const act = ACTIVITIES.some((x) => x[0] === launchStage) ? launchStage : ACTIVITIES.some((x) => x[0] === state.launchAct) ? state.launchAct : 'observe', stops = PATH[act];
   const first = !state.welcomed && !state.seenIntro;                       // nobody has started anything on this phone yet
-  const onNames = stops.filter((k) => stepOn(k, act) && !(k === 'align' && alignedNow())).map((k) => STEP_INFO[k][0].replace('Seeing: steady air check', 'Seeing check'));
-  const pathOpen = !!(state.ui && state.ui.pathOpen);
+  if (launchStage) {
+    // ---- an activity's start-up screen: the optional steps, then Start
+    const [, title, sub, ic] = ACTIVITIES.find((x) => x[0] === act);
+    $('#launch').innerHTML = `<button class="back" id="l-back">‹ Start screen</button>
+    <div class="stagehead"><svg class="ic" viewBox="0 0 24 24">${ic}</svg><div><h2>${title}</h2><div class="muted">${sub}</div></div></div>
+    <div class="path">
+      <h3 class="lq lq2">Start-up refinements</h3><div class="pnote">All optional. Tap a star to turn that step on or off (bright = on).</div>
+      ${['check', 'sky', 'seeing', 'horizon', 'align'].map((k) => (stops.includes(k)
+    ? `<label class="stop"><input type="checkbox" data-step="${stepKey(k, act)}" ${stepOn(k, act) ? 'checked' : ''}><span><b>${STEP_INFO[k][0]}</b><span class="muted">${k === 'horizon' ? (stepOn(k, act) || horizonNow() || placeLabel() ? status[k] : 'skipped') : esc(stepOn(k, act) ? status[k] : k === 'check' ? (chk ? `done: ${V[chk.result.verdict] || chk.result.verdict}` : 'optional, once per phone, 4 min: how far to trust the arrows and the sky view') : k === 'align' && act === 'explore' ? (alignedNow() ? 'already aligned' : 'optional, 2 min: makes the chart match the real sky') : k === 'sky' && !sq && mapSky() ? `skipped: using the map estimate, about Bortle ${mapSky().bortle}` : 'skipped')}</span></span>${k === 'horizon' ? '<button id="l-hz" class="mini" type="button">Open</button>' : ''}</label>`
+    : `<div class="stop na"><input type="checkbox" disabled aria-hidden="true"><span><b>${STEP_INFO[k][0]}</b><span class="muted">not needed for this</span></span></div>`)).join('')}
+      <div class="stop end"><span class="dest"></span><button id="l-go" class="primary">${GO[act]}</button></div>
+    </div>`;
+    $('#l-back').onclick = () => { launchStage = null; renderLaunch(); $('#gate').scrollTop = 0; };
+    $('#launch').querySelectorAll('[data-step]').forEach((c) => c.onchange = () => { state.launch[c.dataset.step] = c.checked; save(); renderLaunch(); });
+    $('#l-go').onclick = () => launch(act);
+    if ($('#l-hz')) $('#l-hz').onclick = (e) => { e.preventDefault(); e.stopPropagation(); openHorizon('start'); };
+    applyTheme();
+    return;
+  }
   $('#launch').innerHTML = `<div class="lhead"><h1>Skyward <span>Push-To</span></h1><span class="lhbtns"><button class="hbtn" id="l-help" aria-label="How this app works">${ICON.help}</button><button class="hbtn shadebtn" id="l-shade" aria-label="Day or night look"></button></span></div>
     ${first ? `<div class="welcome"><b>First time here?</b><p>Your telescope has no motors. This app is its guide: the phone rides on the tube and shows which way to push, and how far, until your target is in the eyepiece.</p><div class="btnrow"><button id="l-tour" class="primary">See how it works</button><button id="l-skip">I'll find my way</button></div></div>` : ''}
     ${(() => { const rec = ensureForecast(state.site, new Date(), () => { const f = fcFor(state.site, new Date()); const el = $('#l-fc'), g = $('#l-glance'); if (el) el.innerHTML = outlookHTML(f); if (g) g.outerHTML = glanceHTML(f, sky.nightAt(new Date())).replace('class="glance"', 'class="glance" id="l-glance"'); });
       return glanceHTML(rec, sky.nightAt(new Date())).replace('class="glance"', 'class="glance" id="l-glance"'); })()}
     <details class="more tdetail"><summary>Tonight in detail</summary><p class="tonight">${esc(tonightLine())}</p><div id="l-fc">${outlookHTML(fcFor(state.site, new Date()))}</div></details>
     <div class="whereline"><span class="muted small">${ICON.pin}${whereText()}</span><button id="l-loc" class="mini">Update location</button></div>
+    ${mountRowHTML(true)}
     ${pp && pp.next ? `<button id="l-resume" class="primary" style="width:100%;margin:6px 0 2px">Carry on with your plan: ${pp.done} of ${pp.total} done</button>` : ''}
     <h3 class="lq">What are we up to?</h3>
-    <div class="lgrid">${ACTIVITIES.map(([k, t, sub, ic]) => `<button class="act${k === act ? ' on' : ''}" data-act="${k}"><svg class="ic" viewBox="0 0 24 24">${ic}</svg><b>${t}</b><span class="muted">${sub}</span></button>`).join('')}</div>
-    <div class="stop end go1"><button id="l-go" class="primary">${GO[act]}</button></div>
-    <details class="more pathd" id="l-path"${pathOpen ? ' open' : ''}><summary><span class="pathsum"><b>Before you start:</b> ${onNames.length ? esc(onNames.join(', ').replace(/, ([^,]*)$/, ' and $1').toLowerCase()) : 'nothing, straight to the sky'}</span><span class="pathch">${pathOpen ? 'Hide' : 'Change'}</span></summary>
-    <div class="path">
-      <h3 class="lq lq2">Start-up refinements</h3><div class="pnote">All optional. Tap a star to turn that step on or off (bright = on).</div>
-      ${['check', 'sky', 'seeing', 'horizon', 'align'].map((k) => (stops.includes(k)
-    ? `<label class="stop"><input type="checkbox" data-step="${stepKey(k, act)}" ${stepOn(k, act) ? 'checked' : ''}><span><b>${STEP_INFO[k][0]}</b><span class="muted">${k === 'horizon' ? (stepOn(k, act) || horizonNow() || placeLabel() ? status[k] : 'skipped') : esc(stepOn(k, act) ? status[k] : k === 'check' ? (chk ? `done: ${V[chk.result.verdict] || chk.result.verdict}` : 'optional, once per phone, 4 min: how far to trust the arrows and the sky view') : k === 'align' && act === 'explore' ? (alignedNow() ? 'already aligned' : 'optional, 2 min: makes the chart match the real sky') : k === 'sky' && !sq && mapSky() ? `skipped: using the map estimate, about Bortle ${mapSky().bortle}` : 'skipped')}</span></span>${k === 'horizon' ? '<button id="l-hz" class="mini" type="button">Open</button>' : ''}</label>`
-    : `<div class="stop na"><input type="checkbox" disabled aria-hidden="true"><span><b>${STEP_INFO[k][0]}</b><span class="muted">not needed for this</span></span></div>`)).join('')}
-    </div></details>
+    <div class="lgrid">${ACTIVITIES.map(([k, t, sub, ic]) => `<button class="act" data-act="${k}"><svg class="ic" viewBox="0 0 24 24">${ic}</svg><b>${t}</b><span class="muted">${sub}</span></button>`).join('')}</div>
     <button class="linkrow" id="l-how">${ICON.help}<span><b>How this app works</b><span class="muted">A two-minute read: what it does, a first night, and the words you'll meet</span></span></button>`;
-  { const d = $('#l-path'); d.ontoggle = () => { state.ui = state.ui || {}; state.ui.pathOpen = d.open; save(); $('.pathch', d).textContent = d.open ? 'Hide' : 'Change'; }; }
+  wireMountRow(renderLaunch, $('#launch'));
   // The tour opens on top of the start screen, not inside the app (Build 126). Before, it left the start screen, and
   // a newcomer who then tapped a tab at the bottom was in the app without ever tapping Start, so the motion sensors
   // (which the phone only lets the app switch on from that tap) were never on.
   const openHelpFromStart = () => { if (!state.welcomed) { state.welcomed = true; save(); } helpFrom = 'start'; renderHelp(); };
   $('#l-help').onclick = $('#l-how').onclick = openHelpFromStart;
   if ($('#l-tour')) { $('#l-tour').onclick = openHelpFromStart; $('#l-skip').onclick = () => { state.welcomed = true; save(); renderLaunch(); }; }
-  $('#launch').querySelectorAll('[data-step]').forEach((c) => c.onchange = () => { state.launch[c.dataset.step] = c.checked; save(); renderLaunch(); });
-  $('#launch').querySelectorAll('[data-act]').forEach((b) => b.onclick = () => { const g = $('#gate'), y = g.scrollTop; state.launchAct = b.dataset.act; save(); renderLaunch(); g.scrollTop = y; });
-  $('#l-go').onclick = () => launch(act);
-  $('#l-hz').onclick = (e) => { e.preventDefault(); e.stopPropagation(); openHorizon('start'); };
+  // Tapping one of the four opens its start-up screen (the steps and the Start button).
+  $('#launch').querySelectorAll('[data-act]').forEach((b) => b.onclick = () => { state.launchAct = launchStage = b.dataset.act; save(); renderLaunch(); $('#gate').scrollTop = 0; });
   wireUpdateLoc($('#l-loc'));
   $('#l-shade').onclick = (e) => { e.stopPropagation(); openShade(); };
   if ($('#l-resume')) $('#l-resume').onclick = () => launch('resume');

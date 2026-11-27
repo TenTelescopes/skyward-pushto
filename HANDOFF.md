@@ -715,6 +715,36 @@ unrelated extra star in the object-page sentence. Still open with Bryan: whether
     step was silently dropped, so the flow jumped from the previous step straight to blocked-sky tracing. It now
     always runs when its star is on, showing "Earlier tonight: … check again, or keep it".
 
+## Build 127 (Nov 27): shower circles only near the peak; phone position and start-up screens
+- The sky chart drew a 40° dashed circle (with sparks and two lines of text) around the radiant of every active meteor
+  shower, so a minor shower two weeks past its peak (Northern Taurids, about 2 an hour) filled the chart. Now only for
+  a shower near its peak and worth watching (`showerNearPeak`: at least 5 an hour under a dark sky, and within 1.5 days
+  of the peak or still at half its peak rate). In 2026 that is ten showers, 2 to 10 nights each: Quadrantids Jan 1–3,
+  Lyrids Apr 20–22, Eta Aquariids May 2–8, S. Delta Aquariids Jul 26–Aug 3, Perseids Aug 10–13, Orionids Oct 18–23,
+  S. Taurids Oct 31–Nov 9, Leonids Nov 16–17, Geminids Dec 12–14, Ursids Dec 21–22. Showers stay listed under Find.
+- The other big zone, the green "Northern lights possible" arc, still only shows while the Kp forecast puts the aurora
+  within reach of the site, after dark.
+- Zone edges are labelled (`edgeLabels` in `drawZones`): the name is written along the dashed line, like a contour
+  label on a map ("Geminids meteor zone"; "Northern lights possible below here"), sized like the star names, first
+  where the line passes nearest the middle of the chart and repeated about a label-and-a-half apart each way. So a
+  stretch of edge crossing the chart says what it is even when the radiant and its label are off screen. Checked on
+  the chart for Dec 13 (Geminids) at 50° and 112° across; the aurora label was not seen drawn (it needs the chart
+  pointed north with a high Kp).
+- Start screen says how the phone is mounted: a compact row under the location, with a small picture of the position,
+  "Phone on the scope: On top, top edge to the sky end" and Change (opens the same pictures and sky-end / mirror-end
+  switch in place). It is the same row as on Align and Setup (`mountRowHTML(plain)`), which now also carry the picture;
+  the row is wired inside its own screen (`wireMountRow(redraw, root)`, classes `.mr-change` / `.mr-pick` instead of
+  ids, since three screens can hold one). Checked in the browser: shown for every activity, switched to the mirror end
+  from the start screen, Setup showed the change and switched it back.
+- Start-up screen per activity (asked for: the start-up options offered as before when an activity starts). The start
+  screen now has two stages (`launchStage`): the main one (sky, location, phone position, the four choices) and, on
+  tapping a choice, that activity's start-up screen: its name, "Start-up refinements" as the path of stars to switch on
+  or off exactly as before Build 125 (same rows and wording), ending in the Start button; ‹ Start screen goes back. The
+  Start button and the folded "Before you start … Change" line are gone from the main stage (two taps to start, as
+  before: choice, then Start). The house button, More and the tour return to the main stage; coming back from the
+  blocked-sky map returns to the start-up screen (`showStart(true)`). Leftover styles `.go1`, `.pathd`, `.pathsum`
+  are unused. Checked in the browser: all four start-up screens, a step toggled, the map and back, Start, house button.
+
 ## Build 126 (Nov 26): the tour stays on the start screen
 - Reported: a first-time user who took the tour ended up in the app with the sensors off. "See how it works" (and the
   ? button) left the start screen for the help page inside the app, where the tabs at the bottom were live; tapping one
