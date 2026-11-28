@@ -395,7 +395,7 @@ function askLocation(dest) {
         <p class="muted small" style="margin-bottom:0">It stays on this phone. GPS works with no cell signal.</p>`;
     dlg().classList.remove('hidden');
     if (ok) { $('#loc-go').onclick = () => { closeDlg(); if (dest) launch(dest); else renderLaunch(); }; return; }
-    $('#loc-gps').onclick = async () => { $('#loc-gps').textContent = 'Finding you…'; getGPS(); const t0 = Date.now(); while (!siteKnown() && Date.now() - t0 < 32000 && !dlg().classList.contains('hidden')) await new Promise((r) => setTimeout(r, 250)); if (!dlg().classList.contains('hidden')) show(); };
+    $('#loc-gps').onclick = async () => { $('#loc-gps').textContent = 'Finding you…'; getGPS(); const t0 = Date.now(); while (!siteKnown() && Date.now() - t0 < 42000 && !dlg().classList.contains('hidden')) await new Promise((r) => setTimeout(r, 250)); if (!dlg().classList.contains('hidden')) show(); };
     $('#loc-set').onclick = () => { const la = parseFloat($('#loc-lat').value), lo = parseFloat($('#loc-lon').value); if (!(Math.abs(la) <= 90) || !(Math.abs(lo) <= 180)) return toast('Latitude is between −90 and 90, longitude between −180 and 180.', 4000);
       state.site = { lat: la, lon: lo, elev: state.site.elev || 0, source: 'entered manually' }; sky.setSite(la, lo, state.site.elev); planRows = null; rateCache.clear(); siteMoved(); save(); renderLaunch(); show(); };
     $('#loc-skip').onclick = () => { locAsked = true; closeDlg(); if (dest) launch(dest); else renderLaunch(); };      // asks again next time the app opens
@@ -743,10 +743,13 @@ function renderPlanHere() {
     // Race this plan (Build 122): everyone at the site races the plan's targets in the plan's order, as many as it has.
     // It is an ordinary race code, so friends join with Play → Join: scan (the QR on the next screen) or paste.
     $('#pl-race').onclick = racePlan;
+    // Build 131: observing a plan has its own start-up screen (the steps, with star alignment), the same as the other
+    // activities. Before, this went straight to the first target whenever the sensors were already on, aligned or not.
+    // Already aligned with the sensors running: nothing to set up, so straight to the next target.
     $('#pl-go').onclick = () => {
-      const pp = planProgress(), next = (pp && pp.next) || P.items[0];
-      if (!sensors || !sensors.fresh()) return launch('resume');     // start the sensors (and any ticked tune-up steps) first
-      state.target = next.key; save(); showTab('push');
+      const next = planNext(); if (!next) return;
+      if (sensors && sensors.fresh() && alignedNow()) { state.target = next.key; save(); showTab('push'); return; }
+      openPlanStage('plan');
     };
     $('#pl-route').onclick = () => keepScroll(() => {
       const rows = P.items.filter((x) => !x.sync).map((x) => rowFor(x.key)).filter(Boolean);
@@ -1082,7 +1085,7 @@ function renderPush() {
       ${mountRowHTML(true, 'push')}
       ${ZOOM_ROW()}
       <div class="btnrow"><button id="p-hz" class="mini">${placeLabel() ? hzLine() : `Blocked sky: ${hzLine()}`}</button></div>
-      <p class="muted small">The chart follows the scope. In your hand, ${handHint()}. When it says you're near something, tap the name to read about it.</p>
+      <p class="muted small">${state.handheld ? 'The chart follows the phone: hold it up and aim its back camera at the sky.' : `The chart follows the scope. In your hand, ${handHint()}.`} When it says you're near something, tap the name to read about it.</p>
       <div class="actionbar"><button id="sv-find" class="primary">Pick a target</button><button id="sv-what">${state.mode === 'compass' || align.obs.length >= alignNeeded() ? 'Sync on this' : 'Align on this'}</button>${align.fit || state.mode === 'compass' ? '' : '<button id="sv-align">Align</button>'}</div>`;
     chartCentre = 'scope';
     bindChartControls(); wireMountRow(renderPush, el, 'push');
@@ -1814,6 +1817,52 @@ function mountCheckRead() {
   const screenUp = asin(up[2]);                                                  // screen facing the sky
   return { cur, best, screenUp };
 }
+/**
+ * Build 131 (asked for: ask the first-time user, in very simple terms, how the phone will be mounted, before the app
+ * assumes anything; then apply it to the settings). Until there is an answer the app shows no position as if it knew:
+ * the row reads "Not chosen yet", the tour asks before it draws its chart, and Start asks before any activity that
+ * points. One tap on a picture answers it (top edge toward the sky end is taken for On top and On the side; "Another
+ * way" opens the full set). An answer to the old dock question, or a mount check, counts as an answer.
+ */
+const mountSet = () => !!(state.mountSet || state.dock || state.mountOk);
+let mountSkipped = false;   // "Not sure yet", this run only: flat on top is used and the question comes back next time
+const MOUNT_ASK = [['top-sky', 'Flat on top', 'Screen up, top of the phone toward the sky. The Skyward dock holds it this way.'],
+  ['side-sky', 'On the side', 'Screen facing out, top of the phone toward the sky.'],
+  ['camera', 'Looking along it', 'Standing on end, back camera toward the sky.'],
+  // No telescope yet (asked for): the phone is used in the hand, held up like a window (state.handheld; the pointing is
+  // the same as Looking along: out of the back of the phone). Picking any position on a telescope ends it.
+  ['hand', 'No telescope yet', 'Hold the phone up to the sky and see what is there. Add a telescope whenever you get one.']];
+function mountAskHTML(first = false, noHand = false) {
+  return `<div class="mntask"><h3>${first ? 'First: how' : 'How'} will the phone sit on your telescope?</h3>
+    <p class="muted small">The app has to know this to point you the right way. Tap the one that matches. You can change it any time.</p>
+    ${MOUNT_ASK.filter(([k]) => !(noHand && k === 'hand')).map(([k, t, d]) => `<button class="mntopt" data-ask="${k}"><span class="mntpic" aria-hidden="true">${mountSVG(k)}</span><span class="mnttxt"><b>${t}</b><span class="muted">${d}</span></span></button>`).join('')}
+    <div class="btnrow"><button class="mini" data-ask="other">Another way</button><button class="mini" data-ask="skip">Not sure yet</button></div>
+    <p class="muted small" style="margin-bottom:0">However it is held, it must sit square to the tube and must not shift when you push the telescope.</p></div>`;
+}
+/** `done(how)`: 'set' (a picture was tapped), 'other' (wants the full set of positions: the caller opens them) or 'skip'. It runs inside the tap. */
+function wireMountAsk(root, done) {
+  root.querySelectorAll('[data-ask]').forEach((b) => { b.onclick = () => {
+    const k = b.dataset.ask;
+    if (k === 'skip') { mountSkipped = true; done('skip'); return; }
+    if (k !== 'other') { setMounting(k === 'hand' ? 'camera' : k); state.handheld = k === 'hand'; }
+    state.mountSet = true; save();
+    if (k !== 'other') toast(state.handheld ? 'No telescope yet: hold the phone up, back toward the sky' : `Phone on the scope: ${MOUNTINGS[state.mounting].label.toLowerCase()}`, 3000);
+    done(k === 'other' ? 'other' : 'set');
+  }; });
+}
+/** The question as a pop-up (from a "Choose" button, or from Start). "Another way" shows every position, then Carry on. */
+function askMount(done) {
+  const el = $('#dockq'), card = $('#dockq-card'), close = (how) => { el.classList.add('hidden'); done(how); };
+  const other = () => {
+    card.innerHTML = `<h3 style="margin-top:0">How does your phone sit?</h3><p class="muted small">Tap the picture that matches.</p>${mountPickerHTML()}
+      <div class="btnrow"><button id="dq-go" class="primary">Carry on</button></div>`;
+    wireMountPicker(card, () => other());
+    $('#dq-go').onclick = () => close('set');
+  };
+  card.innerHTML = mountAskHTML();
+  wireMountAsk(card, (how) => (how === 'other' ? other() : close(how)));
+  el.classList.remove('hidden');
+}
 const mountChecked = () => state.mountOk && state.mountOk.mount === state.mounting && Date.now() - state.mountOk.t < 14 * 3600e3;
 /**
  * "Phone on the scope: <how> · Change" (Build 122): always on the Align page and in Setup, so the way the phone sits
@@ -1824,9 +1873,10 @@ let mountRowOpen = null;    // which screen's row has its pictures open ('align'
 // so the app says how it thinks the phone is mounted before anything else happens. `plain` is that compact form: no
 // card border and the short wording ("On top, top edge to the sky end"). The row is found inside `root`, since the start screen, Align and Setup can each hold one.
 function mountRowHTML(plain = false, at = 'align') {
-  const m = MOUNTINGS[state.mounting], open = mountRowOpen === at;
-  return `<div class="${plain ? 'mntrow plain' : 'card mntrow'}"><div class="mnthead"><span class="mntpic" aria-hidden="true">${mountSVG(state.mounting)}</span><span class="mnttxt"><span class="muted small">Phone on the scope</span><b>${esc(plain ? `${m.where}, ${m.edge.charAt(0).toLowerCase()}${m.edge.slice(1)}` : m.label)}</b></span><button class="mini mr-change" aria-expanded="${open}">${open ? 'Done' : 'Change'}</button></div>
-    <div class="mr-pick${open ? '' : ' hidden'}"><p class="muted small" style="margin:6px 0">Tap the picture that matches how the phone sits on the tube.</p>${mountPickerHTML()}</div></div>`;
+  if (!mountSet()) return `<div class="${plain ? 'mntrow plain' : 'card mntrow'} unset"><div class="mnthead"><span class="mntpic" aria-hidden="true">${mountSVG('none')}</span><span class="mnttxt"><span class="muted small">Phone on the scope</span><b>Not chosen yet</b><span class="muted small">Flat on top is used until you say</span></span><button class="mini primary mr-ask">Choose</button></div></div>`;
+  const m = MOUNTINGS[state.mounting], open = mountRowOpen === at, hand = !!state.handheld;
+  return `<div class="${plain ? 'mntrow plain' : 'card mntrow'}"><div class="mnthead"><span class="mntpic" aria-hidden="true">${mountSVG(hand ? 'hand' : state.mounting)}</span><span class="mnttxt"><span class="muted small">${hand ? 'No telescope yet' : 'Phone on the scope'}</span><b>${hand ? 'Held up in your hand, back to the sky' : esc(plain ? `${m.where}, ${m.edge.charAt(0).toLowerCase()}${m.edge.slice(1)}` : m.label)}</b></span><button class="mini mr-change" aria-expanded="${open}">${open ? 'Done' : 'Change'}</button></div>
+    <div class="mr-pick${open ? '' : ' hidden'}"><p class="muted small" style="margin:6px 0">${hand ? 'Got a telescope now? Tap the picture that matches how the phone will sit on the tube.' : 'Tap the picture that matches how the phone sits on the tube.'}</p>${mountPickerHTML()}</div></div>`;
 }
 /** In the hand, the phone points the way it would on the tube: which edge (or the back) to aim at the sky for the position that is set. */
 function handHint() {
@@ -1835,10 +1885,11 @@ function handHint() {
     : `point the ${d[1] > 0 ? 'top' : d[1] < 0 ? 'bottom' : d[0] > 0 ? 'right' : 'left'} edge of the phone at the sky${d[1] > 0 ? ', like a TV remote' : ''}`;
 }
 function wireMountRow(redraw, root = document, at = 'align') {
+  const ask = $('.mr-ask', root); if (ask) { ask.onclick = () => askMount((how) => { if (how === 'other') mountRowOpen = at; redraw(); }); return; }
   const b = $('.mr-change', root), pick = $('.mr-pick', root); if (!b || !pick) return;
   b.onclick = () => { const open = pick.classList.toggle('hidden') === false; mountRowOpen = open ? at : null; b.setAttribute('aria-expanded', open); b.textContent = open ? 'Done' : 'Change'; };
   wireMountPicker(pick, (ch) => {
-    if (ch) { state.mountOk = { mount: state.mounting, t: Date.now(), manual: true }; save(); toast(`Phone on the scope: ${MOUNTINGS[state.mounting].label.toLowerCase()}. Align again.`, 3500); }
+    if (ch) { state.mountOk = { mount: state.mounting, t: Date.now(), manual: true }; save(); toast(state.handheld ? 'No telescope: hold the phone up, back camera toward the sky.' : `Phone on the scope: ${MOUNTINGS[state.mounting].label.toLowerCase()}. Align again.`, 3500); }
     redraw();
   });
 }
@@ -3077,6 +3128,14 @@ function resultHTML(kind, r) {
 
 // ---------------------------------------------------------------- SETUP
 const FOC = [[-90, 'Left side'], [-45, 'Upper left'], [0, 'Top'], [45, 'Upper right'], [90, 'Right side']];
+/** A telescope of your own: added to the list and put in use. It starts with the given eyepieces. */
+function addOwnScope(name, type, ap, fl, eyepieces) {
+  const key = 'my' + Date.now().toString(36);
+  state.profiles[key] = { name, aperture: ap, fl, type: type === 'reflector' ? undefined : type, diagonal: type !== 'reflector', focuser: 90, custom: true,
+    source: 'Your own figures.', eyepieces: structuredClone(eyepieces), cal: null };
+  useScope(key);
+}
+function useScope(key) { state.active = key; state.ep = 0; align = { obs: [], fit: null, syncs: [], confirm: [] }; applyModelSettings(); save(); }
 function renderSetup() {
   const el = $('#tab-setup'); const p = profile();
   el.innerHTML = `${BACK}
@@ -3138,6 +3197,8 @@ function renderSetup() {
     <label class="row"><span>Screen brightness</span><input id="s-br" type="range" min="0.25" max="1" step="0.05" value="${state.bright}"></label>
     <label class="row"><span>Lowest altitude to list (°)</span><input id="s-min" type="number" value="${state.minAlt}"></label>
     <p class="muted small">Keep screen awake: ${awakeText()}. Sounds are under More.</p>
+    <div class="btnrow"><button id="s-onboard">Run first-time set-up again</button></div>
+    <p class="muted small">The few questions a new user gets: telescope, eyepieces, and how the phone sits.</p>
 
     <h2>About</h2>
     <p class="small">Skyward Push-To for Ten Telescopes' Skyward 150 Compact, Skyward 200 Visual and Skyward 400, and for other telescopes such as an 80 mm refractor.</p>
@@ -3155,10 +3216,7 @@ function renderSetup() {
     const name = $('#n-name').value.trim(), ap = num('#n-ap'), fl = num('#n-fl'), type = $('#n-type').value;
     const err = !name ? 'Give it a name, so you can tell it apart in the list.' : scopeErr(ap, fl);
     if (err) { $('#n-err').textContent = err; return; }
-    const key = 'my' + Date.now().toString(36);
-    state.profiles[key] = { name, aperture: ap, fl, type: type === 'reflector' ? undefined : type, diagonal: type !== 'reflector', focuser: 90, custom: true,
-      source: 'Your own figures.', eyepieces: structuredClone(p.eyepieces), cal: null };
-    state.active = key; state.ep = 0; align = { obs: [], fit: null, syncs: [], confirm: [] }; applyModelSettings(); save(); renderSetup();
+    addOwnScope(name, type, ap, fl, p.eyepieces); renderSetup();
     toast(`${name} added and in use`);
   };
   // Deleting takes two taps (no pop-up): the first changes the button to ask again.
@@ -3188,6 +3246,7 @@ function renderSetup() {
     const e = eyepiece(); e.afov = +(tf * p.fl / e.fl).toFixed(1); e.verified = true; save(); toast(`True field ${(tf * 60).toFixed(1)}′ → AFOV ${e.afov}°`); renderSetup();
   };
   $('#s-dock').onchange = (e) => { state.dock = e.target.value; save(); };
+  $('#s-onboard').onclick = () => startOnboard();
   wireMountRow(renderSetup, el, 'setup');
   $('#s-mode').onchange = (e) => { state.mode = e.target.value; save(); };
   $('#s-cc').onchange = () => { state.compassCorr = num('#s-cc') || 0; save(); };
@@ -3397,7 +3456,7 @@ async function autoLocate() {
     else if (navigator.permissions && navigator.permissions.query) granted = (await navigator.permissions.query({ name: 'geolocation' })).state === 'granted';
   } catch (e) { /* unknown: treat as not granted */ }
   if (granted) return getGPS(true);
-  if (!siteKnown() && !locAsked && !state.locNever) askLocation(null);
+  if (!siteKnown() && !locAsked && !state.locNever) { if (ob) { ob.locate = true; return; } askLocation(null); }   // not on top of the first-time set-up: it asks when that is done
 }
 /** Where the app thinks you are, in a few words, for the "Update location" lines. */
 function whereText() {
@@ -3478,7 +3537,7 @@ function openPlacePicker(start, onPick) {
 let gpsError = '';
 async function getGPS(quiet = false) {
   gpsError = '';
-  if (!quiet) toast('Getting GPS fix…', 8000);
+  if (!quiet) toast('Finding your location…', 8000);
   const say = (m) => { gpsError = m; if (!quiet) toast(m, 7000); return false; };
   const OFF = 'Location is off for this app. On the iPhone: Settings → Privacy & Security → Location Services → Skyward Push-To → While Using the App.';
   const done = (lat, lon, elev, acc) => {
@@ -3486,22 +3545,30 @@ async function getGPS(quiet = false) {
     sky.setSite(state.site.lat, state.site.lon, state.site.elev); planRows = null; rateCache.clear(); siteMoved(); save(); if (!quiet) toast('Location set'); if (tab === 'setup') renderSetup(); if (tab === 'find') renderFind(); if (tab === 'plan') renderPlan(); if (!$('#gate').classList.contains('hidden')) renderLaunch(); if (!$('#skycheck').classList.contains('hidden') && $('#sq-lp')) openSkyCheck();
     return true;
   };
-  const G = cap('Geolocation');
-  if (G) {                                          // the iPhone app: Capacitor's location plug-in
-    try {
-      const perm = await G.requestPermissions?.();
-      if (perm && perm.location === 'denied') return say(OFF);
-      const p = await G.getCurrentPosition({ enableHighAccuracy: true, timeout: 30000, maximumAge: quiet ? 600000 : 0 });
-      return done(p.coords.latitude, p.coords.longitude, p.coords.altitude, p.coords.accuracy);
-    } catch (e) {
-      const m = String((e && e.message) || e);
-      return say(/denied|not authori[sz]ed|permission/i.test(m) ? OFF : /time ?out/i.test(m) ? 'No GPS fix after 30 seconds. Step outside or near a window and try again.' : 'Location failed: ' + m);
+  // Build 131: two steps. First a quick fix from the phone's network positioning (Wi-Fi and cell towers), which answers in
+  // a second or two and is good to tens or hundreds of metres: far more than the sky needs (a kilometre moves a star by
+  // half an arcminute). Only if that fails, is stale or is vaguer than 3 km does it ask for a full GPS fix, which is
+  // the slow one (it was the only step before: high accuracy, nothing cached, up to 30 s, and slowest indoors).
+  const G = cap('Geolocation');                     // the iPhone app: Capacitor's location plug-in; otherwise the browser
+  if (!G && !navigator.geolocation) return say('No location service on this device');
+  const get = (opts) => (G ? G.getCurrentPosition(opts) : new Promise((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, opts)));
+  const blocked = (e) => (G ? /denied|not authori[sz]ed|permission/i.test(String((e && e.message) || e)) : e && e.code === 1);
+  const BLOCKED = G ? OFF : 'Location is blocked for this site. Allow it in the browser\'s site settings and try again.';
+  const maxAge = quiet ? 600000 : 60000;            // a button press wants a fix from the last minute; start-up takes one from the last ten
+  const good = (q) => !!q && !!q.coords && q.coords.accuracy <= 3000 && !(q.timestamp && Date.now() - q.timestamp > maxAge + 5000);
+  try {
+    if (G) { const perm = await G.requestPermissions?.(); if (perm && perm.location === 'denied') return say(OFF); }
+    let q = null;
+    try { q = await get({ enableHighAccuracy: false, timeout: 8000, maximumAge: maxAge }); } catch (e) { if (blocked(e)) return say(BLOCKED); }
+    if (!good(q)) {
+      if (!quiet) toast('Still looking: asking the GPS…', 8000);
+      q = await get({ enableHighAccuracy: true, timeout: 30000, maximumAge: maxAge });
     }
+    return done(q.coords.latitude, q.coords.longitude, q.coords.altitude, q.coords.accuracy);
+  } catch (e) {
+    const m = String((e && e.message) || e);
+    return say(blocked(e) ? BLOCKED : (e && e.code === 3) || /time ?out/i.test(m) ? 'No location fix. Step outside or near a window and try again.' : 'Location failed: ' + m);
   }
-  if (!navigator.geolocation) return say('No location service on this device');
-  return new Promise((res) => navigator.geolocation.getCurrentPosition((p) => res(done(p.coords.latitude, p.coords.longitude, p.coords.altitude, p.coords.accuracy)),
-    (e) => res(say(e.code === 1 ? 'Location is blocked for this site. Allow it in the browser\'s site settings and try again.' : e.code === 3 ? 'No GPS fix after 30 seconds. Step outside or near a window and try again.' : 'Location failed: ' + e.message)),
-    { enableHighAccuracy: true, timeout: 30000, maximumAge: quiet ? 600000 : 0 }));   // a button press wants a fresh fix
 }
 
 // ---------------------------------------------------------------- status + loop
@@ -4306,7 +4373,7 @@ function renderMore() {
   // Grouped by when you need them: every night, now and then, your records, then setup. The start screen is the
   // house button at the top of every screen.
   el.innerHTML = `<h2>More</h2>
-    ${item('help', 'How this app works', 'What it does, a first night, and the words you’ll meet')}
+    ${item('help', 'How this app works', 'What it does, a first night, and astronomy terms explained')}
     <h3>Each night</h3>
     ${item('align', 'Star alignment', state.mode === 'compass' ? 'Compass mode: no alignment needed' : alignedNow() ? `Aligned on ${align.obs.map((o) => esc(o.label)).join(' and ')} · ${syncAgo()}` : 'Not aligned yet. Two minutes, and the app shows you which stars')}
     ${item('camera', 'Camera star finder', state.mounting === 'camera' ? (profile().camBore ? 'Finds where the telescope points from the stars · lined up with the eyepiece' : 'Finds where the telescope points from the stars, with no star to centre') : 'Works out where the phone’s camera is pointing from the stars')}
@@ -4358,7 +4425,7 @@ const STEP_INFO = {
   check: ['Phone check-up', 'optional, 4 min, once per phone: how far to trust the arrows'],
   sky: ['Sky darkness check', '30 s, once fully dark: count Little Dipper stars'],
   seeing: ['Seeing: steady air check', '10 s, after dark: how much the stars twinkle'],
-  horizon: ['Blocked sky', 'one slow turn with the phone, once per place'],
+  horizon: ['Blocked sky', 'to map out which parts of the sky are visible from here: one slow turn with the phone, once per place'],
   align: ['Star alignment', '2 min: point at two bright stars'],
 };
 /** The stops that make sense on the way to each activity. Planning and exploring need no phone check-up. */
@@ -4369,7 +4436,7 @@ const PATH = { observe: ['check', 'sky', 'seeing', 'horizon', 'align'], game: ['
 // (before, only its alignment switch was separate, and the seeing check and blocked sky ran by default).
 const stepKey = (k, act) => (act === 'explore' ? `${k}Explore` : k);
 const stepOn = (k, act) => (act === 'explore' ? !!state.launch[`${k}Explore`] : k === 'horizon' ? (state.launch.horizon ?? (!horizonNow() && !curPlace())) : k === 'seeing' ? (state.launch.seeing ?? true) : !!state.launch[stepKey(k, act)]);
-const GO = { observe: 'Start observing', explore: 'Start exploring', game: 'Start the game', plan: 'Start planning' };
+const GO = { observe: 'Start observing', explore: 'Start exploring', game: 'Start the game', plan: 'Start planning', resume: 'Start observing' };
 let flow = null;   // { steps: [..], i, dest, started, quiet }
 const stepsFor = (dest) => (PATH[dest] || []).filter((k) => stepOn(k, dest) && !(k === 'align' && alignedNow()));   // the steady-air check always runs when its star is on: the air changes through the evening
 /** "Dark from 6:32 PM · Moon 27% lit, sets 8:58 PM · Saturn and Jupiter are up" */
@@ -4394,8 +4461,14 @@ function planProgress() {
   const next = P.items.find((x) => !(P.done && P.done[x.key]));
   return { total: T.length, done, next: done < T.length ? next : null };
 }
+/** The plan's next target: the first not yet observed, or the first one again when all are done or the session is old. */
+function planNext() { const pp = planProgress(), P = state.plan; return (pp && pp.next) || (P && P.items.length ? P.items[0] : null); }
+/** Open "Observe your plan", the plan's start-up screen. `from` is where Back returns to: the Plan page, or the start screen. */
+let stageFrom = null;
+function openPlanStage(from) { stageFrom = from; launchStage = 'resume'; showStart(true); $('#gate').scrollTop = 0; }
 /** Back to the start screen. Its fade-in (timed to follow the splash) only belongs to the first showing: without this,
  *  every return left the screen blank for over two seconds (Build 125). */
+function openHelpFromStart() { if (!state.welcomed) { state.welcomed = true; save(); } initSound(); warmSensors(); helpFrom = 'start'; renderHelp(); }
 function showStart(keepStage = false) { if (!keepStage) launchStage = null; $('#launch').style.animation = 'none'; renderLaunch(); $('#gate').classList.remove('hidden'); }
 // The start screen has two stages (Build 127): the main one (tonight's sky, where you are, how the phone sits, and the
 // four things to do), and, once one of the four is tapped, that activity's start-up screen: its optional start-up steps
@@ -4403,8 +4476,8 @@ function showStart(keepStage = false) { if (!keepStage) launchStage = null; $('#
 // screen is showing, or null for the main one.
 let launchStage = null;
 function renderLaunch() {
-  if (helpFrom === 'start') return;                    // the tour is open on this panel: background redraws (forecast, location) wait
-  $('#launch').classList.remove('gatehelp');
+  if (helpFrom === 'start' || ob) return;              // the tour or the first-time set-up is open on this panel: background redraws (forecast, location) wait
+  $('#launch').classList.remove('gatehelp', 'onboard');
   const L = state.launch, chk = lastCheck(), sq = skyQ(), pp = planProgress();
   const V = { solid: 'solid', usable: 'usable', poor: 'poor', unsuitable: 'not suitable', incomplete: 'incomplete' };
   const status = {
@@ -4414,22 +4487,27 @@ function renderLaunch() {
     seeing: (sky.sunAlt() > -6 ? 'needs stars: only possible once it is dark · ' : '') + (seeingTonight() ? `earlier tonight: ${SEEING_WORD[seeingTonight().v]}, 10 s to check again` : seeingSource() === 'forecast' ? `forecast says ${SEEING_WORD[seeingNow()]}, 10 s to check it yourself` : STEP_INFO.seeing[1]),
     horizon: horizonNow() || placeLabel() ? hzLine() : STEP_INFO.horizon[1],
   };
-  const act = ACTIVITIES.some((x) => x[0] === launchStage) ? launchStage : ACTIVITIES.some((x) => x[0] === state.launchAct) ? state.launchAct : 'observe', stops = PATH[act];
+  if (launchStage === 'resume' && !planNext()) launchStage = null;        // the plan was emptied meanwhile
+  const act = launchStage === 'resume' ? 'resume' : ACTIVITIES.some((x) => x[0] === launchStage) ? launchStage : ACTIVITIES.some((x) => x[0] === state.launchAct) ? state.launchAct : 'observe', stops = PATH[act];
   const first = !state.welcomed && !state.seenIntro;                       // nobody has started anything on this phone yet
   if (launchStage) {
     // ---- an activity's start-up screen: the optional steps, then Start
-    const [, title, sub, ic] = ACTIVITIES.find((x) => x[0] === act);
-    $('#launch').innerHTML = `<button class="back" id="l-back">‹ Start screen</button>
+    // "Observe your plan" (act 'resume') is Observe's screen and Observe's switches, headed by the plan and its next target.
+    const plan = act === 'resume', nx = plan ? planNext() : null, nxo = nx ? objByKey(nx.key) : null;
+    const [, title, sub, ic] = plan ? [0, 'Observe your plan', `${esc(planTitle(state.plan))} · ${pp && pp.done ? `${pp.done} of ${pp.total} done, next` : `${(pp || { total: state.plan.items.filter((x) => !x.sync).length }).total} targets, first`}: ${esc(nxo ? nxo.label : 'the next target')}`, ACTIVITIES[0][3]] : ACTIVITIES.find((x) => x[0] === act);
+    const toPlan = plan && stageFrom === 'plan';
+    $('#launch').innerHTML = `<button class="back" id="l-back">‹ ${toPlan ? 'Back to the plan' : 'Start screen'}</button>
     <div class="stagehead"><svg class="ic" viewBox="0 0 24 24">${ic}</svg><div><h2>${title}</h2><div class="muted">${sub}</div></div></div>
     ${act === 'plan' ? '' : mountRowHTML(true, 'stage')}
+    ${state.handheld && (act === 'observe' || plan) ? `<p class="muted small">Star alignment is done at the eyepiece, so this one needs a telescope. Without one, Explore the sky is the activity to use. Looking for a telescope? ${skywardLink()}.</p>` : ''}
     <div class="path">
       <h3 class="lq lq2">Start-up refinements</h3><div class="pnote">All optional. Tap a star to turn that step on or off (bright = on).</div>
       ${['check', 'sky', 'seeing', 'horizon', 'align'].map((k) => (stops.includes(k)
     ? `<label class="stop"><input type="checkbox" data-step="${stepKey(k, act)}" ${stepOn(k, act) ? 'checked' : ''}><span><b>${STEP_INFO[k][0]}</b><span class="muted">${k === 'horizon' ? (stepOn(k, act) || horizonNow() || placeLabel() ? status[k] : 'skipped') : esc(stepOn(k, act) ? status[k] : k === 'check' ? (chk ? `done: ${V[chk.result.verdict] || chk.result.verdict}` : 'optional, once per phone, 4 min: how far to trust the arrows and the sky view') : k === 'align' && act === 'explore' ? (alignedNow() ? 'already aligned' : 'optional, 2 min: makes the chart match the real sky') : k === 'sky' && !sq && mapSky() ? `skipped: using the map estimate, about Bortle ${mapSky().bortle}` : 'skipped')}</span></span>${k === 'horizon' ? '<button id="l-hz" class="mini" type="button">Open</button>' : ''}</label>`
-    : `<div class="stop na"><input type="checkbox" disabled aria-hidden="true"><span><b>${STEP_INFO[k][0]}</b><span class="muted">not needed for this</span></span></div>`)).join('')}
+    : `<div class="stop na"><input type="checkbox" disabled aria-hidden="true"><span><b>${STEP_INFO[k][0]}</b><span class="muted">not needed for ${{ plan: 'planning', game: 'the game', explore: 'exploring', observe: 'observing' }[act] || 'this'}${act === 'plan' && k === 'align' ? ': you will be offered it when you start observing the plan' : ''}</span></span></div>`)).join('')}
       <div class="stop end"><span class="dest"></span><button id="l-go" class="primary">${GO[act]}</button></div>
     </div>`;
-    $('#l-back').onclick = () => { launchStage = null; renderLaunch(); $('#gate').scrollTop = 0; };
+    $('#l-back').onclick = () => { launchStage = null; if (toPlan) { $('#gate').classList.add('hidden'); showTab('plan'); return; } renderLaunch(); $('#gate').scrollTop = 0; };
     $('#launch').querySelectorAll('[data-step]').forEach((c) => c.onchange = () => { state.launch[c.dataset.step] = c.checked; save(); renderLaunch(); });
     $('#l-go').onclick = () => launch(act);
     wireMountRow(renderLaunch, $('#launch'), 'stage');
@@ -4444,26 +4522,144 @@ function renderLaunch() {
     <details class="more tdetail"><summary>Tonight in detail</summary><p class="tonight">${esc(tonightLine())}</p><div id="l-fc">${outlookHTML(fcFor(state.site, new Date()))}</div></details>
     <div class="whereline"><span class="muted small">${ICON.pin}${whereText()}</span><button id="l-loc" class="mini">Update location</button></div>
     ${mountRowHTML(true, 'start')}
-    ${pp && pp.next ? `<button id="l-resume" class="primary" style="width:100%;margin:6px 0 2px">Carry on with your plan: ${pp.done} of ${pp.total} done</button>` : ''}
+    ${pp && pp.next ? `<button id="l-resume" class="primary" style="width:100%;margin:6px 0 2px">${pp.done ? `Carry on with your plan: ${pp.done} of ${pp.total} done` : `Observe your plan: ${pp.total} target${pp.total === 1 ? '' : 's'}`}</button>` : ''}
     <h3 class="lq">What are we up to?</h3>
     <div class="lgrid">${ACTIVITIES.map(([k, t, sub, ic]) => `<button class="act" data-act="${k}"><svg class="ic" viewBox="0 0 24 24">${ic}</svg><b>${t}</b><span class="muted">${sub}</span></button>`).join('')}</div>
-    <button class="linkrow" id="l-how">${ICON.help}<span><b>How this app works</b><span class="muted">A two-minute read: what it does, a first night, and the words you'll meet</span></span></button>`;
+    <button class="linkrow" id="l-how">${ICON.help}<span><b>How this app works</b><span class="muted">A two-minute read: what it does, a first night, and astronomy terms explained</span></span></button>`;
   wireMountRow(renderLaunch, $('#launch'), 'start');
   // The tour opens on top of the start screen, not inside the app (Build 126). Before, it left the start screen, and
   // a newcomer who then tapped a tab at the bottom was in the app without ever tapping Start, so the motion sensors
   // (which the phone only lets the app switch on from that tap) were never on.
   // The tap that opens the tour is also the user gesture the sensors need: they start quietly, so the tour's sky chart
   // follows the phone and the sensors are already on when the newcomer goes back and taps Start.
-  const openHelpFromStart = () => { if (!state.welcomed) { state.welcomed = true; save(); } initSound(); warmSensors(); helpFrom = 'start'; renderHelp(); };
   $('#l-help').onclick = $('#l-how').onclick = openHelpFromStart;
   if ($('#l-tour')) { $('#l-tour').onclick = openHelpFromStart; $('#l-skip').onclick = () => { state.welcomed = true; save(); renderLaunch(); }; }
   // Tapping one of the four opens its start-up screen (the steps and the Start button).
   $('#launch').querySelectorAll('[data-act]').forEach((b) => b.onclick = () => { state.launchAct = launchStage = b.dataset.act; save(); renderLaunch(); $('#gate').scrollTop = 0; });
   wireUpdateLoc($('#l-loc'));
   $('#l-shade').onclick = (e) => { e.stopPropagation(); openShade(); };
-  if ($('#l-resume')) $('#l-resume').onclick = () => launch('resume');
+  if ($('#l-resume')) $('#l-resume').onclick = () => openPlanStage('start');
   applyTheme();
 }
+// ---------------------------------------------------------------- FIRST-TIME SET-UP (Build 131)
+// Asked for: a first-time flow that has the user select and equip their telescope, so the app stops assuming a Skyward
+// 150 Compact with the kit eyepieces. Four short cards on the start panel, before the start screen, the first time the
+// app is opened (never for someone with saved data; Setup has "Run first-time set-up again"):
+//   1 Do you have a telescope?  2 Which one (the list, or your own figures)?  3 Which eyepieces?  4 How does the phone sit?
+// then a summary. "Not yet" at card 1 sets hand-held use and goes straight to the summary. Every card can be skipped;
+// each answer goes into the same settings Setup edits, at once. The location question waits until the flow is over.
+// For someone with no telescope yet (asked for): where to find the Skyward telescopes. The site's home page shows the
+// range with its three routes (build one, get a kit, borrow one). It opens outside the app.
+const SKYWARD_URL = 'https://www.tentelescopes.com';
+const skywardLink = (text = 'See the Skyward telescopes') => `<a href="${SKYWARD_URL}" target="_blank" rel="noopener">${text}</a>`;
+let ob = null;                       // { step, hist, eps: Set of focal lengths ticked, extra: sizes typed in, custom, other, locate } while it shows
+const OB_EPS = [32, 25, 23, 20, 15, 10, 9, 6, 4];   // common eyepiece focal lengths, mm
+const OB_AFOV = 52;                  // apparent field assumed for an eyepiece the app knows nothing about (an ordinary Plössl); Setup can correct it
+const scopeLine = (q) => `${q.aperture} mm ${q.type === 'refractor' ? 'refractor' : q.type === 'sct' ? 'Schmidt-Cassegrain or Maksutov' : 'reflector'}, ${q.fl} mm focal length (f/${(q.fl / q.aperture).toFixed(1).replace(/\.0$/, '')})`;
+function startOnboard(atLaunch = false) {
+  ob = { step: 'have', hist: [], eps: null, extra: [], custom: false, other: false, locate: false };
+  helpFrom = null; launchStage = null;
+  if (!atLaunch) { $('#launch').style.animation = 'none'; $('#gate').classList.remove('hidden'); }
+  renderOnboard(); $('#gate').scrollTop = 0;
+}
+function endOnboard(done, then) {
+  const locate = ob && ob.locate; ob = null;
+  state.setupDone = true; if (done) state.welcomed = true; save();
+  $('#launch').classList.remove('onboard');
+  if (then === 'tour') openHelpFromStart(); else { showStart(); $('#gate').scrollTop = 0; }
+  if (locate) askLocation(null);
+}
+function renderOnboard() {
+  const el = $('#launch'), q = profile(), kit = /^sw/.test(state.active) && !q.custom;
+  el.classList.add('gatehelp', 'onboard');
+  const go = (step) => { ob.hist.push(ob.step); ob.step = step; ob.custom = ob.other = false; renderOnboard(); $('#gate').scrollTop = 0; };
+  const n = { have: 1, scope: 2, eps: 3, phone: 4 }[ob.step];
+  const head = (title, lead) => `${ob.hist.length ? '<button class="back" id="ob-back">‹ Back</button>' : ''}${n ? `<div class="obstep">Set-up · ${n} of 4</div>` : ''}<h2>${title}</h2>${lead ? `<p class="helplead">${lead}</p>` : ''}`;
+  const skip = '<div class="obskip"><button class="mini" id="ob-skip">Skip set-up for now</button><p class="muted small">Everything here can be changed later in Setup.</p></div>';
+  const opt = (id, title, sub, attr = '') => `<button class="mntopt" ${id ? `id="${id}"` : ''} ${attr}><span class="mnttxt"><b>${title}</b><span class="muted">${sub}</span></span></button>`;
+  let h = '';
+  if (ob.step === 'have') {
+    h = `${head('Welcome to Skyward Push-To', 'Your telescope is hand-guided: you do the steering. The phone rides on the tube and shows which way to push, and how far, to reach the targets you have selected.')}
+      <h3>Do you have a telescope?</h3>
+      <p class="muted small">A minute of set-up, and the app describes what your own telescope will show.</p>
+      ${opt('ob-yes', 'Yes, I have one', 'Tell the app which one, and which eyepieces you have.')}
+      ${opt('ob-no', 'Not yet', 'Hold the phone up to the sky and see what is there. Add a telescope whenever you get one.')}${skip}`;
+  } else if (ob.step === 'scope') {
+    h = `${head('Which telescope?', '')}
+      <p class="muted small">Its size sets how faint it reaches and how much it magnifies, so the app's "what you'll see" depends on it.</p>
+      ${Object.entries(state.profiles).map(([k, v]) => opt('', esc(v.name), scopeLine(v), `data-scope="${k}"`)).join('')}
+      ${ob.custom ? `<div class="card" id="ob-form"><h3 style="margin-top:0">Your telescope</h3>
+        <label class="row"><span>Name</span><input id="ob-name" placeholder="e.g. Dobsonian 8-inch" maxlength="40"></label>
+        <label class="row"><span>Type</span><select id="ob-type">${SCOPE_TYPES.map(([k, l]) => `<option value="${k}">${l}</option>`).join('')}</select></label>
+        <label class="row"><span>Aperture (main objective diameter), mm</span><input id="ob-ap" type="number" inputmode="decimal" placeholder="e.g. 200"></label>
+        <label class="row"><span>Focal length, mm</span><input id="ob-fl" type="number" inputmode="decimal" placeholder="e.g. 1200"></label>
+        <p class="muted small">Both numbers are printed on the tube or in the manual, often as "D=200 F=1200". Inches × 25.4 gives millimetres.</p>
+        <p class="gpserr small" id="ob-err"></p>
+        <div class="btnrow"><button class="primary" id="ob-add">Use this telescope</button></div></div>`
+    : opt('ob-mine', 'Mine isn’t listed', 'Enter its name and two numbers from the tube or the manual.')}${skip}`;
+  } else if (ob.step === 'eps') {
+    if (!ob.eps) ob.eps = new Set(kit ? q.eyepieces.map((e) => e.fl) : []);          // the Skyward kit is ticked to start with; any other telescope starts empty
+    const sizes = [...new Set([...OB_EPS, ...ob.extra, ...ob.eps])].sort((a, b) => b - a);
+    h = `${head('Which eyepieces do you have?', '')}
+      <p class="muted small">The size is printed on each eyepiece, in millimetres. A big number gives a wide, low-power view for finding things; a small number magnifies more.</p>
+      ${kit ? '<p class="muted small">The Skyward kit comes with 23, 10 and 4 mm, so those are ticked.</p>' : ''}
+      <div class="obeps">${sizes.map((f) => `<button data-epf="${f}" class="${ob.eps.has(f) ? 'on' : ''}" aria-pressed="${ob.eps.has(f)}"><b>${f} mm</b><span>${Math.round(q.fl / f)}×</span></button>`).join('')}</div>
+      <label class="row"><span>Another size (mm)</span><span class="obadd"><input id="ob-epx" type="number" inputmode="decimal" placeholder="e.g. 17"><button class="mini" id="ob-epadd">Add</button></span></label>
+      ${lensView(q) ? `<label class="row check"><input type="checkbox" id="ob-diag" ${q.diagonal ? 'checked' : ''}><span>I use a star diagonal (the 90° elbow the eyepiece goes into)</span></label>` : ''}
+      <p class="muted small">The magnification shown is for the ${esc(q.name)}. An eyepiece the app doesn’t know is taken to be an ordinary one with a ${OB_AFOV}° apparent field; Setup can hold the real figure.</p>
+      <p class="gpserr small" id="ob-err"></p>
+      <div class="btnrow"><button class="primary" id="ob-next">Next</button><button id="ob-unsure">I'm not sure</button></div>${skip}`;
+  } else if (ob.step === 'phone') {
+    h = `${head('The phone', '')}${ob.other
+      ? `<h3>How does your phone sit?</h3><p class="muted small">Tap the picture that matches.</p>${mountPickerHTML()}<div class="btnrow"><button class="primary" id="ob-next">Carry on</button></div>`
+      : mountAskHTML(false, true)}${skip}`;
+  } else {
+    const eps = q.eyepieces.map((e) => `${e.fl} mm (${Math.round(q.fl / e.fl)}×)`).join(', ');
+    h = `${head('You’re set', '')}
+      <dl class="obsum">${state.handheld ? `<dt>Telescope</dt><dd>None yet: the phone in your hand, held up to the sky</dd><dt>Looking for one?</dt><dd>Ten Telescopes makes the Skyward telescopes this app was built for. Build one yourself, get a kit, or borrow one.<a class="shoplink" href="${SKYWARD_URL}" target="_blank" rel="noopener">See the Skyward telescopes<span class="muted small">tentelescopes.com</span></a></dd>`
+        : `<dt>Telescope</dt><dd><b>${esc(q.name)}</b><br>${scopeLine(q)}</dd><dt>Eyepieces</dt><dd>${eps}</dd><dt>Phone on the scope</dt><dd>${mountSet() ? esc(MOUNTINGS[state.mounting].label) : 'Not chosen yet: the app will ask before it points'}</dd>`}</dl>
+      <p class="muted small">Change any of it later in Setup.</p>
+      <div class="btnrow"><button class="primary" id="ob-tour">See how it works</button></div>
+      <div class="btnrow"><button id="ob-start">Go to the start screen</button></div>`;
+  }
+  el.innerHTML = h;
+  const on = (sel, fn) => { const b = $(sel, el); if (b) b.onclick = fn; };
+  on('#ob-back', () => { ob.step = ob.hist.pop(); ob.custom = ob.other = false; renderOnboard(); });
+  on('#ob-skip', () => endOnboard(false));
+  on('#ob-yes', () => { if (state.handheld) { state.handheld = false; state.mountSet = false; setMounting('top-sky'); save(); } go('scope'); });
+  on('#ob-no', () => { setMounting('camera'); state.handheld = true; state.mountSet = true; save(); go('done'); });
+  el.querySelectorAll('[data-scope]').forEach((b) => { b.onclick = () => { useScope(b.dataset.scope); ob.eps = null; go('eps'); }; });
+  on('#ob-mine', () => { ob.custom = true; renderOnboard(); $('#ob-name').focus(); });
+  on('#ob-add', () => {
+    const name = $('#ob-name').value.trim(), ap = parseFloat($('#ob-ap').value), fl = parseFloat($('#ob-fl').value);
+    const err = !name ? 'Give it a name, so you can tell it apart in the list.' : scopeErr(ap, fl);
+    if (err) { $('#ob-err').textContent = err; return; }
+    addOwnScope(name, $('#ob-type').value, ap, fl, q.eyepieces); ob.eps = null; go('eps');
+  });
+  el.querySelectorAll('[data-epf]').forEach((b) => { b.onclick = () => { const f = +b.dataset.epf; if (ob.eps.has(f)) ob.eps.delete(f); else ob.eps.add(f); renderOnboard(); }; });
+  on('#ob-epadd', () => {
+    const f = Math.round(parseFloat($('#ob-epx').value) * 10) / 10;
+    if (!(f >= 2 && f <= 60)) { $('#ob-err').textContent = 'Eyepieces run from about 2 to 60 mm. The number is printed on the barrel.'; return; }
+    if (!ob.extra.includes(f)) ob.extra.push(f); ob.eps.add(f); renderOnboard();
+  });
+  if ($('#ob-diag', el)) $('#ob-diag', el).onchange = (e) => { q.diagonal = e.target.checked; save(); };
+  if (ob.step === 'eps') {
+    on('#ob-next', () => {
+      if (!ob.eps.size) { $('#ob-err').textContent = 'Tick at least one, or tap "I\'m not sure" to carry on with a typical set.'; return; }
+      // widest first, as everywhere else; an eyepiece the telescope already had keeps its own figures
+      q.eyepieces = [...ob.eps].sort((a, b) => b - a).map((f) => q.eyepieces.find((e) => e.fl === f) || { name: `${f} mm`, fl: f, afov: OB_AFOV, verified: false });
+      state.ep = 0; save(); go(state.handheld ? 'done' : 'phone');
+    });
+    on('#ob-unsure', () => go('phone'));
+  }
+  if (ob.step === 'phone') {
+    if (ob.other) { wireMountPicker(el, () => renderOnboard()); on('#ob-next', () => go('done')); }
+    else wireMountAsk(el, (how) => { if (how === 'other') { ob.other = true; renderOnboard(); } else go('done'); });
+  }
+  on('#ob-tour', () => endOnboard(true, 'tour'));
+  on('#ob-start', () => endOnboard(true));
+}
+
 // ---------------------------------------------------------------- HELP: what the app is, a first night, the words (Build 125)
 // One page a newcomer can read in two minutes, reached from the start screen (the ? button, the welcome card, the link
 // under Start) and from More. Written the way an observer would explain it at the eyepiece; the terms give their origin.
@@ -4491,9 +4687,9 @@ function renderHelp() {
   el.innerHTML = `<button class="back" id="h-back">‹ ${fromStart ? 'Start screen' : 'Back'}</button>
     <h2>How this app works</h2>
     <p class="helplead">Your telescope is hand-guided: you do the steering. The phone rides on the tube, feels where the telescope is pointing, and shows which way to push, and how far, to reach the targets you have selected.</p>
-    <p id="hd-cap">The sky right now.</p>
+    ${!mountSet() && !mountSkipped ? `<div class="helpmount" id="hd-ask">${mountAskHTML(true)}</div>` : `<p id="hd-cap">The sky right now.</p>
     <canvas id="hd-chart" class="chart helpchart" width="800" height="800" aria-hidden="true"></canvas>
-    <div class="helpmount">${mountRowHTML(true, 'help')}<p class="muted small">That is how the app takes the phone to sit, on every screen. Not on the telescope yet? In your hand, ${handHint()}.</p></div>
+    <div class="helpmount">${mountRowHTML(true, 'help')}<p class="muted small">${state.handheld ? `Hold the phone up and aim its back camera at the sky: the chart shows what is behind the phone. When you get a telescope, tap Change. Looking for one? ${skywardLink()}.` : `${mountSet() ? 'That is how the app takes the phone to sit, on every screen. ' : ''}Not on the telescope yet? In your hand, ${handHint()}.`}</p></div>`}
 
     <h3>A night with it</h3>
     <ol class="nightsteps">
@@ -4526,7 +4722,7 @@ function renderHelp() {
       <li>Dress for 10°C colder than the forecast. You will be standing still.</li>
     </ul>
 
-    <details class="more"><summary>Words you'll meet</summary>
+    <details class="more"><summary>Astronomy terms, explained</summary>
       <dl class="words">${HELP_WORDS.map(([w, d]) => `<dt>${w}</dt><dd>${d}</dd>`).join('')}</dl></details>
     <details class="more"><summary>If something seems off</summary>
       <ul class="how">
@@ -4541,6 +4737,7 @@ function renderHelp() {
   $('#h-back').onclick = () => (fromStart ? toStart() : showTab(backTo));
   if ($('#h-start')) $('#h-start').onclick = toStart;
   wireMountRow(renderHelp, el, 'help');
+  if ($('#hd-ask', el)) wireMountAsk($('#hd-ask', el), (how) => { if (how === 'other') mountRowOpen = 'help'; renderHelp(); });
   helpDemoStart();
 }
 /**
@@ -4610,7 +4807,7 @@ function helpDemoTick(d) {
   say(d.n ? `Now ${name}. Same idea.`
     : `Try it now. This is the sky ${siteKnown() ? 'above you' : 'overhead'}${d.day ? '. By day or behind cloud these stars are still there, just not visible right now' : ' right now, even if cloud is hiding it'}. Move the phone until the cross sits on ${name}. That’s the whole idea.`);
   d.okN = sep < 3 ? d.okN + 1 : 0;
-  if (d.okN >= 8) { cue.onTarget(); tick(); d.found = true; d.hold = now + 3200; say(`That’s it. On the telescope, ${name} would now be in the eyepiece.`); }
+  if (d.okN >= 8) { cue.onTarget(); tick(); d.found = true; d.hold = now + 3200; say(state.handheld ? `That’s it: ${name} is right there, behind the phone.` : `That’s it. On the telescope, ${name} would now be in the eyepiece.`); }
 }
 
 // ---------------------------------------------------------------- camera star finder
@@ -5125,6 +5322,8 @@ async function cameraFind() {
 // All seven positions in MOUNTINGS can be told to the app this way.
 function mountSVG(k) {
   const tube = '<rect x="30" y="10" width="36" height="96" rx="5" class="mt-tube"/><path d="M30 20h36" class="mt-rim"/><text x="48" y="7" class="mt-lab">sky end ★</text><text x="48" y="117" class="mt-lab">mirror end</text>';
+  if (k === 'none') return `<svg viewBox="0 0 96 120" aria-hidden="true">${tube}<text x="48" y="72" class="mt-top" style="font-size:34px">?</text></svg>`;
+  if (k === 'hand') return '<svg viewBox="0 0 96 120" aria-hidden="true"><text x="74" y="22" class="mt-top" style="font-size:20px">★</text><g transform="rotate(24 48 74)"><rect x="33" y="44" width="30" height="60" rx="5" class="mt-ph"/><rect x="36" y="50" width="24" height="46" rx="2" class="mt-scr"/></g><path d="M58 46 68 30m-8.500 1.500 8.500-1.500 1 8.500" class="mt-arrow"/></svg>';
   const side = k.startsWith('side'), top = k.startsWith('top');
   const foc = side ? '<circle cx="48" cy="29" r="6.5" class="mt-foc"/><circle cx="48" cy="29" r="3" class="mt-foc"/>' : '<rect x="66" y="23" width="10" height="11" rx="1.5" class="mt-foc"/>';
   let ph = '';
@@ -5140,14 +5339,15 @@ function mountSVG(k) {
   return `<svg viewBox="0 0 96 120" aria-hidden="true">${tube}${k === 'camera' ? '' : foc}${ph}</svg>`;
 }
 function mountPickerHTML() {
-  const cur = state.mounting, end = cur.endsWith('mirror') ? 'mirror' : 'sky', flips = cur.startsWith('top') || cur.startsWith('side');
+  const cur = state.handheld ? 'hand' : state.mounting, end = cur.endsWith('mirror') ? 'mirror' : 'sky', flips = cur.startsWith('top') || cur.startsWith('side');
   const tile = (k) => { const v = MOUNTINGS[k]; return `<button class="mnt${k === cur ? ' on' : ''}" data-mount="${k}" aria-pressed="${k === cur}" aria-label="${esc(v.label)}">${mountSVG(k)}<b>${esc(v.where)}</b><span>${esc(v.edge)}</span></button>`; };
   const across = cur.startsWith('across');
   return `<div class="mnt-grid">${[`top-${end}`, `side-${end}`, 'camera'].map(tile).join('')}</div>
     ${flips ? `<div class="mnt-end"><span>Phone's top edge points to:</span><div class="chips">${[['sky', 'Sky end'], ['mirror', 'Mirror end']].map(([e, l]) => `<button data-end="${e}" class="${e === end ? 'on' : ''}" aria-pressed="${e === end}">${l}</button>`).join('')}</div>
       <p class="muted small" style="margin:2px 0 0">The app's screen doesn't rotate. At a Newtonian you stand at the sky end, so with the top edge to the mirror end the screen reads the right way up from the eyepiece.</p></div>` : ''}
     <details class="more mnt-other"${across ? ' open' : ''}><summary>Other ways</summary><div class="mnt-grid">${['across-left', 'across-right'].map(tile).join('')}</div></details>
-    <p class="muted small">Looking at the tube with the sky end at the top. The little bar and the word “top” mark the phone's top edge. ${cur.startsWith('side') ? 'On the side, the round focuser is facing you.' : ''}</p>`;
+    <p class="muted small">Looking at the tube with the sky end at the top. The little bar and the word “top” mark the phone's top edge. ${cur.startsWith('side') ? 'On the side, the round focuser is facing you.' : ''}</p>
+    ${state.handheld ? '' : '<div class="btnrow"><button class="mini" data-hand>No telescope: I am using the phone in my hand</button></div>'}`;
 }
 function setMounting(k) {
   if (!MOUNTINGS[k] || k === state.mounting) return false;
@@ -5156,51 +5356,16 @@ function setMounting(k) {
   applyModelSettings(); align = { obs: [], fit: null, syncs: [], confirm: [] }; save(); return true;
 }
 function wireMountPicker(root, after) {
-  root.querySelectorAll('.mnt').forEach((b) => { b.onclick = () => { const ch = setMounting(b.dataset.mount); after(ch); }; });
+  // Any position on a telescope ends "no telescope yet"; that counts as a change even when the pointing stays the same.
+  const pick = (k, hand = false) => { const was = !!state.handheld; state.handheld = hand; const ch = setMounting(k) || was !== hand; if (was !== hand) { state.mountSet = true; save(); } after(ch); };
+  root.querySelectorAll('.mnt').forEach((b) => { b.onclick = () => pick(b.dataset.mount); });
   // The end switch keeps the position (on top / on the side) and turns the phone round.
-  root.querySelectorAll('[data-end]').forEach((b) => { b.onclick = () => { const base = state.mounting.split('-')[0]; after(setMounting(`${base}-${b.dataset.end}`)); }; });
-}
-// Asked once, the first time someone heads for the telescope: the pointing depends on how the phone sits on the tube.
-function askDock(dest) {
-  const el = $('#dockq'), card = $('#dockq-card');
-  const done = (v) => { state.dock = v; save(); el.classList.add('hidden'); launch(dest); };   // still inside the tap, so iOS will allow the motion prompt
-  const ask = () => {
-    card.innerHTML = `<h3 style="margin-top:0">One quick question</h3>
-      <p><b>Does your telescope have a phone dock?</b></p>
-      <p class="muted small">The dock holds your phone square to the tube. It sits on a bridge mount made for your telescope.</p>
-      <div class="btnrow"><button id="dq-yes" class="primary">Yes</button><button id="dq-no">Not yet</button></div>
-      <div class="btnrow"><button id="dq-other">My phone sits another way</button></div>
-      <p class="muted small" style="margin-bottom:0">You can change this later in Setup.</p>`;
-    $('#dq-yes').onclick = () => { setMounting('top-sky'); done('yes'); };
-    $('#dq-no').onclick = none;
-    $('#dq-other').onclick = other;
-  };
-  const none = () => {
-    card.innerHTML = `<h3 style="margin-top:0">No dock? You can still try it</h3>
-      <ol class="how"><li><b>Lay the phone flat on top of the tube</b>, screen up.</li>
-      <li><b>Point the top of the phone at the sky end</b>, lined up with the tube as straight as you can.</li>
-      <li><b>Strap it down firmly</b> — elastic bands work. It must not shift when you push the scope.</li></ol>
-      <p class="muted small">Expect rougher pointing than with a dock. A phone that is crooked or slips will send you to the wrong spot, and you will need to Sync more often.</p>
-      <div class="btnrow"><button id="dq-go" class="primary">Carry on</button><button id="dq-back">Back</button></div>
-      <div class="btnrow"><button id="dq-other2">On the side of the tube instead</button></div>`;
-    $('#dq-go').onclick = () => { setMounting('top-sky'); done('no'); };
-    $('#dq-back').onclick = ask;
-    $('#dq-other2').onclick = other;
-  };
-  const other = () => {
-    card.innerHTML = `<h3 style="margin-top:0">How does your phone sit?</h3>
-      <p class="muted small">Tap the picture that matches. It has to be held firmly and lined up with the tube as squarely as you can; the two alignment stars take care of the last few degrees.</p>
-      ${mountPickerHTML()}
-      <div class="btnrow"><button id="dq-go" class="primary">Carry on</button><button id="dq-back">Back</button></div>`;
-    wireMountPicker(card, () => other());
-    $('#dq-go').onclick = () => done(state.mounting === 'top-sky' ? 'yes' : 'no');
-    $('#dq-back').onclick = ask;
-  };
-  ask(); el.classList.remove('hidden');
+  root.querySelectorAll('[data-end]').forEach((b) => { b.onclick = () => pick(`${state.mounting.split('-')[0]}-${b.dataset.end}`); });
+  root.querySelectorAll('[data-hand]').forEach((b) => { b.onclick = () => pick('camera', true); });
 }
 function launch(dest) {
   if (!siteKnown() && !locAsked && !state.locNever) { askLocation(dest); return; }
-  if (dest !== 'plan' && dest !== 'explore' && !state.dock) { askDock(dest); return; }
+  if (dest !== 'plan' && !mountSet() && !mountSkipped) { askMount(() => launch(dest)); return; }   // still inside the tap, so iOS will allow the motion prompt
   initSound();                                    // audio can only start from a tap
   state.seenIntro = true; state.welcomed = true;
   if (!state.launch.check && !lastCheck()) state.skipCheck = true;   // chose not to test: don't nag about it later
@@ -5235,7 +5400,7 @@ function goActivity(d) {
   if (d === 'explore') { state.target = null; save(); showTab('push'); }
   else if (d === 'plan') showTab('plan');
   else if (d === 'game') showTab('game');
-  else if (d === 'resume') { const pp = planProgress(); if (pp && pp.next) { state.target = pp.next.key; save(); showTab('push'); } else showTab('plan'); }
+  else if (d === 'resume') { const nx = planNext(); if (nx) { state.target = nx.key; save(); showTab('push'); } else showTab('plan'); }
   else showTab('find');
 }
 /** The current tune-up step finished on its own (aligned, check done): move on without making the user find the bar. */
@@ -5469,7 +5634,9 @@ async function init() {
   if (IS_STANDALONE()) $('#hb-fs').classList.add('hidden');
   $('#fs-close').onclick = () => $('#fs-help').classList.add('hidden');
   applyTheme();
+  if (state.setupDone == null) state.setupDone = !!saved;   // anyone with saved data has used the app: no first-time set-up for them
   renderLaunch();
+  if (!state.setupDone) startOnboard(true);
   setTimeout(() => autoLocate().catch(() => {}), 2600);   // after the splash
   $('#gate-sim').onclick = () => startSensors(true);
   $('#gate-skip').onclick = () => { $('#gate').classList.add('hidden'); if (flow && !flow.started) flowNext(); onceToast('nosens', 'Browsing without sensors — drag the sky view to look around. Pointing needs them: tap the status at the top to turn them on.', 5500); };

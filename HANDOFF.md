@@ -715,6 +715,79 @@ unrelated extra star in the object-page sentence. Still open with Bryan: whether
     step was silently dropped, so the flow jumped from the previous step straight to blocked-sky tracing. It now
     always runs when its star is on, showing "Earlier tonight: … check again, or keep it".
 
+## Build 131 (Nov 27): first-time set-up (telescope, eyepieces, phone), no-telescope use, faster location
+- First-time set-up flow (asked for: "a first time user flow that has them select and equip their telescope"; built on
+  "go" with the defaults proposed). `startOnboard` / `renderOnboard` draw four short cards on the start panel, before
+  the start screen, the first time the app is opened: (1) Do you have a telescope? (2) Which one: the built-in list, or
+  "Mine isn't listed" (name, type, aperture, focal length; `addOwnScope`, shared with Setup). (3) Which eyepieces: tick
+  from 32, 25, 23, 20, 15, 10, 9, 6, 4 mm, each shown with its magnification on that telescope, or type a size; the
+  Skyward kit (23, 10, 4) starts ticked on a Skyward, nothing is ticked on any other telescope; a refractor or SCT is
+  also asked about a star diagonal. An eyepiece the app does not know is given a 52° apparent field (`OB_AFOV`).
+  (4) How the phone sits (the question below, without its no-telescope answer). Then a summary with "See how it
+  works" and "Go to the start screen". "Not yet" at card 1 sets hand-held use and goes to the summary. Every card has
+  Back and "Skip set-up for now"; each answer is written to the ordinary settings at once.
+- A link to the Skyward telescopes for people with none (asked for): `SKYWARD_URL` = https://www.tentelescopes.com (the
+  home page: it shows the range with Build one / Get a kit / Borrow one). Shown on the set-up summary after "Not yet"
+  as a button, and as a text link in the tour's hand-held hint and on Observe's start-up note. It uses
+  target="_blank" like the forecast licence link; not yet tried in the iPhone app.
+- Wording: the Blocked sky start-up step said only "one slow turn with the phone, once per place"; it now says what it
+  is for: "to map out which parts of the sky are visible from here: one slow turn with the phone, once per place".
+- Wording: a start-up step an activity does not use said "not needed for this"; it now names the activity ("not needed
+  for planning", "not needed for the game").
+- Observing a plan has a proper path (asked: "what's our path to executing the plan?"; built on "go"). Start observing
+  on the Plan page, and the start-screen button, now open "Observe your plan" (`openPlanStage`, stage `resume`): the
+  plan's name, how many targets and which is next, the phone-position strip, and Observe's start-up steps (same
+  switches as Observe, star alignment on by default), then Start observing → the steps → the next target
+  (`planNext`). Back returns to the Plan page or the start screen, wherever it was opened from.
+  Fixed with it: Start observing used to jump straight to the first target whenever the sensors were already on, aligned
+  or not (after Explore, and since Build 128 after the tour). It now goes straight in only when the sensors are on
+  AND an alignment exists. Also: a plan whose session was over, or fully ticked off, used to land back on the Plan
+  page after the steps; it now goes to the first target.
+  The start-screen button reads "Observe your plan: 6 targets" until something is done, then "Carry on with your plan:
+  2 of 6 done". Plan's own start-up screen says of alignment "not needed for planning: you will be offered it when you
+  start observing the plan". Checked in the browser (simulator); not on a phone.
+- Who sees it: `state.setupDone` is set true on first load for anyone with saved data, so existing users are not asked;
+  Setup has "Run first-time set-up again". Finishing also marks the welcome card as seen; skipping leaves it.
+- The location question no longer pops up over the flow: `autoLocate` defers to the end of it (`ob.locate`).
+- Checked in the browser: yes → own telescope (bad figures refused) → eyepieces (none ticked refused; typed size) →
+  phone → summary → start screen, then the location question; reload shows no flow; Not yet → summary → tour in
+  hand-held; Skip; Back; Skyward kit ticked, Orion 80ED not, with the diagonal box; run again from Setup. Not on a phone.
+- The first-time user is asked how the phone will sit:
+- Asked for: ask the first-time user, in very simple terms, which way the phone will be mounted before the app assumes
+  anything, then apply the answer to the settings. The question (`mountAskHTML`, `wireMountAsk`): "How will the phone
+  sit on your telescope?" with three pictures to tap: Flat on top (screen up, top of the phone toward the sky; the
+  Skyward dock), On the side (screen facing out), Looking along it (on end, back camera toward the sky); plus "Another
+  way" (the full set, with mirror end and across the tube) and "Not sure yet". One tap sets `state.mounting` and
+  `state.mountSet`.
+- Where it is asked: in the tour, in place of the sky chart until it is answered (so the chart never points by an
+  assumed position); from Start, before any activity that points (Observe, Explore, Play), as a pop-up (`askMount`);
+  and from the "Choose" button on the Phone-on-the-scope strip, which reads "Not chosen yet · Flat on top is used
+  until you say" until there is an answer (`mountSet()`).
+- "Not sure yet" carries on with flat on top for this run only and asks again next time. An answer to the old dock
+  question (`state.dock`) or a mount check counts as an answer, so people who already use the app are not asked.
+- The old "Does your telescope have a phone dock?" question at Start is gone (this one replaces it; its only effect
+  was to set the position). Explore is now asked too, since it points as well. The Phone dock line in Setup is left.
+- Checked in the browser (simulator): tour → pick → chart appears with that position; skip the tour → Start → pop-up →
+  Another way → Looking along → carries on; Not sure yet → chart on flat-on-top → Choose → set. Not yet on a phone.
+
+- Location was slow ("a big long pause getting a GPS fix", from TestFlight). `getGPS` asked only for a high-accuracy fix
+  with nothing cached (up to 30 s; slowest indoors). It now takes two steps: a quick fix from network positioning
+  (`enableHighAccuracy: false`, 8 s limit), accepted when it is no vaguer than 3 km and no older than a minute (ten
+  minutes for the quiet start-up refresh); only otherwise the full GPS request as before. A kilometre of error moves a
+  star by about half an arcminute, so the quick fix is ample. Messages say "Finding your location…" and, if it comes
+  to the second step, "Still looking: asking the GPS…". Checked in the browser with a mocked location service (good,
+  vague, stale, timed-out and blocked first answers); the speed-up itself is not measured on a phone.
+- No telescope yet (asked for: "for folks that don't have a scope yet let's have an option"). The question has a fourth
+  answer, "No telescope yet: hold the phone up to the sky and see what is there". It sets `state.handheld` and points
+  out of the back of the phone (the same axis as Looking along), so the chart shows what is behind the phone. The
+  strip then reads "No telescope yet · Held up in your hand, back to the sky"; Change offers the telescope
+  positions (any of them ends hand-held), and the picker has "No telescope: I am using the phone in my hand" to go
+  back. Wording follows: the tour ("Saturn is right there, behind the phone"), the Sky view ("The chart follows the
+  phone"), and Observe's start-up screen says star alignment needs a telescope and points to Explore. Nothing else
+  is switched off for hand-held use. Checked in the browser; not on a phone.
+- Wording: the word list on the help page was headed "Words you'll meet"; now "Astronomy terms, explained" (and the two
+  lines that point to the page say "astronomy terms explained").
+
 ## Build 130 (Nov 27): one phone position everywhere, and shown; tour wording
 - Reported from TestFlight: the tour assumed an orientation that the other screens did not, and nothing obvious said
   which way the app has the phone mounted. Cause: the Build 129 tour chart guessed the pointing direction from how the

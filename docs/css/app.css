@@ -795,6 +795,25 @@ button.primary:disabled { background: none; color: var(--dim); border-color: var
 .mntrow.plain .mnttxt b { font-size: 15px; color: var(--hi); }
 .mntrow.plain .mnttxt .small { font-size: 13px; }
 .helpmount { max-width: 340px; margin: 0 auto; } .helpmount > p { margin: 4px 2px 0; }
+/* Build 131: the first-time question, three big pictures to tap */
+.mntask h3 { margin: 0 0 4px; font-size: 18px; color: var(--hi); }
+.mntopt { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; margin: 8px 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+.mntopt .mntpic { width: 62px; } .mntopt .mnttxt b { font-size: 17px; color: var(--hi); font-family: var(--round); } .mntopt .mnttxt .muted { font-size: 14px; line-height: 1.35; }
+.mntrow.unset { border-color: var(--hi); }
+#hd-ask h3 { margin-top: 0; }
+/* Build 131: first-time set-up cards (on the start panel) */
+#launch.onboard { max-width: 460px; margin: 0 auto; }
+.obstep { font-size: 13px; color: var(--dim); margin: 6px 0 -6px; }
+.onboard .mntopt .mnttxt { display: flex; flex-direction: column; gap: 2px; }
+.obskip { margin: 22px 0 8px; text-align: center; } .obskip p { margin: 6px 0 0; }
+.obeps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 10px 0; }
+.obeps button { display: flex; flex-direction: column; align-items: center; gap: 1px; min-height: 58px; padding: 8px 4px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--dim); }
+.obeps button b { font-size: 17px; font-family: var(--round); } .obeps button span { font-size: 13px; }
+.obeps button.on { border-color: var(--hi); color: var(--hi); background: var(--sel); }
+.obadd { display: flex; gap: 8px; align-items: center; } .obadd input { width: 96px; }
+.shoplink { display: flex; flex-direction: column; align-items: center; gap: 2px; margin: 10px 0 2px; padding: 12px; border: 1px solid var(--hi); border-radius: 12px; color: var(--hi); font-weight: 600; text-decoration: none; }
+dl.obsum { margin: 10px 0; } dl.obsum dt { font-size: 13px; color: var(--dim); margin-top: 12px; } dl.obsum dd { margin: 2px 0 0; font-size: 16px; line-height: 1.4; }
+#hd-ask { margin: 14px auto 6px; padding: 12px; border: 1px solid var(--hi); border-radius: 14px; }
 
 /* ---- an activity's start-up screen (Build 127): its name, then the steps and Start as a path of stars */
 .stagehead { display: flex; align-items: center; gap: 12px; margin: 6px 0 2px; }
